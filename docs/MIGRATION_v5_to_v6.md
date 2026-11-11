@@ -454,6 +454,41 @@ the note in the viewer's locale, then the description. A description that does n
 left as it is. A brief lock on `roles` (a nullable column, no rewrite; a few dozen rows);
 `lock_timeout` 5 s.
 
+**Release candidate (TASK-208):** `066_recorded_notes.sql`, after 065, on its own:
+
+```bash
+pbcopy < supabase/migrations/066_recorded_notes.sql
+```
+
+It adds `proposals.decision_shown` and `users.ban_note` (each a screen message's key and values,
+checked to be one) and moves the platform's English notes written before into them: a withdrawn
+approval's `Approved by <who> at <when>, never run; withdrawn: <why>` (and its undecided form) —
+the record to `decision_shown`, the note as written (`<why>`) kept in `decision_note`; 046's two
+decision notes; the note `erased with the account it was about` (on a proposal and in a run's
+step); an abandoned run's `no activity and no open hold since <when>`; and a carried-over ban's
+reason. A note that does not match exactly (a person's) is left as it is. The subject's data
+export renders them from the catalog, in the requester's language. Brief locks on `proposals`,
+`users` and `agent_trajectories` (nullable columns, no rewrite; `agent_trajectories` read once
+with a text prefilter); `lock_timeout` 5 s. Then this answers one row, its checksum what
+`node scripts/migration-checksum.mjs supabase/migrations/066_recorded_notes.sql` prints, and
+every count 0:
+
+```sql
+select (select checksum from public.applied_migrations
+         where filename = '066_recorded_notes.sql') as checksum,
+       (select count(*) from public.proposals
+         where decision_note ~ '^Approved by \S+ at \S+, (never run; withdrawn|its run undecided; withdrawn, verified not applied): '
+            or decision_note in ('erased with the account it was about',
+                                 'Superseded by migration 046: proposed before the proposing identity was recorded; propose again.',
+                                 'Superseded by migration 046: another proposal for this operation is newer.')) as proposal_notes_left,
+       (select count(*) from public.users
+         where ban_reason = 'A ban on this address carried over to a new account.') as ban_reasons_left,
+       (select count(*) from public.agent_trajectories
+         where steps::text like '%"reason": "no activity and no open hold since %'
+            or steps::text like '%"note": "erased with the account it was about"%'
+            or steps::text ~ '"note": "Approved by \S+ at \S+, (never run; withdrawn|its run undecided; withdrawn, verified not applied): ') as run_notes_left;
+```
+
 Every one is idempotent: one already applied (046 on a database on v5.1.x) changes nothing when
 run again. An app's own migrations go in between, by name (`052a_<app>_…` after 052 — §1b).
 

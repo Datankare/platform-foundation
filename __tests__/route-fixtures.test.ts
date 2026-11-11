@@ -2662,6 +2662,34 @@ async function acmeUndecidedErasure(): Promise<string> {
     return second.proposalId;
   });
 }
+/**
+ * A setting's held change (heldChange's) in Acme, proposed and asked by another admin (the
+ * approver: the operator deciding it is not its requester); its id.
+ */
+async function acmeHeldChange(): Promise<string> {
+  const home = await heldChange();
+  const held = await runWithTenant({ tenantId: TENANT, mode: "single" }, () =>
+    getProposalStore().getById(home)
+  );
+  await tenancyWorld();
+  return runWithTenant({ tenantId: T.acme, mode: "shared" }, async () => {
+    const copy = await getProposalStore().create({
+      operationId: "fixture-op-held",
+      sessionId: held!.sessionId,
+      trajectoryId: "fixture-trajectory-held",
+      label: held!.label,
+      actor: {
+        ...held!.actor,
+        actorId: APPROVER.userId,
+        ...(held!.actor.onBehalfOf ? { onBehalfOf: APPROVER.userId } : {}),
+      },
+      effects: held!.effects,
+      effectiveRisk: held!.effectiveRisk,
+      payload: held!.payload,
+    });
+    return copy.proposalId;
+  });
+}
 const acmeApprovals = () =>
   tenantApprovalsGET(op(`${ACME}/approvals`, "GET"), idOf(T.acme));
 const acmeDecide = (approvalId: string, decision: string, source: string) =>
@@ -2782,6 +2810,22 @@ const TENANT_SETTINGS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
       await acmeUndecidedErasure();
       names();
       return recordStable(await acmeApprovals());
+    },
+  "GET /api/operator/tenants/[id]/approvals — a setting's held change": async () => {
+    await acmeHeldChange();
+    names();
+    return recordStable(await acmeApprovals());
+  },
+  // TASK-208: approved, it now waits for a second approval — the panel read `pending`, which
+  // the decision never sends, and said "done".
+  "POST /api/operator/tenants/[id]/approvals/[approvalId] — approved, now waiting for a second approval":
+    async () => {
+      const id = await acmeHeldChange();
+      runAnswers({
+        kind: "pending",
+        approval: { id: "0a1b2c3d-0000-4000-8000-0000000000b2" },
+      });
+      return recordStable(await acmeDecide(id, "approve", "runtime"));
     },
   "POST /api/operator/tenants/[id]/approvals/[approvalId] — an undecided erasure withdrawn":
     async () => {

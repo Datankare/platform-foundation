@@ -28,6 +28,7 @@ import {
   inTenant,
   type TestTenant,
 } from "../helpers/db";
+import { decisionWords } from "@/platform/errors/recorded-words";
 
 const actor = { actorType: "agent" as const, actorId: "agent:a", agentRole: "a" };
 const base = {
@@ -113,7 +114,16 @@ dbDescribe("PostgresProposalStore", () => {
     expect(n).toBe(1);
     const after = await store.getById(lapsed);
     expect(after).toMatchObject({ status: "rejected", decidedBy: HOLD_EXPIRY_ACTOR });
-    expect(after?.decisionNote).toMatch(
+    // TASK-208: the record is the catalog's key and values, the note the job's reason.
+    expect(after?.decisionNote).toBe("expired: not run within 1 day of its approval");
+    expect(after?.decisionShown).toEqual({
+      key: "screens.records.withdrawn_after_approval",
+      params: {
+        approvedBy: "alice",
+        approvedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT[\d:.]+Z$/),
+      },
+    });
+    expect(decisionWords(after!)).toMatch(
       /^Approved by alice at \d{4}-\d\d-\d\dT[\d:.]+Z, never run; withdrawn: expired: not run within 1 day of its approval$/
     );
     expect((await store.getById(recent))?.status).toBe("approved");

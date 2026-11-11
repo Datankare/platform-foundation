@@ -33,6 +33,7 @@ import { generateUuid } from "./utils";
 import { withTenantTx } from "@/platform/data";
 import { assertStorableJson } from "@/platform/errors/json-limits";
 import { sameId } from "@/platform/auth/same-id";
+import { isRecordedText } from "@/platform/errors/recorded-text";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -54,6 +55,8 @@ interface ProposalRow {
   decided_by: string | null;
   decided_at: Date | null;
   decision_note: string | null;
+  /** The platform's record of how the decision ended (migration 066, TASK-208): key and values. */
+  decision_shown: unknown;
   /** Why the last run failed before taking effect (migration 052, review 10 H2). */
   last_run_error: string | null;
   /** The current claim's token (migration 052, review 11 H-1). */
@@ -127,6 +130,7 @@ function mapRow(row: ProposalRow): ProposalRecord {
     decidedBy: row.decided_by ?? undefined,
     decidedAt: row.decided_at ? row.decided_at.toISOString() : undefined,
     decisionNote: row.decision_note ?? undefined,
+    ...(isRecordedText(row.decision_shown) ? { decisionShown: row.decision_shown } : {}),
     ...(row.last_run_error ? { lastRunError: row.last_run_error } : {}),
     ...(row.run_token ? { runToken: row.run_token } : {}),
     ...(row.run_token && row.run_atomic ? { runAtomic: true } : {}),
@@ -147,7 +151,7 @@ export class PostgresProposalStore implements ProposalStore {
          values ($1::uuid, $2, $3, $4, $5, 'proposed', $6, $7, $8::jsonb, $9::jsonb, $10, $11::jsonb, $12::int)
          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role,
                    actor_identity, effects, effective_risk, payload, observed_version, decided_by,
-                   decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at`,
+                   decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at`,
         [
           generateUuid(),
           args.operationId,
@@ -174,7 +178,7 @@ export class PostgresProposalStore implements ProposalStore {
       tx.query<ProposalRow>(
         `select id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role,
                 actor_identity, effects, effective_risk, payload, observed_version, decided_by,
-                decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at
+                decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at
            from proposals where id = $1::uuid`,
         [proposalId]
       )
@@ -200,7 +204,7 @@ export class PostgresProposalStore implements ProposalStore {
           where id = $1::uuid and status = 'proposed'
           returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role,
                     actor_identity, effects, effective_risk, payload, observed_version, decided_by,
-                    decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at`,
+                    decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at`,
         [proposalId, status, decidedBy, note ?? null]
       )
     );
@@ -217,7 +221,7 @@ export class PostgresProposalStore implements ProposalStore {
           where id = $1::uuid and status = 'approved'
           returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role,
                     actor_identity, effects, effective_risk, payload, observed_version, decided_by,
-                    decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at`,
+                    decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at`,
         [proposalId]
       )
     );
@@ -249,7 +253,7 @@ export class PostgresProposalStore implements ProposalStore {
       proposalId,
       `update proposals set status = 'executing', run_token = $2::uuid, run_atomic = $3, updated_at = now()
           where id = $1::uuid and status = 'approved'
-          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at`,
+          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at`,
       [generateUuid(), options.atomic === true]
     );
   }
@@ -265,7 +269,7 @@ export class PostgresProposalStore implements ProposalStore {
       proposalId,
       `update proposals set status = 'executed', updated_at = now()
           where id = $1::uuid and run_token = $2::uuid and status in ('executing', 'indeterminate', 'executed')
-          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at`,
+          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at`,
       [runToken]
     );
   }
@@ -280,7 +284,7 @@ export class PostgresProposalStore implements ProposalStore {
       proposalId,
       `update proposals set status = 'approved', last_run_error = $3, run_token = null, run_atomic = null, updated_at = now()
           where id = $1::uuid and run_token = $2::uuid and status in ('executing', 'indeterminate')
-          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at`,
+          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at`,
       [runToken, note.slice(0, 1000)]
     );
   }
@@ -293,17 +297,18 @@ export class PostgresProposalStore implements ProposalStore {
   ): Promise<ProposalRecord | undefined> {
     if (resolution === "rejected") {
       // Withdrawn without running, verified not applied (TASK-194 round 5): the note keeps who had
-      // approved it and when (the same wording as the in-memory store), the run token cleared.
+      // approved it and when — a catalog key and values (TASK-208, N-110), as the in-memory store —
+      // the decider's note as written, the run token cleared.
       return this.update(
         proposalId,
         `update proposals
             set status = 'rejected', decided_by = $2,
-                decision_note = 'Approved by ' || coalesce(decided_by, 'unknown') || ' at '
-                  || coalesce(to_char(decided_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'unknown')
-                  || ', its run undecided; withdrawn, verified not applied: ' || $3,
+                decision_note = $3, decision_shown = jsonb_build_object('key', 'screens.records.withdrawn_undecided', 'params', jsonb_build_object(
+                  'approvedBy', coalesce(to_jsonb(decided_by), jsonb_build_object('key', 'screens.records.unknown')),
+                  'approvedAt', coalesce(to_jsonb(to_char(decided_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')), jsonb_build_object('key', 'screens.records.unknown')))),
                 decided_at = now(), run_token = null, run_atomic = null, updated_at = now()
           where id = $1::uuid and status = 'indeterminate'
-          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at`,
+          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at`,
         [decidedBy, note.slice(0, 1000)]
       );
     }
@@ -312,14 +317,14 @@ export class PostgresProposalStore implements ProposalStore {
           proposalId,
           `update proposals set status = 'approved', decided_by = $2, decided_at = now(), decision_note = $3, run_token = null, run_atomic = null, updated_at = now()
           where id = $1::uuid and status = 'indeterminate'
-          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at`,
+          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at`,
           [decidedBy, note.slice(0, 1000)]
         )
       : this.update(
           proposalId,
           `update proposals set status = 'executed', last_run_error = $2, updated_at = now()
           where id = $1::uuid and status = 'indeterminate'
-          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at`,
+          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at`,
           [`marked executed by ${decidedBy}: ${note}`.slice(0, 1000)]
         );
   }
@@ -340,19 +345,20 @@ export class PostgresProposalStore implements ProposalStore {
   ): Promise<ProposalRecord | undefined> {
     if (!UUID_RE.test(proposalId)) return undefined;
     // status = 'approved' is the guard: a concurrent consume or withdrawal matches no row. The
-    // note keeps who had approved it and when (the same wording as the in-memory store).
+    // record keeps who had approved it and when (a catalog key and values, as the in-memory store;
+    // TASK-208), the note why.
     const { rows } = await withTenantTx((tx) =>
       tx.query<ProposalRow>(
         `update proposals
             set status = 'rejected', decided_by = $2,
-                decision_note = 'Approved by ' || coalesce(decided_by, 'unknown') || ' at '
-                  || coalesce(to_char(decided_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'unknown')
-                  || ', never run; withdrawn: ' || $3,
+                decision_note = $3, decision_shown = jsonb_build_object('key', 'screens.records.withdrawn_after_approval', 'params', jsonb_build_object(
+                  'approvedBy', coalesce(to_jsonb(decided_by), jsonb_build_object('key', 'screens.records.unknown')),
+                  'approvedAt', coalesce(to_jsonb(to_char(decided_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')), jsonb_build_object('key', 'screens.records.unknown')))),
                 decided_at = now(), updated_at = now()
           where id = $1::uuid and status = 'approved'
           returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role,
                     actor_identity, effects, effective_risk, payload, observed_version, decided_by,
-                    decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at`,
+                    decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at`,
         [proposalId, decidedBy, note]
       )
     );
@@ -367,17 +373,17 @@ export class PostgresProposalStore implements ProposalStore {
     const ids = [...new Set(proposalIds)].filter((id) => UUID_RE.test(id));
     if (!ids.length) return [];
     // One statement (review 13 L7). Each row moves only from proposed or approved (the guard, as
-    // decide and withdraw); an approved one's note keeps who had approved it and when — the
+    // decide and withdraw); an approved one's record keeps who had approved it and when — the
     // right-hand side reads the row as it was.
     const { rows } = await withTenantTx((tx) =>
       tx.query<{ id: string }>(
         `update proposals
             set status = 'rejected', decided_by = $2,
-                decision_note = case when status = 'approved'
-                  then 'Approved by ' || coalesce(decided_by, 'unknown') || ' at '
-                    || coalesce(to_char(decided_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'unknown')
-                    || ', never run; withdrawn: ' || $3
-                  else $3 end,
+                decision_note = $3,
+                decision_shown = case when status = 'approved'
+                  then jsonb_build_object('key', 'screens.records.withdrawn_after_approval', 'params', jsonb_build_object(
+                  'approvedBy', coalesce(to_jsonb(decided_by), jsonb_build_object('key', 'screens.records.unknown')),
+                  'approvedAt', coalesce(to_jsonb(to_char(decided_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')), jsonb_build_object('key', 'screens.records.unknown')))) end,
                 decided_at = now(), updated_at = now()
           where id = any($1::uuid[]) and status in ('proposed', 'approved')
           returning id`,
@@ -394,7 +400,7 @@ export class PostgresProposalStore implements ProposalStore {
       tx.query<ProposalRow>(
         `select id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role,
                 actor_identity, effects, effective_risk, payload, observed_version, decided_by,
-                decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at
+                decided_at, decision_note, decision_shown, last_run_error, run_token, run_atomic, created_at, updated_at
            from proposals
           where ($1::text is null or operation_id = $1)
             and ($2::text is null or trajectory_id = $2)

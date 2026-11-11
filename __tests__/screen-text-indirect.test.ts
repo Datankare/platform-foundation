@@ -39,6 +39,15 @@
  *      fixed parts, each on its own (`op_${a}_${b}` is an id). And every literal key a
  *      `shown(…)` names, in app/api, platform/ and components/, is one English has.
  *
+ *   E. A label stands where a label stands (TASK-208, N-111). A held change's one line
+ *      (describeWhat: "Erase the account ann@…", "Setting signups_enabled") and an action's
+ *      (describeAction) are labels, not nouns: given to a template that builds a sentence around
+ *      them they read "Approve Erase the account … again", "Erase the account … is held for
+ *      approval". So such a line is passed to a catalog call only as its `label` or `what`, and
+ *      every `{label}` and `{what}` in the catalogs (the platform's and the app's) stands where a
+ *      label stands: at the start of the message or after ": ", followed by its end, ":", ".",
+ *      ",", " —" or a closing quote.
+ *
  * ALLOWED holds "<file>:<text>" with why a reported string is not screen text: none.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -48,54 +57,6 @@ import { renderMessage } from "@/platform/errors/messages";
 
 const ROOT = join(__dirname, "..");
 const LABEL_ATTRS = new Set(["placeholder", "aria-label", "title", "alt", "label"]);
-
-/**
- * Rule C, SQL: words SQL writes in platform/ (not app/api, which holds none), "<file> SQL <text>",
- * with why each stands — found by TASK-207's scan and reported out of scope (N-107 named a
- * duplicated role's description). Never added to: a new one fails.
- */
-const SQL_WORDS_KNOWN: ReadonlyMap<string, string> = new Map([
-  [
-    'platform/admin/hold-expiry.ts SQL "Approved by "',
-    "a proposal's decision note, kept as recorded; shown as stored (out of scope, TASK-207 report)",
-  ],
-  [
-    'platform/admin/hold-expiry.ts SQL ", never run; withdrawn: "',
-    "the same decision note",
-  ],
-  [
-    'platform/agents/postgres-proposal-store.ts SQL "Approved by "',
-    "a proposal's decision note (three statements)",
-  ],
-  [
-    'platform/agents/postgres-proposal-store.ts SQL ", its run undecided; withdrawn, verified not applied: "',
-    "the same decision note",
-  ],
-  [
-    'platform/agents/postgres-proposal-store.ts SQL ", never run; withdrawn: "',
-    "the same decision note",
-  ],
-  [
-    'platform/agents/postgres-trajectory-store.ts SQL "no activity and no open hold since "',
-    "an abandoned trajectory's recorded reason",
-  ],
-  [
-    'platform/auth/audit.ts SQL "the platform"',
-    "who acted, in a subject's audit export (GDPR Art. 15)",
-  ],
-  [
-    'platform/auth/audit.ts SQL "another account"',
-    "who acted, in a subject's audit export",
-  ],
-  [
-    'platform/auth/user-data.ts SQL "erased with the account it was about"',
-    "the note left in place of an erased one in a trajectory's step",
-  ],
-  [
-    'platform/auth/user-provisioning.ts SQL "A ban on this address carried over to a new account."',
-    "a carried-over ban's recorded reason",
-  ],
-]);
 
 /** "<file>:<literal text>": why it is not screen text. None. */
 const ALLOWED: Readonly<Record<string, string>> = {};
@@ -827,6 +788,114 @@ export function screenCodeSites(
   return out;
 }
 
+// ── Rule E: a label stands where a label stands (TASK-208, N-111) ─────
+
+/** The functions whose result is a label (a held change's or an action's one line). */
+const LABEL_SOURCES = new Set(["describeWhat", "describeAction"]);
+/** A catalog call: its second argument is the message's values. */
+const CATALOG_CALLS = new Set(["t", "d", "tr", "msg", "renderMessage", "shown"]);
+/** The values a label may be passed as. */
+const LABEL_VALUES = new Set(["label", "what"]);
+
+/**
+ * Every `{label}` / `{what}` in `catalog` not standing where a label stands, as
+ * "<key>: <message>". A select or plural branch is checked as its own text.
+ */
+export function misplacedLabels(catalog: unknown, prefix = ""): string[] {
+  if (typeof catalog === "string") {
+    const out: string[] = [];
+    for (const m of catalog.matchAll(/\{(label|what)\}/g)) {
+      const before = catalog.slice(0, m.index);
+      const after = catalog.slice(m.index + m[0].length);
+      const start = before === "" || /(?:^|[{}])$/.test(before) || /: $/.test(before);
+      const end = after === "" || /^(?:[:.,”}]| —)/.test(after);
+      if (!start || !end) out.push(`${prefix}: ${catalog}`);
+    }
+    return out;
+  }
+  if (!catalog || typeof catalog !== "object") return [];
+  return Object.entries(catalog).flatMap(([k, v]) =>
+    misplacedLabels(v, prefix ? `${prefix}.${k}` : k)
+  );
+}
+
+/**
+ * Every place in `src` a label (LABEL_SOURCES' result: directly, or through a const bound to it
+ * in the same function) is given to a call's values object under another name than LABEL_VALUES,
+ * as "<file>:<line> <name>".
+ */
+export function labelAsNounSites(src: Sources, root: string): string[] {
+  const parse = parser(src);
+  const out: string[] = [];
+  const isLabelCall = (e: ts.Node): boolean =>
+    ts.isCallExpression(e) &&
+    ts.isIdentifier(e.expression) &&
+    LABEL_SOURCES.has(e.expression.text);
+  for (const file of src.list()) {
+    const sf = parse(file);
+    if (!sf) continue;
+    // Names bound to a label, per enclosing function (or the file).
+    const scopeOf = (n: ts.Node): ts.Node => {
+      let p = n.parent;
+      while (p && !ts.isFunctionLike(p) && !ts.isSourceFile(p)) p = p.parent;
+      return p ?? sf;
+    };
+    const bound = new Map<ts.Node, Set<string>>();
+    const collect = (n: ts.Node): void => {
+      if (
+        ts.isVariableDeclaration(n) &&
+        ts.isIdentifier(n.name) &&
+        n.initializer &&
+        isLabelCall(strip(n.initializer))
+      ) {
+        const scope = scopeOf(n);
+        if (!bound.has(scope)) bound.set(scope, new Set());
+        bound.get(scope)!.add(n.name.text);
+      }
+      ts.forEachChild(n, collect);
+    };
+    collect(sf);
+    const isBound = (e: ts.Node, name: string): boolean => {
+      for (let p: ts.Node | undefined = e; p; p = p.parent)
+        if (bound.get(p)?.has(name)) return true;
+      return false;
+    };
+    const visit = (n: ts.Node): void => {
+      // A values object: an object literal given to a catalog call (t("k", {…}), d(…),
+      // renderMessage(…), shown(…)).
+      if (
+        ts.isObjectLiteralExpression(n) &&
+        n.parent &&
+        ts.isCallExpression(n.parent) &&
+        ts.isIdentifier(n.parent.expression) &&
+        CATALOG_CALLS.has(n.parent.expression.text)
+      ) {
+        for (const prop of n.properties) {
+          let name: string;
+          let value: ts.Node;
+          if (ts.isPropertyAssignment(prop)) {
+            name = prop.name.getText(sf);
+            value = strip(prop.initializer);
+          } else if (ts.isShorthandPropertyAssignment(prop)) {
+            name = prop.name.text;
+            value = prop.name;
+          } else continue;
+          if (LABEL_VALUES.has(name)) continue;
+          const label =
+            isLabelCall(value) || (ts.isIdentifier(value) && isBound(prop, value.text));
+          if (label)
+            out.push(
+              `${relative(root, file)}:${sf.getLineAndCharacterOfPosition(prop.getStart(sf)).line + 1} ${name}`
+            );
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────
 
 /** A virtual source set rooted at /v. */
@@ -850,15 +919,12 @@ describe("screen text reached indirectly comes from the catalog (TASK-205)", () 
     expect(screenCodeSites(apiSources(), ROOT, { api: true })).toEqual([]);
   });
 
-  it("rule C: no SQL in app/api writes words for a person; platform/ and lib/ only those known (TASK-207)", () => {
-    const found = [
-      ...new Set(sqlWordSites(serverSources(), ROOT).map((f) => f.replace(/:\d+ /, " "))),
-    ];
-    expect(found.filter((f) => f.startsWith("app/"))).toEqual([]);
-    // Each known one, with why it stands; a new one fails, and so does one no longer there.
-    expect(found.filter((f) => !f.startsWith("app/")).sort()).toEqual(
-      [...SQL_WORDS_KNOWN.keys()].sort()
-    );
+  it("rule C: no SQL in app/api, platform/ or lib/ writes words for a person (TASK-207, TASK-208)", () => {
+    // TASK-208 (N-110): the ten known sites (a withdrawn approval's note, an abandoned run's
+    // reason, an erased note's placeholder, a carried-over ban's reason, who acted in an audit
+    // export) store a catalog key and values (platform/errors/recorded-text.ts). None is known:
+    // a new one fails.
+    expect(sqlWordSites(serverSources(), ROOT)).toEqual([]);
   });
 
   it("[self-test] rule C, SQL: a statement's words are found; its codes, keys and casts are not", () => {
@@ -878,6 +944,62 @@ describe("screen text reached indirectly comes from the catalog (TASK-205)", () 
     expect(found).toEqual([
       'app/api/x/route.ts:1 SQL "Duplicated from "',
       'app/api/x/route.ts:6 SQL "Marked executed by the owner"',
+    ]);
+  });
+
+  it("rule E: every {label} and {what} in the catalogs stands where a label stands (TASK-208)", () => {
+    const catalogs = ["messages/en.json", "messages/app/en.json"].filter((f) =>
+      existsSync(join(ROOT, f))
+    );
+    expect(catalogs).toContain("messages/en.json");
+    expect(
+      catalogs.flatMap((f) =>
+        misplacedLabels(JSON.parse(readFileSync(join(ROOT, f), "utf8")))
+      )
+    ).toEqual([]);
+  });
+
+  it("rule E: a held change's or an action's line is given only as a label (TASK-208)", () => {
+    expect(labelAsNounSites(diskSources(), ROOT)).toEqual([]);
+  });
+
+  it("[self-test] rule E: a label inside a sentence is found; one in a label's place is not", () => {
+    expect(
+      misplacedLabels({
+        a: "Approve: {what}",
+        b: "{label}: done.",
+        c: "Approved: {what}. It took effect.",
+        d: "{what} — held for approval",
+        e: "{label} is held for approval.",
+        f: "Approve {label} again: verified",
+        g: "Mark {label} executed",
+        h: "{n, select, one {Withdraw: {label}} other {{label}}}",
+        i: { j: "Approve the held change {label}" },
+        k: "Group health: {label}, score {score}",
+      })
+    ).toEqual([
+      "e: {label} is held for approval.",
+      "f: Approve {label} again: verified",
+      "g: Mark {label} executed",
+      "i.j: Approve the held change {label}",
+    ]);
+    const found = labelAsNounSites(
+      virtual({
+        "components/x/A.tsx": [
+          'const a = t("held", { key: describeWhat(h) });',
+          'const b = t("done", { label: describeWhat(h) });',
+          'function f() { const what = describeWhat(h); return t("x", { what, other: what }); }',
+          'function g() { const key = describeAction(x); return t("y", { key }); }',
+          "const c = setStatus({ text: describeWhat(h) });",
+          "const d = refusedDecisionText(l, r, o, describeWhat(h));",
+        ].join("\n"),
+      }),
+      "/v"
+    );
+    expect(found).toEqual([
+      "components/x/A.tsx:1 key",
+      "components/x/A.tsx:3 other",
+      "components/x/A.tsx:4 key",
     ]);
   });
 

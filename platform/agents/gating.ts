@@ -177,6 +177,9 @@ export async function endHeldTrajectory(
         status: proposal.status,
         decidedBy: proposal.decidedBy ?? "",
         note: (proposal.decisionNote ?? proposal.lastRunError ?? "").slice(0, 500),
+        // The platform's record of the decision (a withdrawal's: who had approved it, when), a
+        // catalog key and values rendered with the note — never English (TASK-208, N-110).
+        ...(proposal.decisionShown ? { decision: proposal.decisionShown } : {}),
         ...(proposal.status === "executed" ? { outputRecorded: false } : {}),
       },
       cost: 0,

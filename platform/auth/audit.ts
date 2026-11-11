@@ -422,9 +422,10 @@ export type ExportedAuditRow = Record<string, unknown> & {
  * staff member's network address, browser, id and notes on every act about the user):
  *   - the user's own act: id, action, when, actor and target, their own address and browser,
  *     the details;
- *   - an act by someone else on the user: id, action, when, `by` ("another account" or "the
- *     platform"), the target (the user) and of the details only EXPORTED_DETAIL_KEYS — no actor
- *     id, address, browser or notes.
+ *   - an act by someone else on the user: id, action, when, `by` (a code: "another_account" or
+ *     "platform" — the export renders it in the catalog's words, EXPORT_ACTOR_KEYS; TASK-208), the
+ *     target (the user) and of the details only EXPORTED_DETAIL_KEYS — no actor id, address,
+ *     browser or notes.
  */
 export async function auditRowsForExport(
   tx: Tx,
@@ -443,8 +444,8 @@ export async function auditRowsForExport(
                          'ip_address', a.ip_address, 'user_agent', a.user_agent,
                          'details', a.details)
                   else jsonb_build_object('id', a.id, 'action', a.action, 'created_at', a.created_at,
-                         'by', case when a.actor_id is null then 'the platform'
-                                    else 'another account' end,
+                         'by', case when a.actor_id is null then 'platform'
+                                    else 'another_account' end,
                          'target_id', a.target_id,
                          'details', coalesce((select jsonb_object_agg(e.key, e.value)
                                                 from jsonb_each(a.details) e

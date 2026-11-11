@@ -108,14 +108,18 @@ beforeEach(() => {
   mockDeleteIdentity.mockResolvedValue({ success: true });
 });
 
+// hostile:id-spelling n/a: neither route reads an account id from the request: the account is the
+// signed-in caller's, from the verified token
 describe("GET /api/account/export", () => {
-  it("returns the caller's own data, uncached, as a download", async () => {
+  it("returns the caller's own data, uncached, as a download [hostile:self]", async () => {
     const res = await exportAs("free");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ profile: { id: CALLERS.free.userId } });
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("content-disposition")).toMatch(/attachment/);
-    expect(mockExport).toHaveBeenCalledWith(CALLERS.free.userId);
+    // The platform's notes in it are in the requester's language (TASK-208): negotiated from
+    // Accept-Language among the catalogs (English only: anything else is English).
+    expect(mockExport).toHaveBeenCalledWith(CALLERS.free.userId, { locale: "en" });
   });
 
   it.each(["anonymous", "guest-token"] as const)("refuses %s", async (caller) => {
@@ -124,13 +128,13 @@ describe("GET /api/account/export", () => {
     expect(mockExport).not.toHaveBeenCalled();
   });
 
-  it("refuses a role without can_export_data", async () => {
+  it("refuses a role without can_export_data [hostile:role]", async () => {
     const res = await exportAs("moderator");
     expect(res.status).toBe(403);
     expect(mockExport).not.toHaveBeenCalled();
   });
 
-  it("gives nothing when any part could not be read (RR-23)", async () => {
+  it("gives nothing when any part could not be read (RR-23) [hostile:store-down]", async () => {
     mockExport.mockResolvedValue({ data: {}, errors: ["strikes store: down"] });
     const res = await exportAs("free");
     expect(res.status).toBe(503);

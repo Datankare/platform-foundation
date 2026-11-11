@@ -7,6 +7,137 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-208 — Residuals 55h: the platform's notes on a record in the catalog, a held change's label that reads right
+
+| Field        | Detail                                                                                   |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| **ID**       | TASK-208                                                                                 |
+| **Type**     | Defect (English the database stored and every reader saw; labels composed into nonsense) |
+| **Severity** | Low (N-110); N-111 Nit; one real screen defect found by the sweep (Low)                  |
+| **Phase**    | Phase 5                                                                                  |
+| **Target**   | v6.0.0 (RC)                                                                              |
+| **Status**   | Fixed on develop (sub-batch 55h of the residuals batch)                                  |
+| **Logged**   | 2026-11-09 (register N-110, N-111, found by sub-batch 55g)                               |
+
+Sub-batch 55h of the residuals register, in both repositories (Playform: its TASK-5009).
+
+**N-110 — the platform's notes on a record are a catalog key and values.** Ten statements in
+platform/ wrote English into rows, on rule C's known list since TASK-207: a withdrawn approval's
+decision note (`'Approved by ' || … || ', never run; withdrawn: ' || $3`, in `hold-expiry.ts` and
+three statements of `postgres-proposal-store.ts`, one in its undecided form), an abandoned run's
+reason (`postgres-trajectory-store.ts`), the note left where an erased one was (`user-data.ts`),
+a carried-over ban's reason (`user-provisioning.ts`) and who acted in a subject's audit export
+(`audit.ts`: "the platform", "another account"). Every reader saw them in English. Now:
+
+- **The record is the catalog's key and values** (`platform/errors/recorded-text.ts`; its words,
+  `recorded-words.ts`; `screens.records.*`): `proposals.decision_shown` keeps a withdrawal's record
+  (who had approved it and when — the catalog's "unknown" when not recorded), and `decision_note`
+  only the note given (why); `users.ban_note` keeps a carried-over ban's note, and `ban_reason` only
+  what a person wrote; a run's step keeps its reason, an erased note's placeholder and a held
+  decision's record (`decision`, beside its `note`) as keys; the audit export's `by` is a code
+  (`platform`, `another_account`). The in-memory stores do the same (their English mirrors,
+  `withdrawalNote` and `undecidedWithdrawalNote`, are gone). The SQL builds the objects inline with
+  `jsonb_build_object` from the same keys (a test reads them from the statements).
+- **Rendered where it is shown:** the subject's data export (`exportUserData`, the only place
+  these reach a person) renders each from the catalog in the requester's language (the route
+  negotiates it from `Accept-Language`); a person's own note is left as written
+  (`renderRecords`).
+- **Rows written before are migrated** by migration 066 (`066_recorded_notes.sql`), matched
+  exactly — a note a person wrote is left as it is; 046's two English decision notes too —
+  replayed twice in `migration-replay.sh` with rows as the code before wrote them, and
+  documented in MIGRATION_v5_to_v6 with a verification query. No stored text is the only record
+  of anything: each migrated note is rebuilt from its key and values word for word.
+- **Rule C's known list is empty:** `screen-text-indirect` fails on any SQL string literal in
+  app/api, platform/ or lib/ that holds words for a person.
+
+**N-111 — a held erasure's label.** The one line for a held erasure was
+`"Erase the account {account}"`, given "an account that is no longer found" (or "an account with
+no address") when the account had no address to show: "Erase the account an account that is no
+longer found". The template now selects on whether an address is given (`known`), so every
+locale writes the whole sentence for each case.
+
+**The sweep** — a label template given a sentence instead of a noun, and the reverse:
+
+- A held change's line (`describeWhat`: "Erase the account …", "Setting …") was put inside
+  sentences: "Mark {label} executed", "Approve {label} again", "Withdraw {label}: …",
+  "Approve the held change {label}", "{key} is held for approval.", "Approve held change
+  {what}", "{label} failed: …" (the jobs screen's action labels are imperatives too). Each now
+  holds the label where a label stands ("Mark executed: {label} — …", "Approve the held change:
+  {label}", "{label}: failed — {reason}"). Six `screens.held.result_*` messages built that way
+  were used nowhere: removed.
+- **Found and fixed — the tenant settings panel said "done" when a decision waits for a second
+  approval.** It read the decision's answer as `pending`, which the route never sends (it answers
+  `pendingApproval`), so an approval that now waits for a second one read "…: done.". It says
+  what the Approvals panel says now ("Approved: … It now waits for a second approval"); the
+  route's answer is a fixture its handler produced (`route-fixtures.test.ts`), and the test fails
+  without the fix.
+- **The guard — rule E of `screen-text-indirect`:** a held change's or an action's line
+  (`describeWhat`, `describeAction`) is given to a catalog call only as its `label` or `what`, and
+  every `{label}` and `{what}` in both catalogs stands where a label stands (at the start or after
+  ": ", followed by the end, ":", ".", ",", " —" or a closing quote); with a `[self-test]`. On the
+  base it reports the tenant panel's `{ key: describeWhat(h) }` and thirteen messages.
+- Every account-naming line (`describeWhat`, `describeAction`) is rendered for each account a
+  hold can name — an address, none, not found — and checked for a doubled noun phrase or a
+  capital mid-line.
+
+**Design check**
+
+- **Reach:** the proposal stores (withdraw, supersede, an undecided run withdrawn), the approval
+  expiry job, the trajectory-retention reaper, provisioning and the address sync (a carried ban),
+  the strike ban and the unban (they clear the note), the soft delete and the erasure register,
+  the data export and its route; the Approvals and tenant settings panels, the Jobs screen and
+  the command bar's confirm step (wording). No route's answer changes but the export's words.
+- **Races:** none new. Each record is written in the statement that decides, bans or reaps, from
+  the row as it was (`decided_by`, `decided_at` read by the same `update`).
+- **Dependencies down:** as before; a record whose key the catalog lacks cannot be stored (each
+  column's check takes only a `screens.` key; a test pins every key the records use to English).
+- **Erasure leftovers:** `decision_shown` is in the erasure's columns and statements (an id in it
+  is replaced; a decision about the account loses its note, its record keeping the catalog's
+  "erased" note); `ban_note` is cleared by the soft delete (`SOFT_DELETE_CLEARED`) and listed in
+  the register. Tested (`user-data-coverage`, `approver-rules`).
+- **Screens × responses:** the export (rendered, tested end to end on Postgres); the tenant
+  settings panel's decision answer (fixture from the handler); labels walked at 1280 and 390 px.
+- **Journeys touched:** the admin console's Approvals and Operator → Tenants → Settings (walked,
+  base and change); the e2e suites, spec by spec.
+- **Weakens a tenant's protection?** No. The catalog is the platform's; nothing new is read
+  across tenants; the export holds what it held, in the requester's words.
+
+**Threat model**
+
+- **Boundary:** what the platform writes into a record, and what a data subject's export and an
+  administrator's screen show of it.
+- **Actors that exist today:** a signed-in user exporting their data; administrators and
+  operators deciding held changes; the platform's jobs. None can do more with this change: every
+  record is written by server code from fixed keys (`jsonb_build_object`), with values the row
+  already held (an approver's id, a time); no route takes one from input; each column's check
+  refuses any other shape.
+- **Bypasses:** a new statement writing English (rule C, at 0); a label composed into a sentence
+  (rule E).
+- **Forgeries:** a person's note that looks like a key is text, not a record: only `decision_shown`
+  and `ban_note` are rendered as records, and a note is a value inside one. A note a person wrote
+  that happens to read like the old English is migrated only on an exact match of the whole
+  composed form.
+- **Legitimate flows:** deciding, withdrawing and expiring holds; the reaper; a ban following an
+  address; exporting one's data; erasing an account.
+- **Agreed before code:** the owner's brief for sub-batch 55h (2026-11-09).
+
+**Self-review**
+
+- **Consumers checked:** every reader of `decisionNote` (the held trajectory's step,
+  `gating.ts`), of `ban_reason` (the export's profile, the moderation types), of a step's `reason`
+  and `note` (the export; no screen shows a step), of the audit export's rows; both proposal
+  stores and the contract kit; the erasure register and its reconciliation tests.
+- **Hostile re-read:** a decided-by that was null ('unknown', migrated to the catalog's word), a
+  note on two lines (migrated whole), a person's note beginning "Approved by" (left), a step note
+  already migrated (not read again: the second application changes nothing), an export row whose
+  `by` is no code (left as it was), a record with an `errors.` key (not rendered as a record).
+- **Found and left (reported to the register):** English the platform's TypeScript writes as a
+  note (not SQL, so rule C does not see it): a lapsed hold's "expired: not run within N days of
+  its approval" and an undecided one's, the decision routes' default notes ("verified that its
+  run did not take effect", "rejected_after_run_failed"…), the action pipeline's superseded
+  notes, a duplicate hold's note, "marked executed by …" in `last_run_error`, the strike ban's
+  "Automatic ban: strike threshold exceeded", and 062's `review_comment`.
+
 ### TASK-207 — Residuals 55g: every screen test answered by its route, a duplicated role's note in the catalog, a job's old failure shown honestly
 
 | Field        | Detail                                                                                          |

@@ -190,6 +190,7 @@ export const SOFT_DELETE_CLEARED: readonly string[] = [
   "date_of_birth",
   "parental_consent_email",
   "ban_reason",
+  "ban_note",
   "timezone",
   "language_preference",
   "last_login_at",
@@ -277,7 +278,8 @@ export async function softDeleteUser(
               `update users
                   set email = null, display_name = '[deleted]', real_name = null,
                       avatar_url = null, date_of_birth = null, parental_consent_email = null,
-                      ban_reason = null, timezone = 'UTC', language_preference = 'en',
+                      ban_reason = null, ban_note = null, timezone = 'UTC',
+                      language_preference = 'en',
                       last_login_at = null, deleted_at = now()
                 where id = $1::uuid and deleted_at is null`,
               [userId]

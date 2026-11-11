@@ -1145,7 +1145,17 @@ export interface ProposalRecord {
   readonly observedVersion?: number;
   readonly decidedBy?: string;
   readonly decidedAt?: string;
+  /** The decider's note, as written (or the system's reason): the record's `note`. */
   readonly decisionNote?: string;
+  /**
+   * The platform's record of how the decision ended, when it keeps one (a withdrawn approval: who
+   * had approved it and when), as a catalog key and values — rendered with decisionNote
+   * (platform/errors/recorded-words.ts decisionWords; TASK-208, N-110). Never English.
+   */
+  readonly decisionShown?: {
+    readonly key: string;
+    readonly params?: Readonly<Record<string, unknown>>;
+  };
   /**
    * Why the last run of this approval failed before taking effect, when one did (review 10 H2):
    * the approval stands, and approving it again runs it again.

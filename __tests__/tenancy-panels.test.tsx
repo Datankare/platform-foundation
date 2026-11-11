@@ -436,8 +436,9 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
     });
   }
   const base = `/api/operator/tenants/${idOf("acme")}`;
-  // The erasure's account is not in this tenant's users: the label says so.
-  const ERASE = "Erase the account an account that is no longer found";
+  // The erasure's account is not in this tenant's users: the label says so — as a noun phrase,
+  // never "Erase the account an account that is no longer found" (TASK-208, N-111).
+  const ERASE = "Erase an account that is no longer found";
   const open = async () => {
     render(<OperatorTenantsView data={{ tenants: ROWS }} />);
     fireEvent.click(screen.getByRole("button", { name: "Settings of Acme" }));
@@ -542,7 +543,7 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
     await open();
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Approve the held change Setting moderation.strike_ban_threshold",
+        name: "Approve the held change: Setting moderation.strike_ban_threshold",
       })
     );
     await screen.findByText(
@@ -586,7 +587,7 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
       const before = reads();
       fireEvent.click(
         screen.getByRole("button", {
-          name: "Approve the held change Setting moderation.strike_ban_threshold",
+          name: "Approve the held change: Setting moderation.strike_ban_threshold",
         })
       );
       await screen.findByText(said);
@@ -617,23 +618,25 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
         "No one in this tenant but its requester and the account it acts on may approve it again or mark it executed (another holder who fails its rules may only withdraw it): decide it here."
       )
     ).toBeDefined();
+    // The proposed copy is approved as any hold; the undecided one only by its three decisions
+    // (this checked a name no template makes, so it held whatever the panel showed).
     expect(
-      screen.queryByRole("button", { name: `Approve the held change ${ERASE} again` })
-    ).toBeNull();
+      screen.getAllByRole("button", { name: `Approve the held change: ${ERASE}` })
+    ).toHaveLength(1);
     expect(
       screen.getByRole("button", {
         // Named in words (TASK-202, N-62): the tool's id was the label.
-        name: `Mark ${ERASE} executed: verified that it took effect`,
+        name: `Mark executed: ${ERASE} — verified that it took effect`,
       })
     ).toBeDefined();
     expect(
       screen.getByRole("button", {
-        name: `Approve ${ERASE} again: verified that it did not take effect`,
+        name: `Approve again: ${ERASE} — verified that it did not take effect`,
       })
     ).toBeDefined();
     fireEvent.click(
       screen.getByRole("button", {
-        name: `Withdraw ${ERASE}: verified that it did not take effect; it will not run`,
+        name: `Withdraw: ${ERASE} — verified that it did not take effect; it will not run`,
       })
     );
     await waitFor(() =>
@@ -648,6 +651,31 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
       decision: "withdraw",
       source: "runtime",
     });
+  });
+
+  it("an approval that now waits for a second one says so — never that it is done (TASK-208)", async () => {
+    const LISTED = "GET /api/operator/tenants/[id]/approvals — a setting's held change";
+    routes(
+      new Map([
+        [`GET ${base}/config`, CONFIG],
+        [`GET ${base}/approvals`, LISTED],
+        [
+          `POST ${base}/approvals/${heldId(LISTED)}`,
+          `${DECIDE} approved, now waiting for a second approval`,
+        ],
+      ])
+    );
+    await open();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Approve the held change: Setting config.dual_control_keys",
+      })
+    );
+    // The decision answers pendingApproval (this read `pending`, and said "… : done.").
+    await screen.findByText(
+      "Approved: Setting config.dual_control_keys. It now waits for a second approval (two-person approval) before it takes effect."
+    );
+    expect(screen.queryByText("Setting config.dual_control_keys: done.")).toBeNull();
   });
 
   it("an undecided duplicate refused approval again says what to do with it (round 8, item 1)", async () => {
@@ -669,7 +697,7 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
     await open();
     fireEvent.click(
       screen.getByRole("button", {
-        name: `Approve ${ERASE} again: verified that it did not take effect`,
+        name: `Approve again: ${ERASE} — verified that it did not take effect`,
       })
     );
     // As the Approvals panel says it (round 17: one reader): an erasure's duplicate is named.

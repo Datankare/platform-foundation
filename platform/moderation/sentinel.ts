@@ -522,7 +522,8 @@ async function updateUserStatus(
             status_changed_at = now(),
             suspended_until = coalesce($4::timestamptz, suspended_until),
             banned_at = case when $5::boolean then now() else banned_at end,
-            ban_reason = case when $5::boolean then $6 else ban_reason end
+            ban_reason = case when $5::boolean then $6 else ban_reason end,
+            ban_note = case when $5::boolean then null else ban_note end
           where id = $1::uuid
           returning cognito_sub`,
         [

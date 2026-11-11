@@ -788,6 +788,25 @@ dbDescribe(`${SUITE} erasure`, () => {
       );
       expect([needle, left.n]).toEqual([needle, 0]);
     }
+    // TASK-208 (N-110): what is left in the note's place is the catalog's key, never English —
+    // in the run's step and on the hold, whose own note is gone.
+    const [held] = await sql(
+      t,
+      `select (select s.step->'output'->'note' from agent_trajectories a,
+                      jsonb_array_elements(a.steps) s(step)
+                where a.id::text = p.trajectory_id and s.step->'output' ? 'note') as step_note,
+              p.decision_note, p.decision_shown
+         from proposals p where p.operation_id = 'op6'`,
+      []
+    );
+    expect(held).toEqual({
+      step_note: { key: "screens.records.note_erased" },
+      decision_note: null,
+      decision_shown: {
+        key: "screens.records.note",
+        params: { note: { key: "screens.records.note_erased" } },
+      },
+    });
     const [listed] = await sql(
       t,
       "select payload->>'reason' as reason from proposals where operation_id = 'op7'",

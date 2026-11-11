@@ -783,6 +783,7 @@ async function restoreAccountStatus(
             account_status = $2::account_status,
             banned_at = null,
             ban_reason = null,
+            ban_note = null,
             status_changed_by = $3,
             status_changed_at = now(),
             suspended_until = case when $2::text = 'suspended' then suspended_until end,

@@ -243,7 +243,7 @@ describe("OperatorJobsView", () => {
       method: "POST",
     });
     expect(screen.getByRole("status").textContent).toBe(
-      `Run test.optout now failed: ${messageOf(refused)}`
+      `Run test.optout now: failed — ${messageOf(refused)}`
     );
   });
 
@@ -300,7 +300,7 @@ describe("OperatorJobsView", () => {
     });
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toBe(
-        "Run test.optout now failed: The request was refused."
+        "Run test.optout now: failed — The request was refused."
       )
     );
   });

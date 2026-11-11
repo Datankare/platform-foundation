@@ -127,7 +127,7 @@ const statusOf = async (id: string): Promise<Row> =>
   (
     await withOwnerTx("operator", (tx) =>
       tx.query(
-        "select account_status, ban_reason, status_changed_by from users where id = $1::uuid",
+        "select account_status, ban_reason, ban_note, status_changed_by from users where id = $1::uuid",
         [id]
       )
     )
@@ -477,6 +477,9 @@ dbDescribe("TASK-185: users.email recorded from the provider's verified claim", 
     expect(await statusOf(sub)).toMatchObject({
       account_status: "banned",
       status_changed_by: "platform:ban-carry-over",
+      // TASK-208 (N-110): the catalog's key, no English reason.
+      ban_reason: null,
+      ban_note: { key: "screens.records.ban_carried_over" },
     });
     expect((await addressAudit(sub))[0]).toMatchObject({
       details: { banCarriedOver: true },

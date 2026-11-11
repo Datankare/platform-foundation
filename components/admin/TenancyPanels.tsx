@@ -1018,8 +1018,11 @@ export function OperatorTenantSettings({
       });
       if (r.ok) {
         setStatus({
-          text: r.body.pending
-            ? t("held", { key: describeWhat(h) })
+          // A decision that now waits for a second approval answers `pendingApproval` (as the
+          // Approvals panel reads it); this read `pending`, which the decision never sends, and
+          // said "done" (TASK-208).
+          text: r.body.pendingApproval
+            ? renderMessage("screens.held.result_waits", { what: describeWhat(h) })
             : t("done", { label: describeWhat(h) }),
           tone: "ok",
         });

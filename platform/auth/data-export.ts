@@ -19,6 +19,11 @@
  * id or notes from the audit trail, no other participant's part of a shared session, and the
  * profile without who changed the account's standing.
  *
+ * The platform's own notes in it are words (TASK-208, N-110): a record stores them as a catalog
+ * key and values (platform/errors/recorded-text.ts) — a ban carried over to the account, who acted
+ * in its audit trail, a run's recorded reason, a decision's record, a note erased — and the export
+ * renders each from the catalog, in the requester's locale (renderRecords).
+ *
  * Sprint 5, Task 5.3
  */
 
@@ -32,6 +37,10 @@ import {
   exportUserTables,
 } from "@/platform/auth/user-data";
 import { READ_FAILED, logCaught } from "@/platform/observability/caught-error";
+import { EXPORT_ACTOR_KEYS, isRecordedText } from "@/platform/errors/recorded-text";
+import { renderRecorded } from "@/platform/errors/recorded-words";
+import { renderShown } from "@/platform/errors/shown-text";
+import { DEFAULT_LOCALE } from "@/platform/errors/messages";
 import { logger } from "@/lib/logger";
 
 /** The error an export over EXPORT_MAX_ROWS rows answers with (nothing is disclosed). */
@@ -75,12 +84,60 @@ export function getExportModules(): ExportModule[] {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * A step's recorded words in `locale` (TASK-208): its `note` and `reason` when the platform
+ * recorded them as a catalog key (an erased note, an abandoned run's reason), and its `decision`
+ * (a held action's record), rendered with its note. A note a person wrote stays as written.
+ */
+function renderStep(step: unknown, locale: string): unknown {
+  if (!isObject(step) || !isObject(step.output)) return step;
+  const output: Record<string, unknown> = { ...step.output };
+  for (const key of ["note", "reason"] as const) {
+    const value = output[key];
+    if (isRecordedText(value)) output[key] = renderRecorded(value, locale);
+  }
+  if (isRecordedText(output.decision))
+    output.decision = renderRecorded(
+      output.decision,
+      locale,
+      typeof output.note === "string" ? output.note : undefined
+    );
+  return { ...step, output };
+}
+
+/**
+ * The platform's notes in an export, in words (TASK-208, N-110): the profile's ban note, who
+ * acted in the audit trail (a code), and every run's steps (any section whose rows have steps).
+ * What a person wrote is left as it is.
+ */
+export function renderRecords(data: Record<string, unknown>, locale: string): void {
+  const profile = data.profile;
+  if (isObject(profile) && isRecordedText(profile.ban_note))
+    data.profile = { ...profile, ban_note: renderRecorded(profile.ban_note, locale) };
+  for (const [name, section] of Object.entries(data)) {
+    if (!Array.isArray(section)) continue;
+    data[name] = section.map((row: unknown) => {
+      if (!isObject(row)) return row;
+      let out = row;
+      if (name === "auditLog" && typeof row.by === "string" && EXPORT_ACTOR_KEYS[row.by])
+        out = { ...out, by: renderShown(EXPORT_ACTOR_KEYS[row.by], locale) };
+      if (Array.isArray(row.steps))
+        out = { ...out, steps: row.steps.map((s: unknown) => renderStep(s, locale)) };
+      return out;
+    });
+  }
+}
+
 /**
  * Collect all of a user's data across all registered modules, without disclosing it. The id is
  * checked first (TASK-145 pattern): a non-UUID never reaches a query.
  */
 async function collectUserData(
-  userId: string
+  userId: string,
+  locale: string = DEFAULT_LOCALE
 ): Promise<{ data: Record<string, unknown>; errors: string[] }> {
   if (!UUID.test(userId)) return { data: {}, errors: ["invalid user id"] };
   const errors: string[] = [];
@@ -119,6 +176,8 @@ async function collectUserData(
       exportData.auditLog = audit;
       sectionRows.auditLog = audit.length;
     });
+    // The platform's notes, in the requester's words (TASK-208).
+    renderRecords(exportData, locale);
   } catch (err) {
     if (err instanceof ExportTooLargeError)
       return { data: {}, errors: [EXPORT_TOO_LARGE] };
@@ -172,12 +231,13 @@ async function collectUserData(
  *
  * Complete or not at all (audit RR-23): when any part cannot be read — a table, a module, the
  * profile — nothing is returned, only the errors, so a partial export is never handed over as
- * the user's data.
+ * the user's data. The platform's notes in it are in `options.locale`'s words (default English).
  */
 export async function exportUserData(
-  userId: string
+  userId: string,
+  options: { readonly locale?: string } = {}
 ): Promise<{ data: Record<string, unknown>; errors: string[] }> {
-  const collected = await collectUserData(userId);
+  const collected = await collectUserData(userId, options.locale);
   if (collected.errors.length > 0) return { data: {}, errors: collected.errors };
   try {
     await recordAudit({

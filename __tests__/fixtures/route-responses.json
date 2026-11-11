@@ -5291,6 +5291,59 @@
       ]
     }
   },
+  "GET /api/operator/tenants/[id]/approvals — a setting's held change": {
+    "status": 200,
+    "body": {
+      "tenantId": "aaaaaaaa-0000-4000-8000-0000000000a1",
+      "approvals": [
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "update_config",
+          "configKey": "config.dual_control_keys",
+          "requester": "00000000-0000-4000-9000-3e7b6d300010",
+          "requiredPermission": "config_manage_safety",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "state": "held",
+          "change": {
+            "key": "config.dual_control_keys",
+            "action": "set",
+            "before": ["signups_enabled", "config.dual_control_keys"],
+            "after": ["signups_enabled", "config.dual_control_keys", "default_language"]
+          },
+          "comment": "Hold language changes too",
+          "reason": {
+            "key": "screens.held.reason_held",
+            "params": {
+              "risk": "restricted",
+              "effects": ["stateWrite"],
+              "effected": "yes"
+            }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        }
+      ]
+    }
+  },
+  "POST /api/operator/tenants/[id]/approvals/[approvalId] — approved, now waiting for a second approval": {
+    "status": 200,
+    "body": {
+      "decision": "approve",
+      "source": "runtime",
+      "outcome": "approved",
+      "applied": false,
+      "pendingApproval": {
+        "id": "00000000-0000-4000-8000-0000000000ff"
+      },
+      "requestId": "req-test"
+    }
+  },
   "POST /api/operator/tenants/[id]/approvals/[approvalId] — an undecided erasure withdrawn": {
     "status": 200,
     "body": {

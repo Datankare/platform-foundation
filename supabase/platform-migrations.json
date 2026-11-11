@@ -66,6 +66,7 @@
     "062_expire_approvals_required.sql",
     "063_applied_migrations_checksum.sql",
     "064_retention_and_migration_order.sql",
-    "065_role_description_note.sql"
+    "065_role_description_note.sql",
+    "066_recorded_notes.sql"
   ]
 }

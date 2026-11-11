@@ -3,7 +3,7 @@
  */
 import React from "react";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
+import { HeldActionsPanel, describeWhat } from "@/components/admin/HeldActionsPanel";
 import { renderMessage } from "@/platform/errors/messages";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
 import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
@@ -189,7 +189,7 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
     const [undecided] = list("GET /api/admin/approvals — a held change, undecided");
     render(<HeldActionsPanel data={{ approvals: [undecided!] }} />);
     const withdraw = screen.getByRole("button", {
-      name: `Withdraw ${LABEL}: verified that it did not take effect; it will not run`,
+      name: `Withdraw: ${LABEL} — verified that it did not take effect; it will not run`,
     });
     fireEvent.click(withdraw);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -213,7 +213,7 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
     const erase = "Erase the account ann@example.com";
     fireEvent.click(
       screen.getByRole("button", {
-        name: `Approve ${erase} again: verified that it did not take effect`,
+        name: `Approve again: ${erase} — verified that it did not take effect`,
       })
     );
     const status = await screen.findByRole("status");
@@ -225,7 +225,7 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
     // The row stays, with its Withdraw control.
     expect(
       screen.getByRole("button", {
-        name: `Withdraw ${erase}: verified that it did not take effect; it will not run`,
+        name: `Withdraw: ${erase} — verified that it did not take effect; it will not run`,
       })
     ).toBeDefined();
   });
@@ -392,5 +392,59 @@ describe("HeldActionsPanel — what became of the approval (TASK-194 round 16)",
     expect(
       refusedDecisionText("set_entitlement_group_active", claimLost, body)
     ).not.toMatch(/stale|approve it again/);
+  });
+});
+
+describe("a held change's one line reads right whatever the account (TASK-208, N-111)", () => {
+  // Every account-naming label, with each account a hold can name: an address, one with none,
+  // one no longer found. A template given a phrase where it expects an address read "Erase the
+  // account an account that is no longer found".
+  const LABELS = [
+    "change_user_role",
+    "purge_user_data",
+    "block_user_feature",
+    "unblock_user_feature",
+  ];
+  const TARGETS: Record<string, NonNullable<PendingApproval["summary"]>["target"]> = {
+    address: { id: "u1", email: "ann@example.com" },
+    "no address": { id: "u1" },
+    "not found": { notFound: true },
+  };
+  /** A noun phrase said twice in a row ("the account an account"), or a capital mid-line. */
+  const misComposed = (text: string) =>
+    /\b(\w+) (?:a|an|the) \1\b/i.test(text) ||
+    /\b(?:the|a|an) \w+ (?:a|an|the) \w+/i.test(text.replace(/“[^”]*”/g, "")) ||
+    /[a-z,] (?:An?|The) [a-z]/.test(text);
+
+  it.each(LABELS.flatMap((label) => Object.keys(TARGETS).map((t) => [label, t])))(
+    "%s, its account %s",
+    (label, target) => {
+      const text = describeWhat({
+        label,
+        summary: { target: TARGETS[target], feature: "translate" },
+      });
+      expect([text, misComposed(text)]).toEqual([text, false]);
+    }
+  );
+
+  it("an erasure names the account by address, or says it is no longer found", () => {
+    const erase = (t: string) =>
+      describeWhat({ label: "purge_user_data", summary: { target: TARGETS[t] } });
+    expect(erase("address")).toBe("Erase the account ann@example.com");
+    expect(erase("not found")).toBe("Erase an account that is no longer found");
+    expect(erase("no address")).toBe("Erase an account with no address");
+  });
+
+  it("[self-test] the check finds the doubled phrase this read before", () => {
+    expect(misComposed("Erase the account an account that is no longer found")).toBe(
+      true
+    );
+    expect(misComposed("Give An account not found in this tenant the role “x”")).toBe(
+      true
+    );
+    expect(misComposed("Erase an account that is no longer found")).toBe(false);
+    expect(misComposed("Block “translate” for an account that is no longer found")).toBe(
+      false
+    );
   });
 });

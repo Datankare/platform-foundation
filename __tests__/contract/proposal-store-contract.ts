@@ -8,6 +8,7 @@
  */
 
 import type { AgentIdentity, ProposalStore } from "@/platform/kernel";
+import { decisionWords } from "@/platform/errors/recorded-words";
 
 const actor: AgentIdentity = {
   actorType: "agent",
@@ -148,7 +149,13 @@ export function runProposalStoreContract(fx: ProposalStoreContractFixtures): voi
       const w = await store.withdraw(p.proposalId, "bob", "its run failed");
       expect(w?.status).toBe("rejected");
       expect(w?.decidedBy).toBe("bob");
-      expect(w?.decisionNote).toMatch(
+      // TASK-208: the note as given; who had approved it and when, the catalog's record of it.
+      expect(w?.decisionNote).toBe("its run failed");
+      expect(w?.decisionShown).toEqual({
+        key: "screens.records.withdrawn_after_approval",
+        params: { approvedBy: "alice", approvedAt: expect.any(String) },
+      });
+      expect(decisionWords(w!)).toMatch(
         /^Approved by alice at .+, never run; withdrawn: its run failed$/
       );
       // Rejected: it can be neither used nor withdrawn again.

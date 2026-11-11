@@ -59,12 +59,21 @@ export function approverText(permission: string): string {
   }
 }
 
-/** The account a hold acts on, by address (never its id). */
-function accountText(summary: PendingApproval["summary"]): string | undefined {
+/**
+ * The account a hold acts on, by address (never its id) — or, with no address to give, the
+ * catalog's words for it ("an account that is no longer found"). `known` says which: a template
+ * that names "the account {account}" takes only an address (TASK-208, N-111: it read "Erase the
+ * account an account that is no longer found").
+ */
+function accountText(
+  summary: PendingApproval["summary"]
+): { readonly text: string; readonly known: boolean } | undefined {
   const target = summary?.target;
   if (!target) return undefined;
-  if (target.notFound) return t("account_missing");
-  return target.email ?? t("requester_no_email");
+  if (target.notFound) return { text: t("account_missing"), known: false };
+  return target.email
+    ? { text: target.email, known: true }
+    : { text: t("requester_no_email"), known: false };
 }
 
 /** A tool's name in words (the catalog's), for a hold whose details the viewer does not see. */
@@ -86,12 +95,15 @@ export function describeWhat(
       ? t("what_config_reset", { key: a.change.key })
       : t("what_config", { key: a.change.key });
   const s = a.summary;
-  const account = accountText(s);
+  const named = accountText(s);
+  const account = named?.text;
   switch (a.label) {
     case "change_user_role":
       return account ? t("what_role_change", { account }) : toolText(a.label);
     case "purge_user_data":
-      return account ? t("what_erasure", { account }) : toolText(a.label);
+      return named
+        ? t("what_erasure", { account: named.text, known: String(named.known) })
+        : toolText(a.label);
     case "block_user_feature":
       return account && s?.feature
         ? t("what_block", { account, feature: s.feature })

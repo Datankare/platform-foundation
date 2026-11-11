@@ -16,6 +16,7 @@ import { requireActor, requirePermission } from "@/platform/auth/middleware";
 import { EXPORT_TOO_LARGE, exportUserData } from "@/platform/auth/data-export";
 import { EXPORT_MAX_ROWS } from "@/platform/auth/user-data";
 import { apiError } from "@/platform/errors";
+import { negotiateLocale } from "@/platform/errors/messages";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { logger } from "@/lib/logger";
@@ -34,7 +35,10 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   const permitted = await requirePermission(actor.user.sub, "can_export_data");
   if (permitted.error) return permitted.error;
 
-  const { data, errors } = await exportUserData(actor.id);
+  // The platform's notes in the export, in the requester's language (TASK-208).
+  const { data, errors } = await exportUserData(actor.id, {
+    locale: negotiateLocale(request.headers.get("accept-language")),
+  });
   if (errors.length > 0) {
     if (errors.includes("users: no live user row")) {
       return apiError("account.not_found", { request });

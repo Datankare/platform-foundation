@@ -49,6 +49,7 @@ import {
   dropTestTenants,
   type TestTenant,
 } from "../helpers/db";
+import { exportUserData } from "@/platform/auth/data-export";
 
 type Row = Record<string, unknown>;
 
@@ -316,9 +317,19 @@ dbDescribe(`${SUITE} checkAccountStatus / isInGoodStanding`, () => {
     expect(await userRow(t, fresh)).toMatchObject({
       account_status: "banned",
       status_changed_by: "platform:ban-carry-over",
+      // TASK-208 (N-110): the platform's note is the catalog's key; no English reason is stored.
+      ban_reason: null,
+      ban_note: { key: "screens.records.ban_carried_over" },
     });
     const audit = await t.run(() => withTenantTx((tx) => auditRowsForUser(tx, fresh, 5)));
     expect(audit[0].details).toMatchObject({ banCarriedOver: true });
+    // The account's own export says it in words.
+    const exported = await t.run(() => exportUserData(fresh, { locale: "en" }));
+    expect(exported.errors).toEqual([]);
+    expect(exported.data.profile).toMatchObject({
+      ban_reason: null,
+      ban_note: "A ban on this address carried over to a new account.",
+    });
   });
 
   it("starts a new identity banned when its address was erased while banned (hash only)", async () => {

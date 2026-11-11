@@ -315,3 +315,38 @@ describe("ActionConfirmPanel: its states", () => {
     expect(screen.queryByText(/u-9/)).toBeNull();
   });
 });
+
+describe("describeAction: an account-naming action reads right whatever the account (TASK-208, N-111)", () => {
+  const ACCOUNTS: Record<string, { email: string | null; found: boolean } | undefined> = {
+    "an address": { email: "ann@example.com", found: true },
+    "no address": { email: null, found: true },
+    "not found": { email: null, found: false },
+  };
+  // A noun phrase said twice in a row ("the account an account"), or a capital mid-line.
+  const misComposed = (text: string) =>
+    /\b(\w+) (?:a|an|the) \1\b/i.test(text) ||
+    /\b(?:the|a|an) \w+ (?:a|an|the) \w+/i.test(text.replace(/“[^”]*”/g, "")) ||
+    /[a-z,] (?:An?|The) [a-z]/.test(text);
+  it.each(
+    [
+      "change_user_role",
+      "purge_user_data",
+      "block_user_feature",
+      "unblock_user_feature",
+    ].flatMap((tool) => Object.keys(ACCOUNTS).map((a) => [tool, a]))
+  )("%s, %s", (tool, a) => {
+    const text = describeAction(
+      {
+        tool,
+        input: {
+          user_id: "u1",
+          user_identifier: "u1",
+          feature: "translate",
+          new_role: "mod",
+        },
+      },
+      ACCOUNTS[a]
+    );
+    expect([text, misComposed(text)]).toEqual([text, false]);
+  });
+});

@@ -51,6 +51,7 @@ import {
   trajectoryHasRoom,
 } from "@/platform/errors/json-limits";
 import { resolveTrajectoryMaxSegments } from "./budget-config";
+import { abandonedReason } from "@/platform/errors/recorded-text";
 
 /** A step's size as stored; a value JSON cannot hold (in memory only) counts as nothing. */
 function stepBytes(step: Step): number {
@@ -477,7 +478,8 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
         output: {
           status: "failed",
           was: t.status,
-          reason: `no activity and no open hold since ${new Date(until).toISOString()}`,
+          // A catalog key and values, never English (TASK-208, N-110).
+          reason: abandonedReason(new Date(until).toISOString()),
         },
         cost: 0,
         durationMs: 0,

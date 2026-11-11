@@ -101,11 +101,12 @@ export function lapsedNote(days: number): string {
 
 /**
  * Withdraw every lapsed approval `tx` can see — on the owner connection (the job), every
- * tenant's. The note keeps who had approved it and when, as ProposalStore.withdraw does. Each
- * withdrawal is recorded in its tenant's audit log, by the system (review 8 L5: the job left no
- * record), in the same statement: no record, no withdrawal. The hold's trajectory ends in the same
- * statement too (TASK-193: it was left awaiting_retry or running for good): every open segment of
- * its chain is `failed`, unless another open hold not withdrawn here is on any segment of it.
+ * tenant's. The record keeps who had approved it and when (a catalog key and values, TASK-208),
+ * the note why, as ProposalStore.withdraw does. Each withdrawal is recorded in its tenant's audit
+ * log, by the system (review 8 L5: the job left no record), in the same statement: no record, no
+ * withdrawal. The hold's trajectory ends in the same statement too (TASK-193: it was left
+ * awaiting_retry or running for good): every open segment of its chain is `failed`, unless another
+ * open hold not withdrawn here is on any segment of it.
  */
 export async function expireLapsedApprovedHolds(
   tx: Tx,
@@ -123,9 +124,10 @@ export async function expireLapsedApprovedHolds(
      withdrawn as (
        update proposals p
           set status = 'rejected', decided_by = $2,
-              decision_note = 'Approved by ' || coalesce(l.decided_by, 'unknown') || ' at '
-                || coalesce(to_char(l.decided_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'unknown')
-                || ', never run; withdrawn: ' || $3,
+              decision_note = $3,
+              decision_shown = jsonb_build_object('key', 'screens.records.withdrawn_after_approval', 'params', jsonb_build_object(
+                  'approvedBy', coalesce(to_jsonb(l.decided_by), jsonb_build_object('key', 'screens.records.unknown')),
+                  'approvedAt', coalesce(to_jsonb(to_char(l.decided_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')), jsonb_build_object('key', 'screens.records.unknown')))),
               decided_at = now(), updated_at = now()
          from lapsed l
         where p.tenant_id = l.tenant_id and p.id = l.id and p.status = 'approved'

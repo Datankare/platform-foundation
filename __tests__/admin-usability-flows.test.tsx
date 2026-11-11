@@ -89,7 +89,7 @@ describe("Approvals: each kind of held change in words (N-61)", () => {
     ],
     [
       { label: "purge_user_data", summary: { target } },
-      held("what_erasure", { account: "member@example.test" }),
+      held("what_erasure", { account: "member@example.test", known: "true" }),
     ],
     [
       { label: "block_user_feature", summary: { target, feature: "translate" } },

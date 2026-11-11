@@ -21,6 +21,7 @@ import { generateUuid } from "./utils";
 import { listAgentGoals } from "./goals";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
+import { withdrawalRecord } from "@/platform/errors/recorded-text";
 
 export type {
   CreateProposalArgs,
@@ -94,19 +95,6 @@ export interface RecoveryTrajectories {
     trajectoryId: string,
     operationId: string
   ): { readonly recorded: boolean; readonly trigger?: string };
-}
-
-/** The note a withdrawn approval keeps: who had approved it and when, then why it was withdrawn. */
-export function withdrawalNote(approved: ProposalRecord, note: string): string {
-  return `Approved by ${approved.decidedBy ?? "unknown"} at ${approved.decidedAt ?? "unknown"}, never run; withdrawn: ${note}`;
-}
-
-/**
- * The note an undecided run withdrawn without running keeps (TASK-194 round 5): who had approved
- * it and when, that its run was undecided, then why — the decider verified it did not take effect.
- */
-export function undecidedWithdrawalNote(approved: ProposalRecord, note: string): string {
-  return `Approved by ${approved.decidedBy ?? "unknown"} at ${approved.decidedAt ?? "unknown"}, its run undecided; withdrawn, verified not applied: ${note}`;
 }
 
 export class InMemoryProposalStore implements ProposalStore {
@@ -275,10 +263,12 @@ export class InMemoryProposalStore implements ProposalStore {
         : {
             decidedBy,
             decidedAt: now,
-            decisionNote:
-              resolution === "rejected" && current
-                ? undecidedWithdrawalNote(current, note)
-                : note,
+            // Withdrawn without running, verified not applied (TASK-194 round 5): the record keeps
+            // who had approved it and when — a catalog key and values (TASK-208, N-110).
+            decisionNote: note,
+            ...(resolution === "rejected" && current
+              ? { decisionShown: withdrawalRecord(current, "undecided") }
+              : {}),
             runToken: undefined,
             runAtomic: undefined,
           }
@@ -352,7 +342,9 @@ export class InMemoryProposalStore implements ProposalStore {
       status: "rejected",
       decidedBy,
       decidedAt: now,
-      decisionNote: withdrawalNote(current, note),
+      // Who had approved it and when, as the catalog's record (TASK-208, N-110); the note is why.
+      decisionNote: note,
+      decisionShown: withdrawalRecord(current),
       updatedAt: now,
     };
     records.set(proposalId, updated);

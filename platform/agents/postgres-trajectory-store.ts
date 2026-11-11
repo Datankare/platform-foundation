@@ -484,7 +484,8 @@ export class PostgresTrajectoryStore implements TrajectoryStore {
                            'action', $5::text, 'boundary', 'cognition',
                            'input', jsonb_build_object('reaper', 'agents.trajectory-retention'),
                            'output', jsonb_build_object('status', 'failed', 'was', a.was,
-                             'reason', 'no activity and no open hold since ' || to_char(a.until at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')),
+                             'reason', jsonb_build_object('key', 'screens.records.trajectory_abandoned', 'params',
+                               jsonb_build_object('since', to_char(a.until at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')))),
                            'cost', 0, 'durationMs', 0,
                            'timestamp', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))
                     else t.steps end

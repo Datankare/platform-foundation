@@ -69,6 +69,7 @@ import { logger } from "@/lib/logger";
 import { WRITE_FAILED, logCaught } from "@/platform/observability/caught-error";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { bindingOf } from "@/platform/auth/account-identity";
+import { BAN_CARRIED_OVER } from "@/platform/errors/recorded-text";
 
 /** The role every new account starts with (seeded by the schema baseline). */
 export const DEFAULT_USER_ROLE = "free";
@@ -276,9 +277,12 @@ export async function upgradeLegacyErasureHashes(limit = 500): Promise<number> {
   });
 }
 
-/** The ban reason recorded when a ban follows an address to another account (A-11; the
- * provisioning insert writes the same text). */
-export const CARRIED_BAN_REASON = "A ban on this address carried over to a new account.";
+/**
+ * The note recorded on an account when a ban follows its address to it (A-11), in users.ban_note:
+ * the catalog's key, never English (TASK-208, N-110; migration 066). users.ban_reason is for what
+ * a person wrote, and stays empty here. The provisioning insert writes the same key.
+ */
+export const CARRIED_BAN_NOTE = BAN_CARRIED_OVER;
 
 /**
  * Whether a ban follows `email` (as stored: storedEmail) to the account `accountId` (A-11): another
@@ -453,12 +457,12 @@ export async function provisionAccount(
                 // last_login_at: the sign-in that gave this identity its token was recorded
                 // before the row existed, under the subject (auth-events, TASK-185).
                 `insert into users (id, cognito_sub, email, email_verified, role_id,
-                                    account_status, banned_at, ban_reason, status_changed_by,
+                                    account_status, banned_at, ban_note, status_changed_by,
                                     status_changed_at, last_login_at)
                  select $1::uuid, $2, $3, $4, $5::uuid,
                         case when $6 then 'banned' else 'active' end::account_status,
                         case when $6 then now() end,
-                        case when $6 then 'A ban on this address carried over to a new account.' end,
+                        case when $6 then jsonb_build_object('key', 'screens.records.ban_carried_over') end,
                         case when $6 then 'platform:ban-carry-over' end,
                         case when $6 then now() end,
                         (select max(created_at) from audit_log

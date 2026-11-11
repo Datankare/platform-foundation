@@ -80,6 +80,7 @@ import {
   runCommandBarAction,
 } from "@/app/api/admin/ai/command-bar";
 import type { AdminToolId } from "@/app/api/admin/ai/tool-permissions";
+import { decisionWords } from "@/platform/errors/recorded-words";
 
 // hostile:id-spelling n/a: requester and approver are compared by sameId (the id-equality guard holds every comparison to it); a requester spelled otherwise is no-eligible-approver.test's case
 
@@ -583,7 +584,8 @@ describe("approving (X-10, B-10, RR-19)", () => {
     const after = (await proposals.getById(id))!;
     expect(after.status).toBe("rejected");
     expect(after.decidedBy).toBe(CALLERS.super_admin.userId);
-    expect(after.decisionNote).toMatch(
+    expect(after.decisionNote).toBe("target gone");
+    expect(decisionWords(after)).toMatch(
       new RegExp(
         `^Approved by ${CALLERS.super_admin.userId} at .+, never run; withdrawn: target gone$`
       )
@@ -611,7 +613,7 @@ describe("approving (X-10, B-10, RR-19)", () => {
       const after = (await proposals.getById(id))!;
       expect(after.status).toBe("rejected");
       expect(after.decidedBy).toBe("system:approval-expiry");
-      expect(after.decisionNote).toMatch(
+      expect(decisionWords(after)).toMatch(
         /never run; withdrawn: expired: not run within 7 days/
       );
       expect(ran).toEqual([]);

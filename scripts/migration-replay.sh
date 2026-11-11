@@ -209,6 +209,66 @@ SQL
   || { echo "✗ 065 applied twice changed a migrated role again"; exit 1; }
 "${PSQL[@]}" -c "DELETE FROM public.roles WHERE name IN ('replay_065_copy', 'replay_065_written')" >/dev/null
 
+step "066: the platform's notes are a catalog key and values; ones written before are migrated, once — a person's are not"
+# Rows as the code before 066 wrote them (a withdrawal's composed note, its undecided form with
+# who and when unknown, the erased note's placeholder, one of 046's notes, a carried-over ban's
+# reason, a run's steps), and a person's own words beside each; 066 applied again migrates them.
+"${PSQL[@]}" --single-transaction >/dev/null <<'SQL'
+INSERT INTO public.proposals (tenant_id, id, operation_id, session_id, trajectory_id, label, actor_id, actor_role, effective_risk, status, decided_by, decision_note)
+SELECT t.id, v.id::uuid, v.op, 'replay', 'replay', 'replay', 'replay', 'replay', 'low', v.status, 'replay', v.note
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (VALUES
+         ('06600000-0000-4000-8000-000000000001', 'replay-066-a', 'rejected', 'Approved by alice at 2026-01-02T03:04:05.000Z, never run; withdrawn: expired: not run within 1 day of its approval'),
+         ('06600000-0000-4000-8000-000000000002', 'replay-066-b', 'rejected', E'Approved by unknown at unknown, its run undecided; withdrawn, verified not applied: checked\non two lines'),
+         ('06600000-0000-4000-8000-000000000003', 'replay-066-c', 'rejected', 'erased with the account it was about'),
+         ('06600000-0000-4000-8000-000000000004', 'replay-066-d', 'superseded', 'Superseded by migration 046: another proposal for this operation is newer.'),
+         ('06600000-0000-4000-8000-000000000005', 'replay-066-e', 'rejected', 'Approved by hand, as a person wrote it')
+       ) AS v(id, op, status, note);
+INSERT INTO public.users (tenant_id, id, role_id, account_status, banned_at, ban_reason)
+SELECT t.id, ('0660000' || n || '-0000-4000-8000-000000000000')::uuid, r.id, 'banned', now(),
+       CASE n WHEN 1 THEN 'A ban on this address carried over to a new account.' ELSE 'Spam, as a moderator wrote it' END
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (SELECT id FROM public.roles ORDER BY name LIMIT 1) r, generate_series(1, 2) n;
+INSERT INTO public.agent_trajectories (tenant_id, id, trigger, subject_kind, subject_id, steps)
+SELECT t.id, '06600000-0000-4000-8000-0000000000a1', 'replay', 'agent', 'replay-066', '[
+   {"action": "trajectory-abandoned", "output": {"status": "failed", "reason": "no activity and no open hold since 2026-01-01T00:00:00Z"}},
+   {"action": "replay", "output": {"note": "Approved by bob at 2026-01-01T00:00:00.000Z, never run; withdrawn: gone"}},
+   {"action": "replay", "output": {"note": "erased with the account it was about"}},
+   {"action": "replay", "output": {"note": "Approved by hand"}}]'::jsonb
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t;
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/066_recorded_notes.sql" >/dev/null
+r066() {
+  "${PSQL[@]}" -At <<'SQL'
+SELECT string_agg(coalesce(decision_note, '-') || '|' || coalesce(decision_shown::text, '-'), E'\n' ORDER BY id)
+  FROM public.proposals WHERE operation_id LIKE 'replay-066-%';
+SELECT string_agg(coalesce(ban_reason, '-') || '|' || coalesce(ban_note::text, '-'), E'\n' ORDER BY id)
+  FROM public.users WHERE id::text LIKE '0660000%';
+SELECT steps::text FROM public.agent_trajectories WHERE subject_id = 'replay-066';
+SQL
+}
+expected066='expired: not run within 1 day of its approval|{"key": "screens.records.withdrawn_after_approval", "params": {"approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "alice"}}
+checked
+on two lines|{"key": "screens.records.withdrawn_undecided", "params": {"approvedAt": {"key": "screens.records.unknown"}, "approvedBy": {"key": "screens.records.unknown"}}}
+-|{"key": "screens.records.note", "params": {"note": {"key": "screens.records.note_erased"}}}
+-|{"key": "screens.records.superseded_newer_proposal"}
+Approved by hand, as a person wrote it|-
+-|{"key": "screens.records.ban_carried_over"}
+Spam, as a moderator wrote it|-
+[{"action": "trajectory-abandoned", "output": {"reason": {"key": "screens.records.trajectory_abandoned", "params": {"since": "2026-01-01T00:00:00Z"}}, "status": "failed"}}, {"action": "replay", "output": {"note": "gone", "decision": {"key": "screens.records.withdrawn_after_approval", "params": {"approvedAt": "2026-01-01T00:00:00.000Z", "approvedBy": "bob"}}}}, {"action": "replay", "output": {"note": {"key": "screens.records.note_erased"}}}, {"action": "replay", "output": {"note": "Approved by hand"}}]'
+got066=$(r066)
+[ "$got066" = "$expected066" ] \
+  || { echo "✗ 066 did not migrate the platform's English notes to their keys and values (or changed a person's):"; diff <(echo "$expected066") <(echo "$got066") || true; exit 1; }
+before=$(schema_snapshot)
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/066_recorded_notes.sql" >/dev/null
+[ "$before" = "$(schema_snapshot)" ] && [ "$(r066)" = "$expected066" ] \
+  || { echo "✗ 066 applied twice changed a migrated row again"; exit 1; }
+"${PSQL[@]}" >/dev/null <<'SQL'
+DELETE FROM public.proposals WHERE operation_id LIKE 'replay-066-%';
+DELETE FROM public.users WHERE id::text LIKE '0660000%';
+DELETE FROM public.agent_trajectories WHERE subject_id = 'replay-066';
+SQL
+
 step "checks"
 "${PSQL[@]}" -At <<'SQL'
 DO $$

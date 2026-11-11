@@ -755,13 +755,25 @@ dbDescribe(
         expect([needle, left.rows.map((r) => r.where)]).toEqual([needle, []]);
       }
       const kept = await withOwnerTx("operator", (tx) =>
-        tx.query<{ status: string; decision_note: string | null }>(
-          "select status, decision_note from proposals where id = $1::uuid",
+        tx.query<{
+          status: string;
+          decision_note: string | null;
+          decision_shown: unknown;
+        }>(
+          "select status, decision_note, decision_shown from proposals where id = $1::uuid",
           [id]
         )
       );
+      // TASK-208: the placeholder is the catalog's key, the note as written gone.
       expect(kept.rows).toEqual([
-        { status: "rejected", decision_note: "erased with the account it was about" },
+        {
+          status: "rejected",
+          decision_note: null,
+          decision_shown: {
+            key: "screens.records.note",
+            params: { note: { key: "screens.records.note_erased" } },
+          },
+        },
       ]);
     });
   }

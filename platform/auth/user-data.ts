@@ -48,6 +48,7 @@
 import type { Tx } from "@/platform/data";
 import { AUDIT_TEXT_KEYS } from "@/platform/auth/audit-details";
 import { PURGE_REASONS } from "@/platform/gdpr/types";
+import { NOTE_ERASED, NOTE_ONLY } from "@/platform/errors/recorded-text";
 
 /**
  * The schema's free-text keys as a SQL text array (TASK-194 rebase, I-1): built from
@@ -70,6 +71,12 @@ const PURGE_REASON_ARRAY = `array[${PURGE_REASONS.map((r) => {
     throw new Error(`purge reason ${JSON.stringify(r)} is not a plain code`);
   return `'${r}'`;
 }).join(", ")}]::text[]`;
+
+/**
+ * The note left where one about an erased account was (TASK-208, N-110): the catalog's key, never
+ * English — rendered where the record is shown (the subject's export, recorded-text.ts).
+ */
+const NOTE_ERASED_SQL = `jsonb_build_object('key', '${NOTE_ERASED.key}')`;
 
 /**
  * The user's id as a LIKE pattern for "anywhere in this text" (round 10, P-A): a cheap prefilter
@@ -308,8 +315,7 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     columns: [],
     count:
       "select count(*)::int as n from agent_trajectories a where jsonb_typeof(a.steps) = 'array' and exists (select 1 from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))) and exists (select 1 from jsonb_array_elements(a.steps) s(step) where s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))))",
-    erase:
-      "update agent_trajectories a set steps = (select coalesce(jsonb_agg(case when s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))) then jsonb_set(s.step, '{output,note}', to_jsonb('erased with the account it was about'::text)) else s.step end order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n)) where jsonb_typeof(a.steps) = 'array' and exists (select 1 from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))) and exists (select 1 from jsonb_array_elements(a.steps) s(step) where s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))))",
+    erase: `update agent_trajectories a set steps = (select coalesce(jsonb_agg(case when s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))) then jsonb_set(s.step, '{output,note}', ${NOTE_ERASED_SQL}) else s.step end order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n)) where jsonb_typeof(a.steps) = 'array' and exists (select 1 from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))) and exists (select 1 from jsonb_array_elements(a.steps) s(step) where s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))))`,
     exportReason: "another account's held action about the user (proposalsAbout)",
   },
   {
@@ -322,16 +328,17 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
       "proposals.payload",
       "proposals.effects",
       "proposals.decision_note",
+      "proposals.decision_shown",
       "proposals.last_run_error",
       "proposals.actor_identity",
     ],
     count:
-      "select count(*)::int as n from proposals where payload::text ~* $1::text or effects::text ~* $1::text or coalesce(decision_note, '') ~* $1::text or coalesce(last_run_error, '') ~* $1::text or coalesce(actor_identity::text, '') ~* $1::text",
+      "select count(*)::int as n from proposals where payload::text ~* $1::text or effects::text ~* $1::text or coalesce(decision_note, '') ~* $1::text or coalesce(decision_shown::text, '') ~* $1::text or coalesce(last_run_error, '') ~* $1::text or coalesce(actor_identity::text, '') ~* $1::text",
     // Round 8, item 3: a decided hold about the account (its id a value in the payload) loses the
     // free text written about it — the decider's note, and the requester's reason (a
     // restriction's; an erasure's reason is a listed code, PURGE_REASONS, and stays) — not only
     // the id in them.
-    erase: `update proposals set payload = case when jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and jsonb_typeof(payload) = 'object' then regexp_replace(payload::text, $1::text, 'erased', 'gi')::jsonb - (case when label = 'purge_user_data' and payload->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end) else regexp_replace(payload::text, $1::text, 'erased', 'gi')::jsonb end, effects = regexp_replace(effects::text, $1::text, 'erased', 'gi')::jsonb, decision_note = case when decision_note is not null and jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) then 'erased with the account it was about' else regexp_replace(decision_note, $1::text, 'erased', 'gi') end, last_run_error = regexp_replace(last_run_error, $1::text, 'erased', 'gi'), actor_identity = regexp_replace(actor_identity::text, $1::text, 'erased', 'gi')::jsonb where payload::text ~* $1::text or effects::text ~* $1::text or coalesce(decision_note, '') ~* $1::text or coalesce(last_run_error, '') ~* $1::text or coalesce(actor_identity::text, '') ~* $1::text`,
+    erase: `update proposals set payload = case when jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and jsonb_typeof(payload) = 'object' then regexp_replace(payload::text, $1::text, 'erased', 'gi')::jsonb - (case when label = 'purge_user_data' and payload->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end) else regexp_replace(payload::text, $1::text, 'erased', 'gi')::jsonb end, effects = regexp_replace(effects::text, $1::text, 'erased', 'gi')::jsonb, decision_note = case when decision_note is not null and jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) then null else regexp_replace(decision_note, $1::text, 'erased', 'gi') end, decision_shown = case when decision_note is not null and jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) then jsonb_set(coalesce(regexp_replace(decision_shown::text, $1::text, 'erased', 'gi')::jsonb, jsonb_build_object('key', '${NOTE_ONLY}', 'params', '{}'::jsonb)), '{params,note}', ${NOTE_ERASED_SQL}) else regexp_replace(decision_shown::text, $1::text, 'erased', 'gi')::jsonb end, last_run_error = regexp_replace(last_run_error, $1::text, 'erased', 'gi'), actor_identity = regexp_replace(actor_identity::text, $1::text, 'erased', 'gi')::jsonb where payload::text ~* $1::text or effects::text ~* $1::text or coalesce(decision_note, '') ~* $1::text or coalesce(decision_shown::text, '') ~* $1::text or coalesce(last_run_error, '') ~* $1::text or coalesce(actor_identity::text, '') ~* $1::text`,
     exportReason:
       "another account's decided action about the user; its effect is in the user's profile and audit trail",
   },
@@ -861,6 +868,8 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
     "a child account's parent's address, deleted with the child's row (profile)",
   "users.ban_reason":
     "staff's reason for the account's own ban, deleted with its row (profile)",
+  "users.ban_note":
+    "the platform's note on the account's own ban (a catalog key: TASK-208), deleted with its row (profile)",
   // The record of an administrative act, kept by design.
   "agent_approval_policy.decided_by":
     "the approval policy's author (an administrative act)",

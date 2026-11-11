@@ -61,7 +61,7 @@
 import { withTenantTx } from "@/platform/data";
 import { recordAudit } from "@/platform/auth/audit";
 import {
-  CARRIED_BAN_REASON,
+  CARRIED_BAN_NOTE,
   banFollowsAddress,
   storedEmail,
 } from "@/platform/auth/user-provisioning";
@@ -236,7 +236,8 @@ async function recordAddress(
         `update users set email = $2, email_verified = true,
                 account_status = case when $4 then 'banned'::account_status else account_status end,
                 banned_at = case when $4 and account_status <> 'banned' then now() else banned_at end,
-                ban_reason = case when $4 and account_status <> 'banned' then $6 else ban_reason end,
+                ban_reason = case when $4 and account_status <> 'banned' then null else ban_reason end,
+                ban_note = case when $4 and account_status <> 'banned' then $6::jsonb else ban_note end,
                 status_changed_by = case when $4 and account_status <> 'banned'
                                          then 'platform:ban-carry-over' else status_changed_by end,
                 status_changed_at = case when $4 and account_status <> 'banned'
@@ -251,7 +252,7 @@ async function recordAddress(
           decision.previous,
           banned,
           decision.change === "absent",
-          CARRIED_BAN_REASON,
+          JSON.stringify(CARRIED_BAN_NOTE),
         ]
       );
       if (rows.length === 0) return "unchanged" as const;

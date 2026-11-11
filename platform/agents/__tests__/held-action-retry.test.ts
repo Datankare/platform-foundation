@@ -42,6 +42,7 @@ import { ApprovedRunFailedError } from "@/platform/action-pipeline";
 import type { AgentIdentity, Tool } from "@/platform/kernel";
 import { withModules, WORKFLOW_GOALS_FIXTURE } from "@/__tests__/helpers/modules";
 import { hooked, signal } from "@/__tests__/helpers/interleave";
+import { decisionWords } from "@/platform/errors/recorded-words";
 
 withModules([WORKFLOW_GOALS_FIXTURE]);
 
@@ -591,7 +592,9 @@ describe("an approved run whose outcome is unknown blocks the workflow until dec
       decidedBy: "user-1",
     });
     expect(done).toMatchObject({ status: "rejected", decidedBy: "user-1" });
-    expect(done?.decisionNote).toContain("verified not applied");
+    // TASK-208: the record is the catalog's key and values; in words it says so.
+    expect(done?.decisionShown?.key).toBe("screens.records.withdrawn_undecided");
+    expect(decisionWords(done!)).toContain("verified not applied");
     expect(await status(trajectoryId)).toBe("failed");
     const t = await trajectories.getById(trajectoryId);
     expect(t!.trajectory.steps.at(-1)?.output).toMatchObject({ status: "rejected" });
