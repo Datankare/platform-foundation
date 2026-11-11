@@ -23,6 +23,15 @@ import React from "react";
 import "@testing-library/jest-dom";
 import { render, screen, waitFor } from "@testing-library/react";
 import { AuthContextProvider, useAuth } from "@/platform/auth/context";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
+
+/** The refresh route's own answer (__tests__/fixtures/route-responses.json). */
+function refreshAnswers(name: RouteFixtureName) {
+  const [status, body] = routeAnswer(name);
+  return jest
+    .fn()
+    .mockResolvedValue({ ok: status < 400, status, json: async () => body });
+}
 
 function Probe() {
   const { user, isLoading, isAuthenticated } = useAuth();
@@ -85,11 +94,9 @@ describe("auth context hydration validity", () => {
 
   it("purges an expired JWT when the server cannot renew it", async () => {
     seed(makeJwt({ sub: "user-1", exp: Math.floor(Date.now() / 1000) - 60 }), USER_JSON);
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: false,
-      status: 401,
-      json: async () => ({ code: "auth.token_invalid" }),
-    }) as unknown as typeof fetch;
+    global.fetch = refreshAnswers(
+      "POST /api/auth/refresh — refused (no refresh cookie)"
+    ) as unknown as typeof fetch;
 
     render(
       <AuthContextProvider>
@@ -103,11 +110,9 @@ describe("auth context hydration validity", () => {
 
   it("renews an expired user session from the refresh cookie (audit A-14)", async () => {
     seed(makeJwt({ sub: "user-1", exp: Math.floor(Date.now() / 1000) - 60 }), USER_JSON);
-    const fresh = makeJwt({ sub: "user-1", exp: Math.floor(Date.now() / 1000) + 3600 });
-    const fetchMock = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ success: true, userId: "user-1", accessToken: fresh }),
-    });
+    const renewed = "POST /api/auth/refresh — renewed";
+    const fresh = (routeAnswer(renewed)[1] as { accessToken: string }).accessToken;
+    const fetchMock = refreshAnswers(renewed);
     global.fetch = fetchMock as unknown as typeof fetch;
 
     render(
@@ -124,12 +129,13 @@ describe("auth context hydration validity", () => {
     expect(localStorage.getItem("pf_access_token")).toBe(fresh);
   });
 
-  it("refuses a renewed session for another user", async () => {
+  // The route itself refuses a renewal for another account (TASK-207: the test answered with a
+  // success for someone else, which the route never sends).
+  it("a renewal the provider made for another user is refused, and the session purged", async () => {
     seed(makeJwt({ sub: "user-1", exp: Math.floor(Date.now() / 1000) - 60 }), USER_JSON);
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ success: true, userId: "someone-else", accessToken: "x.y.z" }),
-    }) as unknown as typeof fetch;
+    global.fetch = refreshAnswers(
+      "POST /api/auth/refresh — refused (the provider renewed another account)"
+    ) as unknown as typeof fetch;
 
     render(
       <AuthContextProvider>

@@ -49,6 +49,54 @@ import { renderMessage } from "@/platform/errors/messages";
 const ROOT = join(__dirname, "..");
 const LABEL_ATTRS = new Set(["placeholder", "aria-label", "title", "alt", "label"]);
 
+/**
+ * Rule C, SQL: words SQL writes in platform/ (not app/api, which holds none), "<file> SQL <text>",
+ * with why each stands — found by TASK-207's scan and reported out of scope (N-107 named a
+ * duplicated role's description). Never added to: a new one fails.
+ */
+const SQL_WORDS_KNOWN: ReadonlyMap<string, string> = new Map([
+  [
+    'platform/admin/hold-expiry.ts SQL "Approved by "',
+    "a proposal's decision note, kept as recorded; shown as stored (out of scope, TASK-207 report)",
+  ],
+  [
+    'platform/admin/hold-expiry.ts SQL ", never run; withdrawn: "',
+    "the same decision note",
+  ],
+  [
+    'platform/agents/postgres-proposal-store.ts SQL "Approved by "',
+    "a proposal's decision note (three statements)",
+  ],
+  [
+    'platform/agents/postgres-proposal-store.ts SQL ", its run undecided; withdrawn, verified not applied: "',
+    "the same decision note",
+  ],
+  [
+    'platform/agents/postgres-proposal-store.ts SQL ", never run; withdrawn: "',
+    "the same decision note",
+  ],
+  [
+    'platform/agents/postgres-trajectory-store.ts SQL "no activity and no open hold since "',
+    "an abandoned trajectory's recorded reason",
+  ],
+  [
+    'platform/auth/audit.ts SQL "the platform"',
+    "who acted, in a subject's audit export (GDPR Art. 15)",
+  ],
+  [
+    'platform/auth/audit.ts SQL "another account"',
+    "who acted, in a subject's audit export",
+  ],
+  [
+    'platform/auth/user-data.ts SQL "erased with the account it was about"',
+    "the note left in place of an erased one in a trajectory's step",
+  ],
+  [
+    'platform/auth/user-provisioning.ts SQL "A ban on this address carried over to a new account."',
+    "a carried-over ban's recorded reason",
+  ],
+]);
+
 /** "<file>:<literal text>": why it is not screen text. None. */
 const ALLOWED: Readonly<Record<string, string>> = {};
 
@@ -133,6 +181,28 @@ function apiSources(): Sources {
     read: (f) =>
       existsSync(f) && statSync(f).isFile() ? readFileSync(f, "utf8") : undefined,
     list: () => walk(join(ROOT, "app", "api")),
+  };
+}
+
+/** The server's code (rule C, SQL): app/api, platform/ and lib/ — .ts files, not tests. */
+function serverSources(): Sources {
+  const walk = (dir: string): string[] =>
+    existsSync(dir)
+      ? readdirSync(dir).flatMap((n) => {
+          const p = join(dir, n);
+          if (statSync(p).isDirectory())
+            return n === "__tests__" || n === "node_modules" ? [] : walk(p);
+          return /\.ts$/.test(n) && !/\.test\.ts$/.test(n) ? [p] : [];
+        })
+      : [];
+  return {
+    read: (f) =>
+      existsSync(f) && statSync(f).isFile() ? readFileSync(f, "utf8") : undefined,
+    list: () => [
+      ...walk(join(ROOT, "app", "api")),
+      ...walk(join(ROOT, "platform")),
+      ...walk(join(ROOT, "lib")),
+    ],
   };
 }
 
@@ -533,6 +603,87 @@ export function isApiCode(text: string): boolean {
   return false;
 }
 
+/**
+ * Rule C, SQL (TASK-207, N-107): the words a statement would write — its quoted string literals
+ * (`'…'`, a doubled quote one quote) that are a phrase for a person. A duplicated role's
+ * description was `'Duplicated from ' || $3`: English the database stored and every screen showed.
+ */
+export function sqlPhrases(sql: string): string[] {
+  const found: string[] = [];
+  for (const m of sql.matchAll(/(?<!\w)[EN]?'((?:[^']|'')*)'/gi)) {
+    const text = m[1].replace(/''/g, "'");
+    // A single word is a token or a setting's name (`'failed'`, `'TimeZone'`), and a JSON
+    // literal is data: words for a person have a space between them.
+    if (/^\s*[[{]/.test(text) || !/[A-Z]\s+[A-Z]/i.test(text)) continue;
+    if (isPhrase(text) && !isApiCode(text)) found.push(text);
+  }
+  return found;
+}
+
+/**
+ * Rule C, SQL: every statement in `src` (a literal shaped as SQL — isApiCode — or a template whose
+ * text is) whose string literals hold words for a person, as "<file>:<line> SQL <text>".
+ */
+export function sqlWordSites(src: Sources, root: string): string[] {
+  const parse = parser(src);
+  const out: string[] = [];
+  for (const file of src.list()) {
+    const sf = parse(file);
+    if (!sf) continue;
+    const visit = (n: ts.Node): void => {
+      const text = ts.isTemplateExpression(n)
+        ? [n.head.text, ...n.templateSpans.map((x) => x.literal.text)].join(" ")
+        : literalText(n);
+      if (text !== undefined && isApiCode(text)) {
+        for (const phrase of sqlPhrases(text))
+          out.push(
+            `${relative(root, file)}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1} SQL ${JSON.stringify(phrase)}`
+          );
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+/**
+ * Rule D (TASK-207, N-107): no screen shows an API answer as JSON. A JSX child that is, or holds, a
+ * `JSON.stringify(…)` puts the answer's field names, codes and any English the server wrote on
+ * the page (Playform's agent console showed its whole answer so). A screen shows the answer's
+ * fields, each in the catalog's words or as data. "<file>:<line> <the child's text>".
+ */
+export function jsonDumpSites(src: Sources, root: string): string[] {
+  const parse = parser(src);
+  const out: string[] = [];
+  // Within a child's own expression: a nested child is judged (and reported) on its own.
+  const dumps = (n: ts.Node): boolean =>
+    (ts.isCallExpression(n) && n.expression.getText() === "JSON.stringify") ||
+    (!ts.isJsxAttribute(n) &&
+      !ts.isJsxExpression(n) &&
+      ts.forEachChild(n, dumps) === true);
+  for (const file of src.list()) {
+    const sf = parse(file);
+    if (!sf) continue;
+    const visit = (n: ts.Node): void => {
+      if (
+        ts.isJsxExpression(n) &&
+        !ts.isJsxAttribute(n.parent) &&
+        n.expression &&
+        dumps(n.expression)
+      ) {
+        out.push(
+          `${relative(root, file)}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1} ${n.expression.getText(sf).slice(0, 80)}`
+        );
+        return;
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
 /** Whether a node sits in a declaration whose doc comment says `@modelText`. */
 function isModelText(n: ts.Node, sf: ts.SourceFile): boolean {
   for (let p: ts.Node | undefined = n; p; p = p.parent) {
@@ -697,6 +848,62 @@ describe("screen text reached indirectly comes from the catalog (TASK-205)", () 
 
   it("rule C: no words for a person in app/api's answers outside the catalog (TASK-206)", () => {
     expect(screenCodeSites(apiSources(), ROOT, { api: true })).toEqual([]);
+  });
+
+  it("rule C: no SQL in app/api writes words for a person; platform/ and lib/ only those known (TASK-207)", () => {
+    const found = [
+      ...new Set(sqlWordSites(serverSources(), ROOT).map((f) => f.replace(/:\d+ /, " "))),
+    ];
+    expect(found.filter((f) => f.startsWith("app/"))).toEqual([]);
+    // Each known one, with why it stands; a new one fails, and so does one no longer there.
+    expect(found.filter((f) => !f.startsWith("app/")).sort()).toEqual(
+      [...SQL_WORDS_KNOWN.keys()].sort()
+    );
+  });
+
+  it("[self-test] rule C, SQL: a statement's words are found; its codes, keys and casts are not", () => {
+    const found = sqlWordSites(
+      virtual({
+        "app/api/x/route.ts": [
+          "const a = `insert into roles (description) select 'Duplicated from ' || $3 from roles s`;",
+          "const b = \"update jobs set status = 'failed', note = $2::jsonb where id = $1\";",
+          "const c = \"select coalesce(r.description, '') from roles r where r.name = 'admin'\";",
+          "const d = \"select make_interval(days => $1::int), '30 days'::interval from x\";",
+          "const e = \"select jsonb_build_object('key', 'screens.admin_console.roles.duplicated_from')\";",
+          "const f = \"update t set reason = 'Marked executed by the owner' where id = $1\";",
+        ].join("\n"),
+      }),
+      "/v"
+    );
+    expect(found).toEqual([
+      'app/api/x/route.ts:1 SQL "Duplicated from "',
+      'app/api/x/route.ts:6 SQL "Marked executed by the owner"',
+    ]);
+  });
+
+  it("rule D: no screen shows an API answer as JSON (TASK-207)", () => {
+    expect(jsonDumpSites(diskSources(), ROOT)).toEqual([]);
+  });
+
+  it("[self-test] rule D: a JSON dump in a screen's text is found; one in an attribute or a body is not", () => {
+    const found = jsonDumpSites(
+      virtual({
+        "app/x/Page.tsx": [
+          "export const A = () => <pre>{JSON.stringify(resp, null, 2)}</pre>;",
+          "export const B = () => <p>{ok ? JSON.stringify(v) : null}</p>;",
+          "export const C = () => <i data-v={JSON.stringify(v)}>{label}</i>;",
+          "const body = JSON.stringify({ a: 1 });",
+          'export const D = () => <p>{t("x")}</p>;',
+          "export const E = () => <div>{r && <pre>{JSON.stringify(r)}</pre>}</div>;",
+        ].join("\n"),
+      }),
+      "/v"
+    );
+    expect(found).toEqual([
+      "app/x/Page.tsx:1 JSON.stringify(resp, null, 2)",
+      "app/x/Page.tsx:2 ok ? JSON.stringify(v) : null",
+      "app/x/Page.tsx:6 JSON.stringify(r)",
+    ]);
   });
 
   it("rule C: every key a shown(…) names is one English has", () => {

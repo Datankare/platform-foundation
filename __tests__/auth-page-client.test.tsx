@@ -21,6 +21,7 @@ jest.mock("@/components/auth/AuthPage", () => ({
 import AuthPageClient from "@/app/auth/AuthPageClient";
 import { AuthContextProvider } from "@/platform/auth/context";
 import { getAuthProvider, hasAuthProvider } from "@/platform/auth/config";
+import { routeAnswer } from "@/__tests__/fixtures/route-responses";
 
 it("registers the browser provider on first render and shows the form", async () => {
   expect(hasAuthProvider()).toBe(false);
@@ -30,9 +31,10 @@ it("registers the browser provider on first render and shows the form", async ()
     </AuthContextProvider>
   );
   expect(await screen.findByText("sign-in form")).toBeTruthy();
+  const [status, body] = routeAnswer("POST /api/auth/sign-in — refused (wrong password)");
   const fetchMock = jest
     .fn()
-    .mockResolvedValue({ json: async () => ({ success: false }) });
+    .mockResolvedValue({ ok: status < 400, status, json: async () => body });
   global.fetch = fetchMock as unknown as typeof fetch;
   await getAuthProvider().signIn("a@b.c", "pw");
   expect(fetchMock).toHaveBeenCalledWith("/api/auth/sign-in", expect.any(Object));

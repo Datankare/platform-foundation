@@ -88,6 +88,26 @@ export function identityFor(
   return identity;
 }
 
+/**
+ * A caller holding a role an administrator made (roles are created and duplicated in the
+ * console, TASK-145): its name and exactly these permission rows, as the permission lookup
+ * returns them. `permissions` is what the store holds, so a route fixture can record what a route
+ * answers for any row it reads (TASK-207). Names must be unique per identity.
+ */
+export function identityWithRole(
+  name: string,
+  roleName: string,
+  permissions: readonly unknown[]
+): TestIdentity {
+  const identity: TestIdentity = {
+    ...identityFor("free", { name }),
+    roleName,
+    permissions: permissions as readonly string[],
+  };
+  registry.set(identity.sub, identity);
+  return identity;
+}
+
 /** One caller per real role, plus a suspended super_admin. */
 export const CALLERS = {
   guest: identityFor("guest"),

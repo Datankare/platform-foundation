@@ -18,6 +18,7 @@ import { adminGuard } from "@/platform/auth/admin-guard";
 import { logger } from "@/lib/logger";
 import { internalError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { isShownText } from "@/platform/errors/shown-text";
 import {
   comparePermissions,
   roleOrderSql,
@@ -29,13 +30,15 @@ type RoleRow = {
   name: string;
   display_name: string;
   description: string | null;
+  description_note: unknown;
   created_at: Date;
   updated_at: Date;
 };
 type PermissionRow = { id: string; code: string; display_name: string; category: string };
 
 /** The roles in the catalog's order (sort_order, then name — catalog-order.ts). Fixed text. */
-const ROLES_SQL = `select id, name, display_name, description, created_at, updated_at
+const ROLES_SQL = `select id, name, display_name, description, description_note, created_at,
+                          updated_at
                      from roles order by ${roleOrderSql()}`;
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
@@ -97,6 +100,9 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
       name: r.name,
       displayName: r.display_name,
       description: r.description,
+      // A note the platform added (a duplicate's source), as a catalog key and values the
+      // screen renders — never English the server wrote (TASK-207, N-107).
+      descriptionNote: isShownText(r.description_note) ? r.description_note : null,
       permissionCount: perms.length,
       permissions: perms,
       createdAt: r.created_at.toISOString(),

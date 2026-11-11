@@ -441,7 +441,7 @@
         },
         {
           "source": "config-approval",
-          "id": "00000000-0000-4000-8000-0000000000ff",
+          "id": "00000000-0000-4000-8000-0000000000fe",
           "label": "moderation.strike_ban_threshold",
           "configKey": "moderation.strike_ban_threshold",
           "requester": "00000000-0000-4000-9000-97a91570000b",
@@ -625,9 +625,4709 @@
           "by": "00000000-0000-4000-9000-97a91570000b",
           "at": "2026-01-01T00:00:00.000Z",
           "reason": "deleted_in_old_pool",
-          "expiresAt": "2026-01-01T00:00:00.000Z"
+          "expiresAt": "2026-01-08T00:00:00.000Z"
         }
       }
+    }
+  },
+  "GET /api/admin/session — a moderator": {
+    "status": 200,
+    "body": {
+      "userId": "00000000-0000-4000-9000-887b6c240009",
+      "roleName": "moderator",
+      "permissions": [
+        "can_access_admin",
+        "can_edit_profile",
+        "can_moderate",
+        "can_translate",
+        "can_view_profile"
+      ]
+    }
+  },
+  "GET /api/admin/session — a super admin": {
+    "status": 200,
+    "body": {
+      "userId": "00000000-0000-4000-9000-97a91570000b",
+      "roleName": "super_admin",
+      "permissions": [
+        "admin_manage_account_restrictions",
+        "admin_manage_agents",
+        "admin_manage_approval_policy",
+        "admin_manage_config",
+        "admin_manage_entitlements",
+        "admin_manage_roles",
+        "admin_manage_users",
+        "admin_purge_user_data",
+        "admin_view_audit",
+        "can_access_admin",
+        "can_create_group",
+        "can_delete_account",
+        "can_edit_profile",
+        "can_export_data",
+        "can_moderate",
+        "can_play",
+        "can_translate",
+        "can_view_profile",
+        "config_manage_safety",
+        "config_manage_standard",
+        "config_view",
+        "platform_operate"
+      ]
+    }
+  },
+  "GET /api/admin/session — the development bypass": {
+    "status": 200,
+    "body": {
+      "userId": "00000000-0000-0000-0000-000000000000",
+      "roleName": "dev-bypass",
+      "permissions": ["*"]
+    }
+  },
+  "GET /api/admin/session — a role made for roles only": {
+    "status": 200,
+    "body": {
+      "userId": "00000000-0000-4000-9000-fa36e0400013",
+      "roleName": "roles_admin",
+      "permissions": ["can_access_admin", "admin_manage_roles"]
+    }
+  },
+  "GET /api/admin/session — a moderator whose permission rows hold non-codes": {
+    "status": 200,
+    "body": {
+      "userId": "00000000-0000-4000-9000-1ce3fea80015",
+      "roleName": "moderator",
+      "permissions": [
+        null,
+        42,
+        {
+          "code": "*"
+        },
+        ["*"],
+        "can_access_admin",
+        "can_moderate"
+      ]
+    }
+  },
+  "GET /api/admin/session — refused (no second factor)": {
+    "status": 403,
+    "body": {
+      "code": "auth.mfa_required",
+      "message": "Administrative access needs two-step verification. Set it up, then sign in again.",
+      "params": {},
+      "success": false,
+      "error": "Administrative access needs two-step verification. Set it up, then sign in again."
+    }
+  },
+  "GET /api/admin/session — refused (no administrative access)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "can_access_admin"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/session — refused (signed out)": {
+    "status": 401,
+    "body": {
+      "code": "auth.required",
+      "message": "Sign in to continue.",
+      "params": {},
+      "success": false,
+      "error": "Sign in to continue."
+    }
+  },
+  "GET /api/admin/session — refused (a suspended staff account)": {
+    "status": 403,
+    "body": {
+      "code": "account.restricted",
+      "message": "Your account cannot use this feature right now.",
+      "params": {},
+      "success": false,
+      "error": "Your account cannot use this feature right now."
+    }
+  },
+  "GET /api/admin/session — the permissions store down": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "permissions"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "GET /api/admin/approvals — none held": {
+    "status": 200,
+    "body": {
+      "approvals": [],
+      "requestId": "req-test"
+    }
+  },
+  "GET /api/admin/tenant — to a moderator": {
+    "status": 200,
+    "body": {
+      "tenant": {
+        "id": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "mode": "single",
+        "slug": "default",
+        "name": "Default",
+        "status": "active"
+      },
+      "domains": [],
+      "budget": {
+        "tenantId": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "period": "2026-01-01",
+        "usedUsd": 0,
+        "budgetUsd": 100,
+        "exhausted": false
+      },
+      "settings": null,
+      "jobs": null
+    }
+  },
+  "GET /api/admin/users — no accounts": {
+    "status": 200,
+    "body": {
+      "users": [],
+      "roles": [],
+      "page": {
+        "limit": 50,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/roles — the roles": {
+    "status": 200,
+    "body": {
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-000000000001",
+          "name": "roles_admin",
+          "displayName": "Roles admin",
+          "description": null,
+          "descriptionNote": null,
+          "permissionCount": 0,
+          "permissions": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-000000000002",
+          "name": "roles_admin_copy",
+          "displayName": "Roles admin (copy)",
+          "description": "Manages roles.",
+          "descriptionNote": {
+            "key": "screens.admin_console.roles.duplicated_from",
+            "params": {
+              "source": "roles_admin"
+            }
+          },
+          "permissionCount": 0,
+          "permissions": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "availablePermissions": []
+    }
+  },
+  "POST /api/auth/sign-out — signed out": {
+    "status": 200,
+    "body": {
+      "success": true
+    }
+  },
+  "POST /api/auth/sign-out — the provider failing": {
+    "status": 500,
+    "body": {
+      "code": "internal.error",
+      "message": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000.",
+      "params": {
+        "requestId": "req_0000000000000000"
+      },
+      "success": false,
+      "error": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000."
+    }
+  },
+  "POST /api/admin/ai — refused (rate limited)": {
+    "status": 429,
+    "body": {
+      "code": "rate.limited",
+      "message": "Too many requests. Try again in a moment.",
+      "params": {
+        "retryAfterSeconds": 30
+      },
+      "success": false,
+      "error": "Too many requests. Try again in a moment."
+    }
+  },
+  "POST /api/admin/ai — refused (signed out)": {
+    "status": 401,
+    "body": {
+      "code": "auth.required",
+      "message": "Sign in to continue.",
+      "params": {},
+      "success": false,
+      "error": "Sign in to continue."
+    }
+  },
+  "POST /api/admin/ai — refused (a suspended staff account)": {
+    "status": 403,
+    "body": {
+      "code": "account.restricted",
+      "message": "Your account cannot use this feature right now.",
+      "params": {},
+      "success": false,
+      "error": "Your account cannot use this feature right now."
+    }
+  },
+  "POST /api/admin/ai — the model declined": {
+    "status": 422,
+    "body": {
+      "code": "ai.request_declined",
+      "message": "The AI model declined this request. Rephrase it and try again.",
+      "params": {},
+      "success": false,
+      "error": "The AI model declined this request. Rephrase it and try again."
+    }
+  },
+  "GET /api/admin/users — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_manage_users"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/roles — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_manage_roles"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/entitlements — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_manage_entitlements"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/audit — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_view_audit"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/approvals — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "can_access_admin"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/password-policy — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_manage_config"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/agent-registry — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_manage_agents"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/per-account — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_manage_account_restrictions"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/approval-policy — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_manage_approval_policy"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/capabilities — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_view_audit"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/capability-mapping — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_manage_config"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/tenant — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "can_access_admin"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/operator/tenants — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "platform_operate"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/operator/jobs — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "platform_operate"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/users — Ann and a super admin who never signed in": {
+    "status": 200,
+    "body": {
+      "users": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "email": "ann@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "email": null,
+          "displayName": "",
+          "roleId": "0000000a-0000-4000-8000-0000000000f3",
+          "roleName": "super_admin",
+          "roleDisplayName": "Super Admin",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": false,
+          "createdAt": "2026-06-07T12:00:00.000Z",
+          "lastSignInAt": null,
+          "isDeleted": false,
+          "entitlements": []
+        }
+      ],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — a page of 25, more to read": {
+    "status": 200,
+    "body": {
+      "users": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "email": "ann@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "email": null,
+          "displayName": "",
+          "roleId": "0000000a-0000-4000-8000-0000000000f3",
+          "roleName": "super_admin",
+          "roleDisplayName": "Super Admin",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": false,
+          "createdAt": "2026-06-07T12:00:00.000Z",
+          "lastSignInAt": null,
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000000",
+          "email": "member0@example.com",
+          "displayName": "Member 0",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000001",
+          "email": "member1@example.com",
+          "displayName": "Member 1",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000002",
+          "email": "member2@example.com",
+          "displayName": "Member 2",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000003",
+          "email": "member3@example.com",
+          "displayName": "Member 3",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000004",
+          "email": "member4@example.com",
+          "displayName": "Member 4",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000005",
+          "email": "member5@example.com",
+          "displayName": "Member 5",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000006",
+          "email": "member6@example.com",
+          "displayName": "Member 6",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000007",
+          "email": "member7@example.com",
+          "displayName": "Member 7",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000008",
+          "email": "member8@example.com",
+          "displayName": "Member 8",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000009",
+          "email": "member9@example.com",
+          "displayName": "Member 9",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000010",
+          "email": "member10@example.com",
+          "displayName": "Member 10",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000011",
+          "email": "member11@example.com",
+          "displayName": "Member 11",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000012",
+          "email": "member12@example.com",
+          "displayName": "Member 12",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000013",
+          "email": "member13@example.com",
+          "displayName": "Member 13",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000014",
+          "email": "member14@example.com",
+          "displayName": "Member 14",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000015",
+          "email": "member15@example.com",
+          "displayName": "Member 15",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000016",
+          "email": "member16@example.com",
+          "displayName": "Member 16",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000017",
+          "email": "member17@example.com",
+          "displayName": "Member 17",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000018",
+          "email": "member18@example.com",
+          "displayName": "Member 18",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000019",
+          "email": "member19@example.com",
+          "displayName": "Member 19",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000020",
+          "email": "member20@example.com",
+          "displayName": "Member 20",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000021",
+          "email": "member21@example.com",
+          "displayName": "Member 21",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-000000000022",
+          "email": "member22@example.com",
+          "displayName": "Member 22",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        }
+      ],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": true,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — the next page": {
+    "status": 200,
+    "body": {
+      "users": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "email": "ann@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        }
+      ],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — Ann alone": {
+    "status": 200,
+    "body": {
+      "users": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "email": "ann@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        }
+      ],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — Ann, now a moderator": {
+    "status": 200,
+    "body": {
+      "users": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "email": "ann@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f2",
+          "roleName": "moderator",
+          "roleDisplayName": "Moderator",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        }
+      ],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — Ann suspended until 2 November": {
+    "status": 200,
+    "body": {
+      "users": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "email": "ann@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "suspended",
+          "statusUntil": "2026-11-02T12:00:00.000Z",
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        }
+      ],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — Ann with Beta access until 1 December": {
+    "status": 200,
+    "body": {
+      "users": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "email": "ann@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": [
+            {
+              "code": "beta",
+              "name": "Beta access",
+              "expiresAt": "2026-12-01T12:00:00.000Z"
+            }
+          ]
+        },
+        {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "email": null,
+          "displayName": "",
+          "roleId": "0000000a-0000-4000-8000-0000000000f3",
+          "roleName": "super_admin",
+          "roleDisplayName": "Super Admin",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": false,
+          "createdAt": "2026-06-07T12:00:00.000Z",
+          "lastSignInAt": null,
+          "isDeleted": false,
+          "entitlements": []
+        }
+      ],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — no account matches the search": {
+    "status": 200,
+    "body": {
+      "users": [],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — the store failing": {
+    "status": 500,
+    "body": {
+      "code": "internal.error",
+      "message": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000.",
+      "params": {
+        "requestId": "req_0000000000000000"
+      },
+      "success": false,
+      "error": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000."
+    }
+  },
+  "GET /api/admin/users — refused (signed out)": {
+    "status": 401,
+    "body": {
+      "code": "auth.required",
+      "message": "Sign in to continue.",
+      "params": {},
+      "success": false,
+      "error": "Sign in to continue."
+    }
+  },
+  "GET /api/admin/users — refused (a suspended staff account)": {
+    "status": 403,
+    "body": {
+      "code": "account.restricted",
+      "message": "Your account cannot use this feature right now.",
+      "params": {},
+      "success": false,
+      "error": "Your account cannot use this feature right now."
+    }
+  },
+  "GET /api/admin/users — refused (no second factor)": {
+    "status": 403,
+    "body": {
+      "code": "auth.mfa_required",
+      "message": "Administrative access needs two-step verification. Set it up, then sign in again.",
+      "params": {},
+      "success": false,
+      "error": "Administrative access needs two-step verification. Set it up, then sign in again."
+    }
+  },
+  "GET /api/admin/users — refused (rate limited)": {
+    "status": 429,
+    "body": {
+      "code": "rate.limited",
+      "message": "Too many requests. Try again in a moment.",
+      "params": {
+        "retryAfterSeconds": 30
+      },
+      "success": false,
+      "error": "Too many requests. Try again in a moment."
+    }
+  },
+  "GET /api/admin/users — refused (the permissions store down)": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "permissions"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "PATCH /api/admin/users — changed": {
+    "status": 200,
+    "body": {
+      "success": true
+    }
+  },
+  "PATCH /api/admin/users — held for a second admin": {
+    "status": 202,
+    "body": {
+      "success": false,
+      "held": true,
+      "proposalId": "00000000-0000-4000-8000-0000000000ff"
+    }
+  },
+  "PATCH /api/admin/users — refused (no such account)": {
+    "status": 404,
+    "body": {
+      "code": "admin.target_not_found",
+      "message": "No user matches that request.",
+      "params": {
+        "target": "user"
+      },
+      "success": false,
+      "error": "No user matches that request."
+    }
+  },
+  "PATCH /api/admin/users — refused (a protected role)": {
+    "status": 403,
+    "body": {
+      "code": "auth.role_database_only",
+      "message": "The super_admin role can only be assigned directly in the database.",
+      "params": {
+        "role": "super_admin"
+      },
+      "success": false,
+      "error": "The super_admin role can only be assigned directly in the database."
+    }
+  },
+  "PATCH /api/admin/users — refused (the roles store down)": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "roles"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "PATCH /api/admin/users — refused (signed out)": {
+    "status": 401,
+    "body": {
+      "code": "auth.required",
+      "message": "Sign in to continue.",
+      "params": {},
+      "success": false,
+      "error": "Sign in to continue."
+    }
+  },
+  "PATCH /api/admin/users — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_manage_users"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "PATCH /api/admin/users — refused (a suspended staff account)": {
+    "status": 403,
+    "body": {
+      "code": "account.restricted",
+      "message": "Your account cannot use this feature right now.",
+      "params": {},
+      "success": false,
+      "error": "Your account cannot use this feature right now."
+    }
+  },
+  "PATCH /api/admin/users — refused (no second factor)": {
+    "status": 403,
+    "body": {
+      "code": "auth.mfa_required",
+      "message": "Administrative access needs two-step verification. Set it up, then sign in again.",
+      "params": {},
+      "success": false,
+      "error": "Administrative access needs two-step verification. Set it up, then sign in again."
+    }
+  },
+  "PATCH /api/admin/users — refused (rate limited)": {
+    "status": 429,
+    "body": {
+      "code": "rate.limited",
+      "message": "Too many requests. Try again in a moment.",
+      "params": {
+        "retryAfterSeconds": 30
+      },
+      "success": false,
+      "error": "Too many requests. Try again in a moment."
+    }
+  },
+  "PATCH /api/admin/users — refused (the permissions store down)": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "permissions"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "GET /api/admin/gdpr — no erasure pending": {
+    "status": 200,
+    "body": {
+      "pending": null
+    }
+  },
+  "GET /api/admin/gdpr — an erasure pending": {
+    "status": 200,
+    "body": {
+      "pending": {
+        "proposalId": "00000000-0000-4000-8000-0000000000ff",
+        "createdAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  "POST /api/admin/gdpr — held for a second admin": {
+    "status": 202,
+    "body": {
+      "success": false,
+      "held": true,
+      "proposalId": "00000000-0000-4000-8000-0000000000ff"
+    }
+  },
+  "POST /api/admin/gdpr — refused (an erasure already pending)": {
+    "status": 409,
+    "body": {
+      "code": "admin.erasure_pending",
+      "message": "This account's erasure is already waiting for approval.",
+      "params": {},
+      "success": false,
+      "error": "This account's erasure is already waiting for approval."
+    }
+  },
+  "POST /api/admin/gdpr — refused (no such account)": {
+    "status": 404,
+    "body": {
+      "code": "admin.target_not_found",
+      "message": "No user matches that request.",
+      "params": {
+        "target": "user"
+      },
+      "success": false,
+      "error": "No user matches that request."
+    }
+  },
+  "POST /api/admin/gdpr — refused (signed out)": {
+    "status": 401,
+    "body": {
+      "code": "auth.required",
+      "message": "Sign in to continue.",
+      "params": {},
+      "success": false,
+      "error": "Sign in to continue."
+    }
+  },
+  "POST /api/admin/gdpr — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "admin_purge_user_data"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "POST /api/admin/gdpr — refused (a suspended staff account)": {
+    "status": 403,
+    "body": {
+      "code": "account.restricted",
+      "message": "Your account cannot use this feature right now.",
+      "params": {},
+      "success": false,
+      "error": "Your account cannot use this feature right now."
+    }
+  },
+  "POST /api/admin/gdpr — refused (no second factor)": {
+    "status": 403,
+    "body": {
+      "code": "auth.mfa_required",
+      "message": "Administrative access needs two-step verification. Set it up, then sign in again.",
+      "params": {},
+      "success": false,
+      "error": "Administrative access needs two-step verification. Set it up, then sign in again."
+    }
+  },
+  "POST /api/admin/gdpr — refused (rate limited)": {
+    "status": 429,
+    "body": {
+      "code": "rate.limited",
+      "message": "Too many requests. Try again in a moment.",
+      "params": {
+        "retryAfterSeconds": 30
+      },
+      "success": false,
+      "error": "Too many requests. Try again in a moment."
+    }
+  },
+  "POST /api/admin/gdpr — refused (the permissions store down)": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "permissions"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "POST /api/admin/agents/suspend — two suspended, a held change withdrawn": {
+    "status": 200,
+    "body": {
+      "suspended": ["agent:x", "agent:y"],
+      "withdrawn": ["0a1b2c3d-0000-4000-8000-0000000000a1"]
+    }
+  },
+  "POST /api/admin/agents/suspend — one suspended": {
+    "status": 200,
+    "body": {
+      "suspended": ["agent:x"],
+      "withdrawn": []
+    }
+  },
+  "POST /api/admin/agents/suspend — none active, told again": {
+    "status": 200,
+    "body": {
+      "suspended": [],
+      "withdrawn": [],
+      "republished": true
+    }
+  },
+  "POST /api/admin/agents/suspend — none active, the invalidation not published": {
+    "status": 200,
+    "body": {
+      "suspended": [],
+      "withdrawn": [],
+      "republished": false
+    }
+  },
+  "POST /api/admin/agents/suspend — refused (the registry unreadable)": {
+    "status": 409,
+    "body": {
+      "code": "admin.kill_switch_failed",
+      "message": "The agents could not all be suspended. Nothing was changed; try again.",
+      "params": {},
+      "success": false,
+      "error": "The agents could not all be suspended. Nothing was changed; try again."
+    }
+  },
+  "POST /api/admin/agents/suspend — refused (the audit log down)": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "audit"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "POST /api/admin/agents/suspend — refused (signed out)": {
+    "status": 401,
+    "body": {
+      "code": "auth.required",
+      "message": "Sign in to continue.",
+      "params": {},
+      "success": false,
+      "error": "Sign in to continue."
+    }
+  },
+  "POST /api/admin/agents/suspend — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "config_manage_safety"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "POST /api/admin/agents/suspend — refused (a suspended staff account)": {
+    "status": 403,
+    "body": {
+      "code": "account.restricted",
+      "message": "Your account cannot use this feature right now.",
+      "params": {},
+      "success": false,
+      "error": "Your account cannot use this feature right now."
+    }
+  },
+  "POST /api/admin/agents/suspend — refused (no second factor)": {
+    "status": 403,
+    "body": {
+      "code": "auth.mfa_required",
+      "message": "Administrative access needs two-step verification. Set it up, then sign in again.",
+      "params": {},
+      "success": false,
+      "error": "Administrative access needs two-step verification. Set it up, then sign in again."
+    }
+  },
+  "POST /api/admin/agents/suspend — refused (rate limited)": {
+    "status": 429,
+    "body": {
+      "code": "rate.limited",
+      "message": "Too many requests. Try again in a moment.",
+      "params": {
+        "retryAfterSeconds": 30
+      },
+      "success": false,
+      "error": "Too many requests. Try again in a moment."
+    }
+  },
+  "POST /api/admin/agents/suspend — refused (the permissions store down)": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "permissions"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "POST /api/operator/tenants/[id]/agents/suspend — one suspended": {
+    "status": 200,
+    "body": {
+      "suspended": ["agent:x"],
+      "withdrawn": []
+    }
+  },
+  "POST /api/moderation/appeals — submitted": {
+    "status": 201,
+    "body": {
+      "item": {
+        "source": "appeal",
+        "priority": "normal",
+        "status": "pending",
+        "moderationResult": {
+          "action": "block",
+          "triggeredBy": "classifier",
+          "direction": "input",
+          "contentType": "generation",
+          "contentRatingLevel": 1,
+          "blocklistMatches": [],
+          "reasoning": "harassment, high confidence",
+          "severityAdjustment": 0,
+          "contextFactors": [],
+          "attributeToUser": true,
+          "pipelineLatencyMs": 12,
+          "classifierCostUsd": 0,
+          "trajectoryId": "traj-1",
+          "agentId": "guardian"
+        },
+        "targetUserId": "00000000-0000-4000-9000-99b3eedb0004",
+        "requestId": "req-test",
+        "appealReason": "This is a sufficiently long and detailed appeal reason.",
+        "originalDecisionId": "traj-1",
+        "id": "review-1",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  "POST /api/moderation/appeals — refused (an appeal already pending)": {
+    "status": 409,
+    "body": {
+      "code": "moderation.appeal_pending",
+      "message": "An appeal is already pending for this decision.",
+      "params": {},
+      "success": false,
+      "error": "An appeal is already pending for this decision."
+    }
+  },
+  "GET /api/features — no sign-in provider configured": {
+    "status": 200,
+    "body": {
+      "features": {
+        "sso_google": {
+          "available": false
+        },
+        "sso_apple": {
+          "available": false
+        },
+        "sso_microsoft": {
+          "available": false
+        }
+      }
+    }
+  },
+  "GET /api/features — Google sign-in configured": {
+    "status": 200,
+    "body": {
+      "features": {
+        "sso_google": {
+          "available": true
+        },
+        "sso_apple": {
+          "available": false
+        },
+        "sso_microsoft": {
+          "available": false
+        }
+      }
+    }
+  },
+  "POST /api/auth/guest — started": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "guestId": "guest_abc",
+      "token": "guest.p.m",
+      "expiresAt": 1767484800
+    }
+  },
+  "POST /api/auth/guest — the mint failing": {
+    "status": 500,
+    "body": {
+      "code": "internal.error",
+      "message": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000.",
+      "params": {
+        "requestId": "req_0000000000000000"
+      },
+      "success": false,
+      "error": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000."
+    }
+  },
+  "POST /api/auth/sign-in — refused (wrong password)": {
+    "status": 401,
+    "body": {
+      "code": "auth.invalid_credentials",
+      "message": "Email or password is incorrect.",
+      "params": {},
+      "success": false,
+      "error": "Email or password is incorrect."
+    }
+  },
+  "POST /api/auth/refresh — renewed": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "userId": "user-1",
+      "accessToken": "renewed-for-user-1",
+      "expiresIn": 3600
+    }
+  },
+  "POST /api/auth/refresh — refused (no refresh cookie)": {
+    "status": 401,
+    "body": {
+      "code": "auth.token_invalid",
+      "message": "Your session has expired. Sign in again.",
+      "params": {},
+      "success": false,
+      "error": "Your session has expired. Sign in again."
+    }
+  },
+  "POST /api/auth/refresh — refused (the provider renewed another account)": {
+    "status": 401,
+    "body": {
+      "code": "auth.token_invalid",
+      "message": "Your session has expired. Sign in again.",
+      "params": {},
+      "success": false,
+      "error": "Your session has expired. Sign in again."
+    }
+  },
+  "POST /api/auth/mfa/setup — the secret and its URI": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "secretCode": "JBSWY3DPEHPK3PXP",
+      "qrCodeUri": "otpauth://totp/PlatformFoundation?secret=JBSWY3DPEHPK3PXP&issuer=PlatformFoundation"
+    }
+  },
+  "POST /api/auth/mfa/setup — the secret, no URI": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "secretCode": "JBSWY3DPEHPK3PXP"
+    }
+  },
+  "POST /api/auth/mfa/setup — refused (authenticator MFA off for the pool)": {
+    "status": 501,
+    "body": {
+      "code": "feature.not_configured",
+      "message": "This feature isn't available here.",
+      "params": {},
+      "success": false,
+      "error": "This feature isn't available here."
+    }
+  },
+  "POST /api/auth/mfa/setup — refused (rate limited)": {
+    "status": 429,
+    "body": {
+      "code": "rate.limited",
+      "message": "Too many requests. Try again in a moment.",
+      "params": {
+        "retryAfterSeconds": 30
+      },
+      "success": false,
+      "error": "Too many requests. Try again in a moment."
+    }
+  },
+  "POST /api/auth/mfa/verify — enabled": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "mfaEnabled": true
+    }
+  },
+  "POST /api/auth/mfa/verify — refused (the code is wrong)": {
+    "status": 400,
+    "body": {
+      "code": "auth.code_invalid",
+      "message": "That code is not correct.",
+      "params": {},
+      "success": false,
+      "error": "That code is not correct."
+    }
+  },
+  "GET /api/operator/jobs — failures, dead letters and a record from before codes": {
+    "status": 200,
+    "body": {
+      "schedules": [
+        {
+          "kind": "moderation.escalation-reaper",
+          "description": {
+            "key": "screens.jobs.kinds.moderation_escalation_reaper"
+          },
+          "owner": "core",
+          "scope": "each-tenant",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 15,
+          "minIntervalMinutes": 5,
+          "maxIntervalMinutes": 60,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.moderation.escalation-reaper.enabled",
+            "interval": "jobs.moderation.escalation-reaper.interval_minutes"
+          },
+          "state": {
+            "kind": "moderation.escalation-reaper",
+            "nextRunAt": "2026-01-01T00:15:00.000Z",
+            "lastRunAt": "2026-01-01T00:00:00.000Z",
+            "lastEnqueued": 3,
+            "lastStatus": "dead",
+            "lastError": "database_unavailable",
+            "lastFinishedAt": "2026-01-01T00:10:00.000Z",
+            "reported": 3,
+            "failing": 1,
+            "queued": 1,
+            "running": 0,
+            "dead": 2
+          }
+        },
+        {
+          "kind": "config.expire-approvals",
+          "description": {
+            "key": "screens.jobs.kinds.config_expire_approvals"
+          },
+          "owner": "core",
+          "scope": "platform",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 60,
+          "minIntervalMinutes": 15,
+          "maxIntervalMinutes": 1440,
+          "tenantOptOutKey": null,
+          "required": true,
+          "settings": {
+            "enabled": "jobs.config.expire-approvals.enabled",
+            "interval": "jobs.config.expire-approvals.interval_minutes"
+          },
+          "state": null
+        },
+        {
+          "kind": "test.optout",
+          "description": null,
+          "owner": "app",
+          "scope": "each-tenant",
+          "runsForSuspended": false,
+          "enabled": false,
+          "intervalMinutes": 1440,
+          "minIntervalMinutes": 60,
+          "maxIntervalMinutes": 10080,
+          "tenantOptOutKey": "social.scheduled_agents_enabled",
+          "required": false,
+          "settings": {
+            "enabled": "jobs.test.optout.enabled",
+            "interval": "jobs.test.optout.interval_minutes"
+          },
+          "state": null
+        }
+      ],
+      "deadLetters": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "tenantId": "aaaaaaaa-0000-4000-8000-00000000000a",
+          "kind": "gdpr.retention-purge",
+          "status": "dead",
+          "attempts": 1,
+          "maxAttempts": 1,
+          "source": "schedule",
+          "runAt": "2026-01-01T00:15:00.000Z",
+          "lastError": "The database was unavailable.",
+          "createdAt": "2026-01-01T00:15:00.000Z",
+          "updatedAt": "2026-01-01T00:18:00.000Z",
+          "finishedAt": "2026-01-01T00:17:00.000Z"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "tenantId": "aaaaaaaa-0000-4000-8000-00000000000a",
+          "kind": "gdpr.retention-purge",
+          "status": "dead",
+          "attempts": 1,
+          "maxAttempts": 1,
+          "source": "schedule",
+          "runAt": "2026-01-01T00:11:00.000Z",
+          "lastError": "reported:erasures_incomplete",
+          "createdAt": "2026-01-01T00:11:00.000Z",
+          "updatedAt": "2026-01-01T00:14:00.000Z",
+          "finishedAt": "2026-01-01T00:13:00.000Z"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "tenantId": "aaaaaaaa-0000-4000-8000-00000000000b",
+          "kind": "moderation.escalation-reaper",
+          "status": "dead",
+          "attempts": 1,
+          "maxAttempts": 5,
+          "source": "schedule",
+          "runAt": "2026-01-01T00:01:00.000Z",
+          "lastError": "database_unavailable",
+          "createdAt": "2026-01-01T00:01:00.000Z",
+          "updatedAt": "2026-01-01T00:07:00.000Z",
+          "finishedAt": "2026-01-01T00:06:00.000Z"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000004",
+          "tenantId": "aaaaaaaa-0000-4000-8000-00000000000a",
+          "kind": "moderation.escalation-reaper",
+          "status": "dead",
+          "attempts": 1,
+          "maxAttempts": 5,
+          "source": "schedule",
+          "runAt": "2026-01-01T00:00:00.000Z",
+          "lastError": "database_unavailable",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:05:00.000Z",
+          "finishedAt": "2026-01-01T00:04:00.000Z"
+        }
+      ]
+    }
+  },
+  "GET /api/operator/jobs — the dead letters gone": {
+    "status": 200,
+    "body": {
+      "schedules": [
+        {
+          "kind": "moderation.escalation-reaper",
+          "description": {
+            "key": "screens.jobs.kinds.moderation_escalation_reaper"
+          },
+          "owner": "core",
+          "scope": "each-tenant",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 15,
+          "minIntervalMinutes": 5,
+          "maxIntervalMinutes": 60,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.moderation.escalation-reaper.enabled",
+            "interval": "jobs.moderation.escalation-reaper.interval_minutes"
+          },
+          "state": {
+            "kind": "moderation.escalation-reaper",
+            "nextRunAt": "2026-01-01T00:15:00.000Z",
+            "lastRunAt": "2026-01-01T00:00:00.000Z",
+            "lastEnqueued": 3,
+            "lastStatus": "dead",
+            "lastError": "database_unavailable",
+            "lastFinishedAt": "2026-01-01T00:10:00.000Z",
+            "reported": 3,
+            "failing": 1,
+            "queued": 1,
+            "running": 0,
+            "dead": 0
+          }
+        },
+        {
+          "kind": "config.expire-approvals",
+          "description": {
+            "key": "screens.jobs.kinds.config_expire_approvals"
+          },
+          "owner": "core",
+          "scope": "platform",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 60,
+          "minIntervalMinutes": 15,
+          "maxIntervalMinutes": 1440,
+          "tenantOptOutKey": null,
+          "required": true,
+          "settings": {
+            "enabled": "jobs.config.expire-approvals.enabled",
+            "interval": "jobs.config.expire-approvals.interval_minutes"
+          },
+          "state": null
+        },
+        {
+          "kind": "test.optout",
+          "description": null,
+          "owner": "app",
+          "scope": "each-tenant",
+          "runsForSuspended": false,
+          "enabled": false,
+          "intervalMinutes": 1440,
+          "minIntervalMinutes": 60,
+          "maxIntervalMinutes": 10080,
+          "tenantOptOutKey": "social.scheduled_agents_enabled",
+          "required": false,
+          "settings": {
+            "enabled": "jobs.test.optout.enabled",
+            "interval": "jobs.test.optout.interval_minutes"
+          },
+          "state": null
+        }
+      ],
+      "deadLetters": []
+    }
+  },
+  "POST /api/operator/jobs/schedules/[kind]/run — refused (the audit log down)": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "audit"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "POST /api/operator/jobs/dead/[id] — replayed": {
+    "status": 200,
+    "body": {
+      "result": {
+        "id": "00000000-0000-4000-8000-0000000000ff",
+        "kind": "gdpr.retention-purge"
+      }
+    }
+  },
+  "POST /api/operator/jobs/dead/[id] — discarded": {
+    "status": 200,
+    "body": {
+      "result": {
+        "id": "00000000-0000-4000-8000-0000000000ff",
+        "kind": "gdpr.retention-purge"
+      }
+    }
+  },
+  "POST /api/admin/config-ai/execute — get_config: the dual-control keys, two keys": {
+    "status": 200,
+    "body": {
+      "toolId": "get_config",
+      "success": true,
+      "data": {
+        "found": true,
+        "entry": {
+          "key": "config.dual_control_keys",
+          "value": ["signups_enabled", "config.dual_control_keys"],
+          "description": "Keys that need an independent approver before a change applies.",
+          "category": "config",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "defaultValue": ["signups_enabled", "config.dual_control_keys"],
+          "valueType": "json_array",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "permissionTier": "safety",
+          "tenantOverridable": false,
+          "overridden": false,
+          "platformValue": ["signups_enabled", "config.dual_control_keys"]
+        }
+      },
+      "durationMs": 0,
+      "trajectoryId": "trajectoryId-fixed",
+      "agentId": "agentId-fixed",
+      "steps": []
+    }
+  },
+  "POST /api/admin/config-ai/execute — get_config: the dual-control keys, one key": {
+    "status": 200,
+    "body": {
+      "toolId": "get_config",
+      "success": true,
+      "data": {
+        "found": true,
+        "entry": {
+          "key": "config.dual_control_keys",
+          "value": ["signups_enabled"],
+          "description": "Keys that need an independent approver before a change applies.",
+          "category": "config",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "defaultValue": ["signups_enabled", "config.dual_control_keys"],
+          "valueType": "json_array",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "permissionTier": "safety",
+          "tenantOverridable": false,
+          "overridden": false,
+          "platformValue": ["signups_enabled"]
+        }
+      },
+      "durationMs": 0,
+      "trajectoryId": "trajectoryId-fixed",
+      "agentId": "agentId-fixed",
+      "steps": []
+    }
+  },
+  "POST /api/admin/config-ai/execute — get_config: the dual-control keys, one key added": {
+    "status": 200,
+    "body": {
+      "toolId": "get_config",
+      "success": true,
+      "data": {
+        "found": true,
+        "entry": {
+          "key": "config.dual_control_keys",
+          "value": ["signups_enabled", "new.key"],
+          "description": "Keys that need an independent approver before a change applies.",
+          "category": "config",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "defaultValue": ["signups_enabled", "config.dual_control_keys"],
+          "valueType": "json_array",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "permissionTier": "safety",
+          "tenantOverridable": false,
+          "overridden": false,
+          "platformValue": ["signups_enabled", "new.key"]
+        }
+      },
+      "durationMs": 0,
+      "trajectoryId": "trajectoryId-fixed",
+      "agentId": "agentId-fixed",
+      "steps": []
+    }
+  },
+  "POST /api/admin/config-ai/execute — get_config: the dual-control keys, none": {
+    "status": 200,
+    "body": {
+      "toolId": "get_config",
+      "success": true,
+      "data": {
+        "found": true,
+        "entry": {
+          "key": "config.dual_control_keys",
+          "value": [],
+          "description": "Keys that need an independent approver before a change applies.",
+          "category": "config",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "defaultValue": ["signups_enabled", "config.dual_control_keys"],
+          "valueType": "json_array",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "permissionTier": "safety",
+          "tenantOverridable": false,
+          "overridden": false,
+          "platformValue": []
+        }
+      },
+      "durationMs": 0,
+      "trajectoryId": "trajectoryId-fixed",
+      "agentId": "agentId-fixed",
+      "steps": []
+    }
+  },
+  "POST /api/admin/config-ai/execute — get_config: the dual-control keys, refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "config_view"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "POST /api/admin/config-ai/execute — update_config: a dual-control key added, held": {
+    "status": 202,
+    "body": {
+      "toolId": "update_config",
+      "success": false,
+      "held": true,
+      "data": {
+        "pendingApproval": true,
+        "proposalId": "00000000-0000-4000-8000-0000000000ff",
+        "operationId": "operationId-fixed",
+        "requiredApprover": "user"
+      },
+      "approval": {
+        "proposalId": "00000000-0000-4000-8000-0000000000ff",
+        "operationId": "operationId-fixed",
+        "requiredApprover": "user"
+      },
+      "durationMs": 0,
+      "trajectoryId": "trajectoryId-fixed",
+      "agentId": "agentId-fixed",
+      "steps": []
+    }
+  },
+  "POST /api/admin/config-ai/execute — update_config: a dual-control key removed, held": {
+    "status": 202,
+    "body": {
+      "toolId": "update_config",
+      "success": false,
+      "held": true,
+      "data": {
+        "pendingApproval": true,
+        "proposalId": "00000000-0000-4000-8000-0000000000ff",
+        "operationId": "operationId-fixed",
+        "requiredApprover": "user"
+      },
+      "approval": {
+        "proposalId": "00000000-0000-4000-8000-0000000000ff",
+        "operationId": "operationId-fixed",
+        "requiredApprover": "user"
+      },
+      "durationMs": 0,
+      "trajectoryId": "trajectoryId-fixed",
+      "agentId": "agentId-fixed",
+      "steps": []
+    }
+  },
+  "POST /api/admin/config-ai/execute — update_config: the dual-control list, refused (no safety tier)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "config_manage_safety"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/admin/approvals — a held change, undecided": {
+    "status": 200,
+    "body": {
+      "approvals": [
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "update_config",
+          "configKey": "config.dual_control_keys",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "config_manage_safety",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "undecided": true,
+          "state": "undecided",
+          "change": {
+            "key": "config.dual_control_keys",
+            "action": "set",
+            "before": ["signups_enabled", "config.dual_control_keys"],
+            "after": ["signups_enabled", "config.dual_control_keys", "default_language"]
+          },
+          "comment": "Hold language changes too",
+          "reason": {
+            "key": "screens.held.reason_undecided",
+            "params": {
+              "noted": "yes",
+              "detail": {
+                "key": "screens.held.note_indeterminate"
+              }
+            }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        }
+      ],
+      "requestId": "req-test"
+    }
+  },
+  "POST /api/admin/approvals/[id] — approved, it took effect": {
+    "status": 200,
+    "body": {
+      "decision": "approve",
+      "source": "runtime",
+      "outcome": "approved",
+      "applied": true,
+      "requestId": "req-test"
+    }
+  },
+  "POST /api/admin/approvals/[id] — rejected": {
+    "status": 200,
+    "body": {
+      "decision": "reject",
+      "source": "runtime",
+      "requestId": "req-test"
+    }
+  },
+  "POST /api/admin/approvals/[id] — approved, now waiting for a second approval": {
+    "status": 200,
+    "body": {
+      "decision": "approve",
+      "source": "runtime",
+      "outcome": "approved",
+      "applied": false,
+      "pendingApproval": {
+        "id": "00000000-0000-4000-8000-0000000000ff"
+      },
+      "requestId": "req-test"
+    }
+  },
+  "POST /api/admin/approvals/[id] — approved, the run failed": {
+    "status": 503,
+    "body": {
+      "code": "approvals.run_failed",
+      "message": "Approved, but it could not be applied. It is still approved: approve it again to retry, or reject it.",
+      "params": {},
+      "success": false,
+      "error": "Approved, but it could not be applied. It is still approved: approve it again to retry, or reject it.",
+      "approvalKept": true
+    }
+  },
+  "POST /api/admin/approvals/[id] — approved, the run failed (a change already waiting)": {
+    "status": 409,
+    "body": {
+      "code": "approvals.already_pending",
+      "message": "A change to config.dual_control_keys is already waiting for approval. Decide it first, then request again.",
+      "params": {
+        "key": "config.dual_control_keys"
+      },
+      "success": false,
+      "error": "A change to config.dual_control_keys is already waiting for approval. Decide it first, then request again.",
+      "approvalKept": true
+    }
+  },
+  "POST /api/admin/approvals/[id] — approved, the run failed (the audit log down)": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "audit"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly.",
+      "approvalKept": true
+    }
+  },
+  "POST /api/admin/approvals/[id] — approved, the run failed (the value now refused)": {
+    "status": 422,
+    "body": {
+      "code": "admin.config_invalid_value",
+      "message": "config.dual_control_keys takes a list.",
+      "params": {
+        "key": "config.dual_control_keys",
+        "reason": "type",
+        "expected": "json_array"
+      },
+      "success": false,
+      "error": "config.dual_control_keys takes a list.",
+      "approvalKept": true
+    }
+  },
+  "POST /api/admin/approvals/[id] — approved, the run failed (the setting gone)": {
+    "status": 404,
+    "body": {
+      "code": "admin.target_not_found",
+      "message": "No config_key matches that request.",
+      "params": {
+        "target": "config_key"
+      },
+      "success": false,
+      "error": "No config_key matches that request.",
+      "approvalKept": true
+    }
+  },
+  "POST /api/admin/approvals/[id] — approved, its run's claim not given back": {
+    "status": 409,
+    "body": {
+      "code": "approvals.indeterminate",
+      "message": "This approved change was being applied and its outcome is unknown. Verify whether it took effect: if it did, mark it executed; if not, withdraw it, or approve it again (an erasure only when no other erasure of the account is open).",
+      "params": {},
+      "success": false,
+      "error": "This approved change was being applied and its outcome is unknown. Verify whether it took effect: if it did, mark it executed; if not, withdraw it, or approve it again (an erasure only when no other erasure of the account is open).",
+      "approvalKept": false,
+      "undecidedWithinMinutes": 75
+    }
+  },
+  "POST /api/admin/approvals/[id] — approved, refused for good and withdrawn": {
+    "status": 422,
+    "body": {
+      "code": "admin.config_invalid_value",
+      "message": "config.dual_control_keys takes a list.",
+      "params": {
+        "key": "config.dual_control_keys",
+        "reason": "type",
+        "expected": "json_array"
+      },
+      "success": false,
+      "error": "config.dual_control_keys takes a list.",
+      "withdrawn": true
+    }
+  },
+  "POST /api/admin/approvals/[id] — refused (its own requester)": {
+    "status": 409,
+    "body": {
+      "code": "approvals.self_approval",
+      "message": "You cannot approve your own change; another approver must clear it.",
+      "params": {},
+      "success": false,
+      "error": "You cannot approve your own change; another approver must clear it."
+    }
+  },
+  "POST /api/admin/approvals/[id] — an undecided run withdrawn": {
+    "status": 200,
+    "body": {
+      "decision": "withdraw",
+      "source": "runtime",
+      "status": "rejected",
+      "requestId": "req-test"
+    }
+  },
+  "POST /api/admin/approvals/[id] — a two-person approval approved, its apply settling": {
+    "status": 503,
+    "body": {
+      "code": "admin.write_indeterminate",
+      "message": "The connection was lost while saving: the change may or may not have been made. Check before you retry.",
+      "params": {},
+      "success": false,
+      "error": "The connection was lost while saving: the change may or may not have been made. Check before you retry.",
+      "settling": true,
+      "settlesWithinMinutes": 75
+    }
+  },
+  "GET /api/admin/approvals — an undecided erasure, no one here may decide it": {
+    "status": 200,
+    "body": {
+      "approvals": [
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "purge_user_data",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "admin_purge_user_data",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "undecided": true,
+          "state": "undecided",
+          "summary": {
+            "target": {
+              "id": "00000000-0000-4000-8000-0000000000fe",
+              "email": "ann@example.com"
+            },
+            "reason": "admin-action",
+            "dryRun": false
+          },
+          "reason": {
+            "key": "screens.held.reason_undecided",
+            "params": {
+              "noted": "yes",
+              "detail": {
+                "key": "screens.held.note_indeterminate"
+              }
+            }
+          },
+          "createdAt": "2026-01-01T00:01:00.000Z",
+          "noEligibleDecider": true,
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        },
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000fd",
+          "label": "purge_user_data",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "admin_purge_user_data",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "state": "held",
+          "summary": {
+            "target": {
+              "id": "00000000-0000-4000-8000-0000000000fe",
+              "email": "ann@example.com"
+            },
+            "reason": "admin-action",
+            "dryRun": false
+          },
+          "reason": {
+            "key": "screens.held.reason_held",
+            "params": {
+              "risk": "restricted",
+              "effects": ["stateWrite"],
+              "effected": "yes"
+            }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        }
+      ],
+      "requestId": "req-test"
+    }
+  },
+  "GET /api/admin/approvals — an undecided erasure, another open": {
+    "status": 200,
+    "body": {
+      "approvals": [
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "purge_user_data",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "admin_purge_user_data",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "undecided": true,
+          "state": "undecided",
+          "summary": {
+            "target": {
+              "id": "00000000-0000-4000-8000-0000000000fe",
+              "email": "ann@example.com"
+            },
+            "reason": "admin-action",
+            "dryRun": false
+          },
+          "reason": {
+            "key": "screens.held.reason_undecided",
+            "params": {
+              "noted": "yes",
+              "detail": {
+                "key": "screens.held.note_indeterminate"
+              }
+            }
+          },
+          "createdAt": "2026-01-01T00:01:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        },
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000fd",
+          "label": "purge_user_data",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "admin_purge_user_data",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "state": "held",
+          "summary": {
+            "target": {
+              "id": "00000000-0000-4000-8000-0000000000fe",
+              "email": "ann@example.com"
+            },
+            "reason": "admin-action",
+            "dryRun": false
+          },
+          "reason": {
+            "key": "screens.held.reason_held",
+            "params": {
+              "risk": "restricted",
+              "effects": ["stateWrite"],
+              "effected": "yes"
+            }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        }
+      ],
+      "requestId": "req-test"
+    }
+  },
+  "POST /api/admin/approvals/[id] — an undecided erasure approved again, another open": {
+    "status": 409,
+    "body": {
+      "code": "approvals.duplicate_undecided",
+      "message": "Another hold for the same action on the same subject is open, so this one is not approved again. Mark it executed if it took effect; if it did not, withdraw it.",
+      "params": {},
+      "success": false,
+      "error": "Another hold for the same action on the same subject is open, so this one is not approved again. Mark it executed if it took effect; if it did not, withdraw it."
+    }
+  },
+  "GET /api/admin/approvals — after a decision, the other held change": {
+    "status": 200,
+    "body": {
+      "approvals": [
+        {
+          "source": "config-approval",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "moderation.strike_ban_threshold",
+          "configKey": "moderation.strike_ban_threshold",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "config_manage_safety",
+          "state": "held",
+          "change": {
+            "key": "moderation.strike_ban_threshold",
+            "action": "set",
+            "before": 5,
+            "after": 7,
+            "scope": "tenant"
+          },
+          "comment": "Fewer bans for first offences",
+          "reason": {
+            "key": "screens.held.reason_two_person",
+            "params": {
+              "key": "moderation.strike_ban_threshold"
+            }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        }
+      ],
+      "requestId": "req-test"
+    }
+  },
+  "GET /api/moderation/review — none": {
+    "status": 200,
+    "body": {
+      "items": []
+    }
+  },
+  "GET /api/moderation/review — one pending escalation": {
+    "status": 200,
+    "body": {
+      "items": [
+        {
+          "source": "escalation",
+          "priority": "high",
+          "status": "pending",
+          "moderationResult": {
+            "action": "escalate",
+            "triggeredBy": "classifier",
+            "direction": "input",
+            "contentType": "generation",
+            "contentRatingLevel": 1,
+            "blocklistMatches": [],
+            "classifierOutput": {
+              "safe": false,
+              "categories": ["violence"],
+              "confidence": 0.52,
+              "severity": "medium"
+            },
+            "reasoning": "Low confidence — escalating.",
+            "severityAdjustment": 0,
+            "contextFactors": ["translation context"],
+            "attributeToUser": true,
+            "pipelineLatencyMs": 100,
+            "classifierCostUsd": 0.001,
+            "trajectoryId": "traj-1",
+            "agentId": "guardian-1"
+          },
+          "explanationChain": {
+            "id": "exp-1",
+            "requestId": "req-1",
+            "steps": [
+              {
+                "phase": "classify",
+                "description": "ran the classifier",
+                "data": {},
+                "durationMs": 10
+              }
+            ],
+            "conclusion": "Escalated for human review.",
+            "createdAt": "2026-01-01T00:00:00.000Z"
+          },
+          "targetUserId": "11111111-1111-4111-8111-111111111111",
+          "requestId": "req-1",
+          "id": "review-1",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    }
+  },
+  "GET /api/moderation/review — a pending and a claimed escalation": {
+    "status": 200,
+    "body": {
+      "items": [
+        {
+          "source": "escalation",
+          "priority": "high",
+          "status": "pending",
+          "moderationResult": {
+            "action": "escalate",
+            "triggeredBy": "classifier",
+            "direction": "input",
+            "contentType": "generation",
+            "contentRatingLevel": 1,
+            "blocklistMatches": [],
+            "classifierOutput": {
+              "safe": false,
+              "categories": ["violence"],
+              "confidence": 0.52,
+              "severity": "medium"
+            },
+            "reasoning": "Low confidence — escalating.",
+            "severityAdjustment": 0,
+            "contextFactors": ["translation context"],
+            "attributeToUser": true,
+            "pipelineLatencyMs": 100,
+            "classifierCostUsd": 0.001,
+            "trajectoryId": "traj-1",
+            "agentId": "guardian-1"
+          },
+          "explanationChain": {
+            "id": "exp-1",
+            "requestId": "req-1",
+            "steps": [
+              {
+                "phase": "classify",
+                "description": "ran the classifier",
+                "data": {},
+                "durationMs": 10
+              }
+            ],
+            "conclusion": "Escalated for human review.",
+            "createdAt": "2026-01-01T00:00:00.000Z"
+          },
+          "targetUserId": "11111111-1111-4111-8111-111111111111",
+          "requestId": "req-1",
+          "id": "review-1",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "source": "escalation",
+          "priority": "high",
+          "status": "claimed",
+          "moderationResult": {
+            "action": "escalate",
+            "triggeredBy": "classifier",
+            "direction": "input",
+            "contentType": "generation",
+            "contentRatingLevel": 1,
+            "blocklistMatches": [],
+            "classifierOutput": {
+              "safe": false,
+              "categories": ["violence"],
+              "confidence": 0.52,
+              "severity": "medium"
+            },
+            "reasoning": "Low confidence — escalating.",
+            "severityAdjustment": 0,
+            "contextFactors": ["translation context"],
+            "attributeToUser": true,
+            "pipelineLatencyMs": 100,
+            "classifierCostUsd": 0.001,
+            "trajectoryId": "traj-1",
+            "agentId": "guardian-1"
+          },
+          "explanationChain": {
+            "id": "exp-1",
+            "requestId": "req-2",
+            "steps": [
+              {
+                "phase": "classify",
+                "description": "ran the classifier",
+                "data": {},
+                "durationMs": 10
+              }
+            ],
+            "conclusion": "Escalated for human review.",
+            "createdAt": "2026-01-01T00:00:00.000Z"
+          },
+          "targetUserId": "11111111-1111-4111-8111-111111111111",
+          "requestId": "req-2",
+          "id": "review-2",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "claimedBy": "00000000-0000-4000-9000-887b6c240009",
+          "claimedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    }
+  },
+  "GET /api/moderation/review?status=pending — the pending escalation": {
+    "status": 200,
+    "body": {
+      "items": [
+        {
+          "source": "escalation",
+          "priority": "high",
+          "status": "pending",
+          "moderationResult": {
+            "action": "escalate",
+            "triggeredBy": "classifier",
+            "direction": "input",
+            "contentType": "generation",
+            "contentRatingLevel": 1,
+            "blocklistMatches": [],
+            "classifierOutput": {
+              "safe": false,
+              "categories": ["violence"],
+              "confidence": 0.52,
+              "severity": "medium"
+            },
+            "reasoning": "Low confidence — escalating.",
+            "severityAdjustment": 0,
+            "contextFactors": ["translation context"],
+            "attributeToUser": true,
+            "pipelineLatencyMs": 100,
+            "classifierCostUsd": 0.001,
+            "trajectoryId": "traj-1",
+            "agentId": "guardian-1"
+          },
+          "explanationChain": {
+            "id": "exp-1",
+            "requestId": "req-1",
+            "steps": [
+              {
+                "phase": "classify",
+                "description": "ran the classifier",
+                "data": {},
+                "durationMs": 10
+              }
+            ],
+            "conclusion": "Escalated for human review.",
+            "createdAt": "2026-01-01T00:00:00.000Z"
+          },
+          "targetUserId": "11111111-1111-4111-8111-111111111111",
+          "requestId": "req-1",
+          "id": "review-1",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    }
+  },
+  "GET /api/moderation/review?status=pending — none": {
+    "status": 200,
+    "body": {
+      "items": []
+    }
+  },
+  "GET /api/moderation/review — the escalation claimed": {
+    "status": 200,
+    "body": {
+      "items": [
+        {
+          "source": "escalation",
+          "priority": "high",
+          "status": "claimed",
+          "moderationResult": {
+            "action": "escalate",
+            "triggeredBy": "classifier",
+            "direction": "input",
+            "contentType": "generation",
+            "contentRatingLevel": 1,
+            "blocklistMatches": [],
+            "classifierOutput": {
+              "safe": false,
+              "categories": ["violence"],
+              "confidence": 0.52,
+              "severity": "medium"
+            },
+            "reasoning": "Low confidence — escalating.",
+            "severityAdjustment": 0,
+            "contextFactors": ["translation context"],
+            "attributeToUser": true,
+            "pipelineLatencyMs": 100,
+            "classifierCostUsd": 0.001,
+            "trajectoryId": "traj-1",
+            "agentId": "guardian-1"
+          },
+          "explanationChain": {
+            "id": "exp-1",
+            "requestId": "req-1",
+            "steps": [
+              {
+                "phase": "classify",
+                "description": "ran the classifier",
+                "data": {},
+                "durationMs": 10
+              }
+            ],
+            "conclusion": "Escalated for human review.",
+            "createdAt": "2026-01-01T00:00:00.000Z"
+          },
+          "targetUserId": "11111111-1111-4111-8111-111111111111",
+          "requestId": "req-1",
+          "id": "review-1",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "claimedBy": "00000000-0000-4000-9000-887b6c240009",
+          "claimedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    }
+  },
+  "GET /api/moderation/review — the store failing": {
+    "status": 500,
+    "body": {
+      "code": "internal.error",
+      "message": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000.",
+      "params": {
+        "requestId": "req_0000000000000000"
+      },
+      "success": false,
+      "error": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000."
+    }
+  },
+  "PATCH /api/moderation/review/[id] — claimed": {
+    "status": 200,
+    "body": {
+      "item": {
+        "source": "escalation",
+        "priority": "high",
+        "status": "claimed",
+        "moderationResult": {
+          "action": "escalate",
+          "triggeredBy": "classifier",
+          "direction": "input",
+          "contentType": "generation",
+          "contentRatingLevel": 1,
+          "blocklistMatches": [],
+          "classifierOutput": {
+            "safe": false,
+            "categories": ["violence"],
+            "confidence": 0.52,
+            "severity": "medium"
+          },
+          "reasoning": "Low confidence — escalating.",
+          "severityAdjustment": 0,
+          "contextFactors": ["translation context"],
+          "attributeToUser": true,
+          "pipelineLatencyMs": 100,
+          "classifierCostUsd": 0.001,
+          "trajectoryId": "traj-1",
+          "agentId": "guardian-1"
+        },
+        "explanationChain": {
+          "id": "exp-1",
+          "requestId": "req-1",
+          "steps": [
+            {
+              "phase": "classify",
+              "description": "ran the classifier",
+              "data": {},
+              "durationMs": 10
+            }
+          ],
+          "conclusion": "Escalated for human review.",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        },
+        "targetUserId": "11111111-1111-4111-8111-111111111111",
+        "requestId": "req-1",
+        "id": "review-1",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "claimedBy": "00000000-0000-4000-9000-887b6c240009",
+        "claimedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  "PATCH /api/moderation/review/[id] — released": {
+    "status": 200,
+    "body": {
+      "item": {
+        "source": "escalation",
+        "priority": "high",
+        "status": "pending",
+        "moderationResult": {
+          "action": "escalate",
+          "triggeredBy": "classifier",
+          "direction": "input",
+          "contentType": "generation",
+          "contentRatingLevel": 1,
+          "blocklistMatches": [],
+          "classifierOutput": {
+            "safe": false,
+            "categories": ["violence"],
+            "confidence": 0.52,
+            "severity": "medium"
+          },
+          "reasoning": "Low confidence — escalating.",
+          "severityAdjustment": 0,
+          "contextFactors": ["translation context"],
+          "attributeToUser": true,
+          "pipelineLatencyMs": 100,
+          "classifierCostUsd": 0.001,
+          "trajectoryId": "traj-1",
+          "agentId": "guardian-1"
+        },
+        "explanationChain": {
+          "id": "exp-1",
+          "requestId": "req-1",
+          "steps": [
+            {
+              "phase": "classify",
+              "description": "ran the classifier",
+              "data": {},
+              "durationMs": 10
+            }
+          ],
+          "conclusion": "Escalated for human review.",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        },
+        "targetUserId": "11111111-1111-4111-8111-111111111111",
+        "requestId": "req-1",
+        "id": "review-1",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  "PATCH /api/moderation/review/[id] — refused (claimed by another reviewer)": {
+    "status": 409,
+    "body": {
+      "code": "moderation.item_state_conflict",
+      "message": "This item has already been handled or changed. Refresh the queue.",
+      "params": {
+        "status": "claimed"
+      },
+      "success": false,
+      "error": "This item has already been handled or changed. Refresh the queue."
+    }
+  },
+  "PATCH /api/moderation/review/[id] — resolved, upheld": {
+    "status": 200,
+    "body": {
+      "item": {
+        "source": "escalation",
+        "priority": "high",
+        "status": "resolved",
+        "moderationResult": {
+          "action": "escalate",
+          "triggeredBy": "classifier",
+          "direction": "input",
+          "contentType": "generation",
+          "contentRatingLevel": 1,
+          "blocklistMatches": [],
+          "classifierOutput": {
+            "safe": false,
+            "categories": ["violence"],
+            "confidence": 0.52,
+            "severity": "medium"
+          },
+          "reasoning": "Low confidence — escalating.",
+          "severityAdjustment": 0,
+          "contextFactors": ["translation context"],
+          "attributeToUser": true,
+          "pipelineLatencyMs": 100,
+          "classifierCostUsd": 0.001,
+          "trajectoryId": "traj-1",
+          "agentId": "guardian-1"
+        },
+        "explanationChain": {
+          "id": "exp-1",
+          "requestId": "req-1",
+          "steps": [
+            {
+              "phase": "classify",
+              "description": "ran the classifier",
+              "data": {},
+              "durationMs": 10
+            }
+          ],
+          "conclusion": "Escalated for human review.",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        },
+        "targetUserId": "11111111-1111-4111-8111-111111111111",
+        "requestId": "req-1",
+        "id": "review-1",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "claimedBy": "00000000-0000-4000-9000-887b6c240009",
+        "claimedAt": "2026-01-01T00:00:00.000Z",
+        "resolvedBy": "00000000-0000-4000-9000-887b6c240009",
+        "resolvedAt": "2026-01-01T00:00:00.000Z",
+        "decision": "uphold",
+        "reviewerNotes": "Looks correct."
+      }
+    }
+  },
+  "PATCH /api/moderation/review/[id] — resolved, modified to a block": {
+    "status": 200,
+    "body": {
+      "item": {
+        "source": "escalation",
+        "priority": "high",
+        "status": "resolved",
+        "moderationResult": {
+          "action": "escalate",
+          "triggeredBy": "classifier",
+          "direction": "input",
+          "contentType": "generation",
+          "contentRatingLevel": 1,
+          "blocklistMatches": [],
+          "classifierOutput": {
+            "safe": false,
+            "categories": ["violence"],
+            "confidence": 0.52,
+            "severity": "medium"
+          },
+          "reasoning": "Low confidence — escalating.",
+          "severityAdjustment": 0,
+          "contextFactors": ["translation context"],
+          "attributeToUser": true,
+          "pipelineLatencyMs": 100,
+          "classifierCostUsd": 0.001,
+          "trajectoryId": "traj-1",
+          "agentId": "guardian-1"
+        },
+        "explanationChain": {
+          "id": "exp-1",
+          "requestId": "req-1",
+          "steps": [
+            {
+              "phase": "classify",
+              "description": "ran the classifier",
+              "data": {},
+              "durationMs": 10
+            }
+          ],
+          "conclusion": "Escalated for human review.",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        },
+        "targetUserId": "11111111-1111-4111-8111-111111111111",
+        "requestId": "req-1",
+        "id": "review-1",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "claimedBy": "00000000-0000-4000-9000-887b6c240009",
+        "claimedAt": "2026-01-01T00:00:00.000Z",
+        "resolvedBy": "00000000-0000-4000-9000-887b6c240009",
+        "resolvedAt": "2026-01-01T00:00:00.000Z",
+        "decision": "modify",
+        "reviewerNotes": "Downgrade to block.",
+        "modifiedAction": "block"
+      }
+    }
+  },
+  "POST /api/moderation/review/[id]/assist — a suggestion": {
+    "status": 200,
+    "body": {
+      "recommendation": {
+        "recommendation": "overturn",
+        "rationale": "Historical context likely benign."
+      }
+    }
+  },
+  "POST /api/moderation/review/[id]/assist — no suggestion (the model unavailable)": {
+    "status": 200,
+    "body": {
+      "recommendation": null
+    }
+  },
+  "GET /api/admin/users — Ann and Mo, a moderator": {
+    "status": 200,
+    "body": {
+      "users": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "email": "ann@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-29T09:15:00.000Z",
+          "lastSignInAt": "2026-10-29T10:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "email": "mo@example.com",
+          "displayName": "Mo",
+          "roleId": "0000000a-0000-4000-8000-0000000000f2",
+          "roleName": "moderator",
+          "roleDisplayName": "Moderator",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-29T09:15:00.000Z",
+          "lastSignInAt": "2026-10-29T10:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        }
+      ],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — the moderators: Mo": {
+    "status": 200,
+    "body": {
+      "users": [
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "email": "mo@example.com",
+          "displayName": "Mo",
+          "roleId": "0000000a-0000-4000-8000-0000000000f2",
+          "roleName": "moderator",
+          "roleDisplayName": "Moderator",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-29T09:15:00.000Z",
+          "lastSignInAt": "2026-10-29T10:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        }
+      ],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — no banned account": {
+    "status": 200,
+    "body": {
+      "users": [],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — Mo, the roles with QA Lead": {
+    "status": 200,
+    "body": {
+      "users": [
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "email": "mo@example.com",
+          "displayName": "Mo",
+          "roleId": "0000000a-0000-4000-8000-0000000000f2",
+          "roleName": "moderator",
+          "roleDisplayName": "Moderator",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-29T09:15:00.000Z",
+          "lastSignInAt": "2026-10-29T10:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        }
+      ],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f4",
+          "name": "qa",
+          "displayName": "QA Lead"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": false,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/users — a page of 25 free accounts, more to read": {
+    "status": 200,
+    "body": {
+      "users": [
+        {
+          "id": "11111111-1111-4111-8111-000000000000",
+          "email": "u0@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000001",
+          "email": "u1@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000002",
+          "email": "u2@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000003",
+          "email": "u3@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000004",
+          "email": "u4@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000005",
+          "email": "u5@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000006",
+          "email": "u6@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000007",
+          "email": "u7@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000008",
+          "email": "u8@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000009",
+          "email": "u9@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000010",
+          "email": "u10@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000011",
+          "email": "u11@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000012",
+          "email": "u12@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000013",
+          "email": "u13@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000014",
+          "email": "u14@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000015",
+          "email": "u15@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000016",
+          "email": "u16@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000017",
+          "email": "u17@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000018",
+          "email": "u18@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000019",
+          "email": "u19@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000020",
+          "email": "u20@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000021",
+          "email": "u21@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000022",
+          "email": "u22@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000023",
+          "email": "u23@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        },
+        {
+          "id": "11111111-1111-4111-8111-000000000024",
+          "email": "u24@example.com",
+          "displayName": "Ann",
+          "roleId": "0000000a-0000-4000-8000-0000000000f1",
+          "roleName": "free",
+          "roleDisplayName": "Free",
+          "status": "active",
+          "statusUntil": null,
+          "emailVerified": true,
+          "createdAt": "2026-10-26T12:00:00.000Z",
+          "lastSignInAt": "2026-10-27T12:00:00.000Z",
+          "isDeleted": false,
+          "entitlements": []
+        }
+      ],
+      "roles": [
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f1",
+          "name": "free",
+          "displayName": "Free"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f2",
+          "name": "moderator",
+          "displayName": "Moderator"
+        },
+        {
+          "id": "0000000a-0000-4000-8000-0000000000f3",
+          "name": "super_admin",
+          "displayName": "Super Admin"
+        }
+      ],
+      "page": {
+        "limit": 25,
+        "offset": 0,
+        "hasMore": true,
+        "sort": "created",
+        "dir": "desc"
+      }
+    }
+  },
+  "GET /api/admin/session — an admin": {
+    "status": 200,
+    "body": {
+      "userId": "00000000-0000-4000-9000-34c836140005",
+      "roleName": "admin",
+      "permissions": [
+        "admin_manage_entitlements",
+        "admin_manage_users",
+        "admin_view_audit",
+        "can_access_admin",
+        "can_create_group",
+        "can_delete_account",
+        "can_edit_profile",
+        "can_export_data",
+        "can_moderate",
+        "can_play",
+        "can_translate",
+        "can_view_profile",
+        "config_manage_standard",
+        "config_view"
+      ]
+    }
+  },
+  "GET /api/admin/session — a moderator whose role was given user management": {
+    "status": 200,
+    "body": {
+      "userId": "00000000-0000-4000-9000-c46063b10017",
+      "roleName": "moderator",
+      "permissions": ["can_access_admin", "admin_manage_users"]
+    }
+  },
+  "POST /api/admin/ai — a plan: search users, role as the model gave it": {
+    "status": 200,
+    "body": {
+      "plan": {
+        "message": "Searching moderators.",
+        "actions": [
+          {
+            "tool": "search",
+            "input": {
+              "table": "users",
+              "role": " MODERATOR  "
+            }
+          }
+        ]
+      }
+    }
+  },
+  "POST /api/admin/ai — a plan: search users for moderators": {
+    "status": 200,
+    "body": {
+      "plan": {
+        "message": "Searching moderators.",
+        "actions": [
+          {
+            "tool": "search",
+            "input": {
+              "table": "users",
+              "role": "moderator"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "POST /api/admin/ai/execute — search users: the moderators": {
+    "status": 200,
+    "body": {
+      "results": [
+        {
+          "tool": "search",
+          "success": true,
+          "result": {
+            "key": "screens.admin_console.search.summary_all",
+            "params": {
+              "shown": 1,
+              "matched": 1,
+              "table": "users"
+            }
+          },
+          "table": {
+            "table": "users",
+            "columns": [
+              "id",
+              "email",
+              "display_name",
+              "role",
+              "status",
+              "status_until",
+              "email_verified",
+              "created_at",
+              "last_sign_in_at"
+            ],
+            "rows": [
+              [
+                "33333333-3333-4333-8333-333333333333",
+                "mo@example.com",
+                "Mo",
+                "moderator",
+                "active",
+                null,
+                true,
+                "2026-10-29T09:15:00.000Z",
+                "2026-10-29T10:00:00.000Z"
+              ]
+            ],
+            "matched": 1,
+            "filters": {
+              "role": "moderator"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "POST /api/admin/ai/execute — refused (rate limited)": {
+    "status": 429,
+    "body": {
+      "code": "rate.limited",
+      "message": "Too many requests. Try again in a moment.",
+      "params": {
+        "retryAfterSeconds": 30
+      },
+      "success": false,
+      "error": "Too many requests. Try again in a moment."
+    }
+  },
+  "GET /api/admin/tenant — a shared deployment's tenant, its spend under the cap": {
+    "status": 200,
+    "body": {
+      "tenant": {
+        "id": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "mode": "shared",
+        "slug": "acme",
+        "name": "Acme",
+        "status": "active"
+      },
+      "domains": [
+        {
+          "host": "acme.example.com",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "budget": {
+        "tenantId": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "period": "2026-01-01",
+        "budgetUsd": 100,
+        "usedUsd": 12.5,
+        "exhausted": false
+      },
+      "settings": [
+        {
+          "key": "signups_enabled",
+          "description": "Whether new accounts may sign up",
+          "value": false,
+          "platformValue": true,
+          "overridden": true,
+          "valueType": "boolean",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "permissionTier": "safety"
+        },
+        {
+          "key": "max_devices_per_player",
+          "description": null,
+          "value": 3,
+          "platformValue": 3,
+          "overridden": false,
+          "valueType": "number",
+          "minValue": 1,
+          "maxValue": 20,
+          "allowedValues": null,
+          "permissionTier": "standard"
+        }
+      ],
+      "jobs": []
+    }
+  },
+  "GET /api/admin/tenant — a shared deployment's tenant, its cap reached": {
+    "status": 200,
+    "body": {
+      "tenant": {
+        "id": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "mode": "shared",
+        "slug": "acme",
+        "name": "Acme",
+        "status": "active"
+      },
+      "domains": [
+        {
+          "host": "acme.example.com",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "budget": {
+        "tenantId": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "period": "2026-01-01",
+        "budgetUsd": 100,
+        "usedUsd": 100,
+        "exhausted": true
+      },
+      "settings": [
+        {
+          "key": "signups_enabled",
+          "description": "Whether new accounts may sign up",
+          "value": false,
+          "platformValue": true,
+          "overridden": true,
+          "valueType": "boolean",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "permissionTier": "safety"
+        },
+        {
+          "key": "max_devices_per_player",
+          "description": null,
+          "value": 3,
+          "platformValue": 3,
+          "overridden": false,
+          "valueType": "number",
+          "minValue": 1,
+          "maxValue": 20,
+          "allowedValues": null,
+          "permissionTier": "standard"
+        }
+      ],
+      "jobs": []
+    }
+  },
+  "GET /api/admin/tenant — after a lost commit, max_devices_per_player 7": {
+    "status": 200,
+    "body": {
+      "tenant": {
+        "id": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "mode": "shared",
+        "slug": "acme",
+        "name": "Acme",
+        "status": "active"
+      },
+      "domains": [
+        {
+          "host": "acme.example.com",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "budget": {
+        "tenantId": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "period": "2026-01-01",
+        "budgetUsd": 100,
+        "usedUsd": 12.5,
+        "exhausted": false
+      },
+      "settings": [
+        {
+          "key": "signups_enabled",
+          "description": "Whether new accounts may sign up",
+          "value": false,
+          "platformValue": true,
+          "overridden": true,
+          "valueType": "boolean",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "permissionTier": "safety"
+        },
+        {
+          "key": "max_devices_per_player",
+          "description": null,
+          "value": 7,
+          "platformValue": 3,
+          "overridden": true,
+          "valueType": "number",
+          "minValue": 1,
+          "maxValue": 20,
+          "allowedValues": null,
+          "permissionTier": "standard"
+        }
+      ],
+      "jobs": []
+    }
+  },
+  "GET /api/admin/tenant — after a lost commit, signups_enabled the platform's": {
+    "status": 200,
+    "body": {
+      "tenant": {
+        "id": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "mode": "shared",
+        "slug": "acme",
+        "name": "Acme",
+        "status": "active"
+      },
+      "domains": [
+        {
+          "host": "acme.example.com",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "budget": {
+        "tenantId": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "period": "2026-01-01",
+        "budgetUsd": 100,
+        "usedUsd": 12.5,
+        "exhausted": false
+      },
+      "settings": [
+        {
+          "key": "signups_enabled",
+          "description": "Whether new accounts may sign up",
+          "value": true,
+          "platformValue": true,
+          "overridden": false,
+          "valueType": "boolean",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "permissionTier": "safety"
+        },
+        {
+          "key": "max_devices_per_player",
+          "description": null,
+          "value": 3,
+          "platformValue": 3,
+          "overridden": false,
+          "valueType": "number",
+          "minValue": 1,
+          "maxValue": 20,
+          "allowedValues": null,
+          "permissionTier": "standard"
+        }
+      ],
+      "jobs": []
+    }
+  },
+  "GET /api/admin/tenant — a single deployment": {
+    "status": 200,
+    "body": {
+      "tenant": {
+        "id": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "mode": "single",
+        "slug": null,
+        "name": null,
+        "status": "active"
+      },
+      "domains": [],
+      "budget": {
+        "tenantId": "aaaaaaaa-0000-4000-8000-00000000000a",
+        "period": "2026-01-01",
+        "budgetUsd": 100,
+        "usedUsd": 12.5,
+        "exhausted": false
+      },
+      "settings": [
+        {
+          "key": "signups_enabled",
+          "description": "Whether new accounts may sign up",
+          "value": false,
+          "platformValue": true,
+          "overridden": true,
+          "valueType": "boolean",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "permissionTier": "safety"
+        },
+        {
+          "key": "max_devices_per_player",
+          "description": null,
+          "value": 3,
+          "platformValue": 3,
+          "overridden": false,
+          "valueType": "number",
+          "minValue": 1,
+          "maxValue": 20,
+          "allowedValues": null,
+          "permissionTier": "standard"
+        }
+      ],
+      "jobs": []
+    }
+  },
+  "PUT /api/admin/config — saved": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "key": "max_devices_per_player",
+      "value": 5
+    }
+  },
+  "PUT /api/admin/config — held for approval": {
+    "status": 202,
+    "body": {
+      "success": false,
+      "held": true,
+      "pending": true,
+      "key": "signups_enabled",
+      "approval": null
+    }
+  },
+  "PUT /api/admin/config — refused (not this tenant's to set)": {
+    "status": 403,
+    "body": {
+      "code": "admin.config_scope_refused",
+      "message": "signups_enabled governs the platform, so only an operator can change it.",
+      "params": {
+        "key": "signups_enabled"
+      },
+      "success": false,
+      "error": "signups_enabled governs the platform, so only an operator can change it."
+    }
+  },
+  "PUT /api/admin/config — the commit lost": {
+    "status": 503,
+    "body": {
+      "code": "admin.write_indeterminate",
+      "message": "The connection was lost while saving: the change may or may not have been made. Check before you retry.",
+      "params": {},
+      "success": false,
+      "error": "The connection was lost while saving: the change may or may not have been made. Check before you retry."
+    }
+  },
+  "DELETE /api/admin/config — the platform default again": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "key": "signups_enabled"
+    }
+  },
+  "DELETE /api/admin/config — the commit lost": {
+    "status": 503,
+    "body": {
+      "code": "admin.write_indeterminate",
+      "message": "The connection was lost while saving: the change may or may not have been made. Check before you retry.",
+      "params": {},
+      "success": false,
+      "error": "The connection was lost while saving: the change may or may not have been made. Check before you retry."
+    }
+  },
+  "GET /api/operator/tenants — every state": {
+    "status": 200,
+    "body": {
+      "tenants": [
+        {
+          "id": "aaaaaaaa-0000-4000-8000-0000000000a1",
+          "slug": "acme",
+          "name": "Acme",
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "domains": ["acme.example.com"],
+          "userCount": 4
+        },
+        {
+          "id": "aaaaaaaa-0000-4000-8000-0000000000b1",
+          "slug": "beta",
+          "name": "Beta",
+          "status": "suspended",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "statusChangedAt": "2026-01-01T00:00:00.000Z",
+          "statusChangedBy": "00000000-0000-4000-9000-97a91570000b",
+          "statusReason": "fixture",
+          "domains": [],
+          "userCount": 1
+        },
+        {
+          "id": "aaaaaaaa-0000-4000-8000-0000000000d1",
+          "slug": "doomed",
+          "name": "Doomed",
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "domains": [],
+          "userCount": 2,
+          "pendingDeletion": {
+            "requestId": "aaaaaaaa-0000-4000-8000-0000000000f1",
+            "requestedBy": "00000000-0000-4000-9000-97a91570000b"
+          }
+        },
+        {
+          "id": "aaaaaaaa-0000-4000-8000-0000000000c1",
+          "slug": "gone",
+          "name": "Gone",
+          "status": "deleted",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "statusChangedAt": "2026-01-01T00:00:00.000Z",
+          "statusChangedBy": "00000000-0000-4000-9000-97a91570000b",
+          "statusReason": "fixture",
+          "domains": [],
+          "userCount": 0,
+          "purgeAfter": "2026-11-20T00:00:00.000Z"
+        },
+        {
+          "id": "aaaaaaaa-0000-4000-8000-00000000000a",
+          "slug": "home",
+          "name": "Home",
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "domains": [],
+          "userCount": 0
+        },
+        {
+          "id": "aaaaaaaa-0000-4000-8000-0000000000e1",
+          "slug": "purged",
+          "name": "Purged",
+          "status": "deleted",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "statusChangedAt": "2026-01-01T00:00:00.000Z",
+          "statusChangedBy": "00000000-0000-4000-9000-97a91570000b",
+          "statusReason": "fixture",
+          "domains": [],
+          "userCount": 0,
+          "purgeAfter": "2026-01-01T00:00:00.000Z",
+          "purgedAt": "2026-01-02T00:00:00.000Z"
+        }
+      ]
+    }
+  },
+  "POST /api/operator/tenants/[id]/state — suspended": {
+    "status": 200,
+    "body": {
+      "result": {
+        "id": "aaaaaaaa-0000-4000-8000-0000000000a1",
+        "slug": "acme",
+        "name": "Acme",
+        "status": "suspended",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "statusChangedAt": "2026-01-01T00:00:00.000Z",
+        "statusChangedBy": "00000000-0000-4000-9000-97a91570000b",
+        "statusReason": "unpaid"
+      }
+    }
+  },
+  "POST /api/operator/tenants/[id]/deletion — requested": {
+    "status": 202,
+    "body": {
+      "result": {
+        "id": "aaaaaaaa-0000-4000-8000-0000000000f1",
+        "tenantId": "aaaaaaaa-0000-4000-8000-0000000000a1",
+        "requestedBy": "00000000-0000-4000-9000-97a91570000b",
+        "reason": "closed",
+        "status": "pending",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "expiresAt": "2026-01-08T00:00:00.000Z"
+      }
+    }
+  },
+  "POST /api/operator/deletions/[id] — refused (its own requester)": {
+    "status": 403,
+    "body": {
+      "code": "tenant.self_approval",
+      "message": "Another operator must approve a deletion you requested.",
+      "params": {},
+      "success": false,
+      "error": "Another operator must approve a deletion you requested."
+    }
+  },
+  "POST /api/operator/tenants/[id]/domains — added": {
+    "status": 201,
+    "body": {
+      "result": {
+        "host": "beta.example.com",
+        "tenantId": "aaaaaaaa-0000-4000-8000-0000000000b1",
+        "createdAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  "DELETE /api/operator/tenants/[id]/domains — removed": {
+    "status": 200,
+    "body": {
+      "result": true
+    }
+  },
+  "POST /api/operator/tenants/[id]/admins — made administrator": {
+    "status": 200,
+    "body": {
+      "result": {
+        "userId": "11111111-1111-4111-8111-1111111111a1"
+      }
+    }
+  },
+  "POST /api/operator/tenants — provisioned": {
+    "status": 201,
+    "body": {
+      "result": {
+        "id": "00000000-0000-4000-8000-0000000000ff",
+        "slug": "new",
+        "name": "New Co",
+        "status": "active",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "domains": ["a.example.com", "b.example.com", "c.example.com"]
+      }
+    }
+  },
+  "POST /api/operator/tenants — refused (the slug taken)": {
+    "status": 409,
+    "body": {
+      "code": "tenant.conflict",
+      "message": "That could not be done: that slug is taken.",
+      "params": {
+        "reason": "slug_taken"
+      },
+      "success": false,
+      "error": "That could not be done: that slug is taken."
+    }
+  },
+  "POST /api/operator/purge — none due": {
+    "status": 200,
+    "body": {
+      "result": []
+    }
+  },
+  "GET /api/operator/readiness — this deployment": {
+    "status": 200,
+    "body": {
+      "mode": "single",
+      "tenantId": "00000000-0000-4000-8000-000000000001",
+      "ready": false,
+      "checks": [
+        {
+          "name": "mode",
+          "state": "ready",
+          "detail": {
+            "key": "screens.readiness.mode_single",
+            "params": {
+              "tenant": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        {
+          "name": "database",
+          "state": "unknown",
+          "detail": {
+            "key": "screens.readiness.database_role_missing"
+          }
+        },
+        {
+          "name": "owner_connection",
+          "state": "not_ready",
+          "detail": {
+            "key": "screens.readiness.owner_unset"
+          }
+        },
+        {
+          "name": "directory",
+          "state": "not_needed",
+          "detail": {
+            "key": "screens.readiness.directory_memory"
+          }
+        },
+        {
+          "name": "identity",
+          "state": "not_needed",
+          "detail": {
+            "key": "screens.readiness.identity_single"
+          }
+        },
+        {
+          "name": "erasure",
+          "state": "not_needed",
+          "detail": {
+            "key": "screens.readiness.erasure_not_needed"
+          }
+        },
+        {
+          "name": "client_secret",
+          "state": "not_needed",
+          "detail": {
+            "key": "screens.readiness.secret_not_needed"
+          }
+        },
+        {
+          "name": "dual_control",
+          "state": "unknown",
+          "detail": {
+            "key": "screens.readiness.dual_unknown",
+            "params": {
+              "error": "Error"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "GET /api/operator/readiness — refused (no permission)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "platform_operate"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "GET /api/operator/tenants/[id]/config — every setting, one only operators set": {
+    "status": 200,
+    "body": {
+      "tenantId": "aaaaaaaa-0000-4000-8000-0000000000a1",
+      "entries": [
+        {
+          "key": "max_devices_per_player",
+          "value": 5,
+          "description": "Devices",
+          "category": "moderation",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "defaultValue": 3,
+          "valueType": "number",
+          "minValue": 1,
+          "maxValue": 20,
+          "allowedValues": null,
+          "permissionTier": "standard",
+          "tenantOverridable": true,
+          "overridden": true,
+          "platformValue": 3
+        },
+        {
+          "key": "agent.budget.tenant_max_cost_per_day",
+          "value": 100,
+          "description": "Tenant cap",
+          "category": "moderation",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "defaultValue": 100,
+          "valueType": "number",
+          "minValue": 1,
+          "maxValue": 20,
+          "allowedValues": null,
+          "permissionTier": "safety",
+          "tenantOverridable": false,
+          "overridden": false,
+          "platformValue": 100
+        }
+      ]
+    }
+  },
+  "GET /api/operator/tenants/[id]/approvals — none": {
+    "status": 200,
+    "body": {
+      "tenantId": "aaaaaaaa-0000-4000-8000-0000000000a1",
+      "approvals": []
+    }
+  },
+  "GET /api/operator/tenants/[id]/approvals — a two-person approval, its requester not here": {
+    "status": 200,
+    "body": {
+      "tenantId": "aaaaaaaa-0000-4000-8000-0000000000a1",
+      "approvals": [
+        {
+          "source": "config-approval",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "moderation.strike_ban_threshold",
+          "configKey": "moderation.strike_ban_threshold",
+          "requester": "00000000-0000-4000-8000-0000000000fe",
+          "requiredPermission": "config_manage_safety",
+          "state": "held",
+          "change": {
+            "key": "moderation.strike_ban_threshold",
+            "action": "set",
+            "before": 5,
+            "after": 7,
+            "scope": "tenant"
+          },
+          "comment": "Fewer bans for first offences",
+          "reason": {
+            "key": "screens.held.reason_two_person",
+            "params": {
+              "key": "moderation.strike_ban_threshold"
+            }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    }
+  },
+  "PUT /api/operator/tenants/[id]/config — saved": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "key": "agent.budget.tenant_max_cost_per_day",
+      "value": 25
+    }
+  },
+  "PUT /api/operator/tenants/[id]/config — held for approval": {
+    "status": 202,
+    "body": {
+      "success": false,
+      "held": true,
+      "pending": true,
+      "key": "max_devices_per_player",
+      "approval": null
+    }
+  },
+  "DELETE /api/operator/tenants/[id]/config — the platform default again": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "key": "max_devices_per_player"
+    }
+  },
+  "POST /api/operator/tenants/[id]/approvals/[approvalId] — refused (its own requester)": {
+    "status": 409,
+    "body": {
+      "code": "approvals.self_approval",
+      "message": "You cannot approve your own change; another approver must clear it.",
+      "params": {},
+      "success": false,
+      "error": "You cannot approve your own change; another approver must clear it."
+    }
+  },
+  "POST /api/operator/tenants/[id]/approvals/[approvalId] — approved, its apply settling": {
+    "status": 503,
+    "body": {
+      "code": "admin.write_indeterminate",
+      "message": "The connection was lost while saving: the change may or may not have been made. Check before you retry.",
+      "params": {},
+      "success": false,
+      "error": "The connection was lost while saving: the change may or may not have been made. Check before you retry.",
+      "settling": true,
+      "settlesWithinMinutes": 75
+    }
+  },
+  "POST /api/operator/tenants/[id]/approvals/[approvalId] — approved, stale and withdrawn": {
+    "status": 409,
+    "body": {
+      "code": "approvals.stale",
+      "message": "What this change would replace changed after it was requested, so nothing was changed. Request the change again.",
+      "params": {},
+      "success": false,
+      "error": "What this change would replace changed after it was requested, so nothing was changed. Request the change again.",
+      "withdrawn": true
+    }
+  },
+  "GET /api/operator/tenants/[id]/approvals — an undecided erasure no one in it may decide": {
+    "status": 200,
+    "body": {
+      "tenantId": "aaaaaaaa-0000-4000-8000-0000000000a1",
+      "approvals": [
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "purge_user_data",
+          "requester": "00000000-0000-4000-9000-3e7b6d300010",
+          "requiredPermission": "admin_purge_user_data",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "undecided": true,
+          "state": "undecided",
+          "summary": {
+            "target": {
+              "notFound": true
+            },
+            "reason": "admin-action",
+            "dryRun": false
+          },
+          "reason": {
+            "key": "screens.held.reason_undecided",
+            "params": {
+              "noted": "yes",
+              "detail": {
+                "key": "screens.held.note_indeterminate"
+              }
+            }
+          },
+          "createdAt": "2026-01-01T00:01:00.000Z",
+          "noEligibleDecider": true,
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        },
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000fe",
+          "label": "purge_user_data",
+          "requester": "00000000-0000-4000-9000-3e7b6d300010",
+          "requiredPermission": "admin_purge_user_data",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "state": "held",
+          "summary": {
+            "target": {
+              "notFound": true
+            },
+            "reason": "admin-action",
+            "dryRun": false
+          },
+          "reason": {
+            "key": "screens.held.reason_held",
+            "params": {
+              "risk": "restricted",
+              "effects": ["stateWrite"],
+              "effected": "yes"
+            }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        }
+      ]
+    }
+  },
+  "POST /api/operator/tenants/[id]/approvals/[approvalId] — an undecided erasure withdrawn": {
+    "status": 200,
+    "body": {
+      "decision": "withdraw",
+      "source": "runtime",
+      "status": "rejected",
+      "requestId": "req-test"
+    }
+  },
+  "POST /api/operator/tenants/[id]/approvals/[approvalId] — an undecided erasure approved again, another open": {
+    "status": 409,
+    "body": {
+      "code": "approvals.duplicate_undecided",
+      "message": "Another hold for the same action on the same subject is open, so this one is not approved again. Mark it executed if it took effect; if it did not, withdraw it.",
+      "params": {},
+      "success": false,
+      "error": "Another hold for the same action on the same subject is open, so this one is not approved again. Mark it executed if it took effect; if it did not, withdraw it."
+    }
+  },
+  "GET /api/operator/tenants/[id]/config — refused (a single deployment)": {
+    "status": 409,
+    "body": {
+      "code": "tenant.not_shared",
+      "message": "This deployment serves one tenant: change its settings on the Platform Config page.",
+      "params": {},
+      "success": false,
+      "error": "This deployment serves one tenant: change its settings on the Platform Config page."
+    }
+  },
+  "GET /api/operator/tenants/[id]/approvals — refused (a single deployment)": {
+    "status": 409,
+    "body": {
+      "code": "tenant.not_shared",
+      "message": "This deployment serves one tenant: change its settings on the Platform Config page.",
+      "params": {},
+      "success": false,
+      "error": "This deployment serves one tenant: change its settings on the Platform Config page."
     }
   }
 }

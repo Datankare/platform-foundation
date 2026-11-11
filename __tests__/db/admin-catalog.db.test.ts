@@ -66,6 +66,7 @@ import {
 } from "@/app/api/admin/ai/handlers/entitlements";
 import { DEFAULT_DUAL_CONTROL_ACTIONS } from "@/app/api/admin/ai/command-bar";
 import { GET as rolesGET } from "@/app/api/admin/roles/route";
+import { roleDescription } from "@/components/admin/AdminDataViews";
 import { GET as entGET, PATCH as entPATCH } from "@/app/api/admin/entitlements/route";
 import {
   DB_ENABLED,
@@ -357,11 +358,43 @@ dbDescribe(`${SUITE} handleDuplicateRole`, () => {
     expect(renderShown(res.result as ShownText)).toMatch(/with 1 permission\./);
     const copy = await roleNamed(name("ops2"));
     expect(await permsOf(copy.id)).toEqual([cat.codes.x]);
-    const [row] = await q<{ description: string }>(
-      "select description from roles where id = $1::uuid",
+    // TASK-207, N-107: the note is the catalog's key and values; the description is only what an
+    // administrator wrote (the source's). The SQL wrote "Duplicated from …" in English before.
+    const [row] = await q<{ description: string; description_note: unknown }>(
+      "select description, description_note from roles where id = $1::uuid",
       [copy.id]
     );
-    expect(row.description).toBe(`Duplicated from ${cat.roleNames.ops}. Test role ops`);
+    expect(row.description).toBe("Test role ops");
+    expect(row.description_note).toEqual({
+      key: "screens.admin_console.roles.duplicated_from",
+      params: { source: cat.roleNames.ops },
+    });
+    // The Roles screen reads it from the route, and renders it.
+    const res2 = await rolesGET(
+      new NextRequest("http://localhost/api/admin/roles", {
+        headers: asCallerIn(suiteCaller("super_admin", RUN), b),
+      })
+    );
+    const listed = (await res2.json()).roles.find(
+      (r: { name: string }) => r.name === name("ops2")
+    );
+    expect(listed).toMatchObject({
+      description: "Test role ops",
+      descriptionNote: row.description_note,
+    });
+    expect(roleDescription(listed.descriptionNote, listed.description)).toBe(
+      `Duplicated from ${cat.roleNames.ops}. Test role ops`
+    );
+  });
+
+  it("the store refuses a note that is not a screen message's key (migration 065)", async () => {
+    const copy = await roleNamed(name("ops2"));
+    await expect(
+      q("update roles set description_note = $2::jsonb where id = $1::uuid", [
+        copy.id,
+        JSON.stringify({ key: "Duplicated from ops" }),
+      ])
+    ).rejects.toThrow(/roles_description_note_shown/);
   });
 
   it("refuses when the source role is missing", async () => {

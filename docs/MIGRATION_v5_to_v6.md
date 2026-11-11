@@ -437,6 +437,23 @@ already recorded — re-applying an old one on purpose needs
 `set platform.migration_reapply = '<its file name>';` in the same session first. Nothing is
 rewritten; `lock_timeout` 5 s.
 
+**Release candidate (TASK-207):** `065_role_description_note.sql`, after 064, on its own:
+
+```bash
+pbcopy < supabase/migrations/065_role_description_note.sql
+```
+
+Then `select filename, checksum from public.applied_migrations where filename like '065%';`
+answers one row whose checksum is what
+`node scripts/migration-checksum.mjs supabase/migrations/065_role_description_note.sql` prints,
+and `select count(*) from public.roles where description like 'Duplicated from %';` answers 0
+unless an administrator wrote such a description by hand. It adds `roles.description_note` (a
+screen message's key and values, checked to be one) and moves the English note a duplicated
+role's description began with — `Duplicated from <role>. ` — into it: the Roles screen renders
+the note in the viewer's locale, then the description. A description that does not begin so is
+left as it is. A brief lock on `roles` (a nullable column, no rewrite; a few dozen rows);
+`lock_timeout` 5 s.
+
 Every one is idempotent: one already applied (046 on a database on v5.1.x) changes nothing when
 run again. An app's own migrations go in between, by name (`052a_<app>_…` after 052 — §1b).
 

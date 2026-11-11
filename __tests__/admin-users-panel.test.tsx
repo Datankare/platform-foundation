@@ -20,53 +20,45 @@ import {
   shownName,
 } from "@/components/admin/UsersPanel";
 import { renderMessage } from "@/platform/errors/messages";
-import { REFUSAL_HANDLERS } from "@/platform/errors/refusal";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 import { USER_ROW_ACTION_PERMISSIONS } from "@/app/api/admin/ai/tool-permissions";
 import { ROLE_PERMISSIONS } from "./helpers/test-identities";
 
 const t = (key: string, values?: Record<string, string | number>) =>
   renderMessage(`screens.admin_console.users.${key}`, values);
 
-const ROLES = [
-  { id: "r-free", name: "free", displayName: "Free" },
-  { id: "r-mod", name: "moderator", displayName: "Moderator" },
-  { id: "r-super", name: "super_admin", displayName: "Super Admin" },
-];
+// Every answer is the route's own (__tests__/fixtures/route-responses.json, made by the handlers).
+type Listed = {
+  users: { id: string; createdAt: string }[];
+  roles: { id: string; name: string }[];
+};
+const LIST: RouteFixtureName =
+  "GET /api/admin/users — Ann and a super admin who never signed in";
+const listed = routeAnswer(LIST)[1] as Listed;
+const ANN = listed.users[0]!;
+const OLD_STAFF = listed.users[1]!;
+const roleId = (name: string) => listed.roles.find((r) => r.name === name)!.id;
+const user = () => ANN;
 
-const user = (over: Record<string, unknown> = {}) => ({
-  id: "11111111-1111-4111-8111-111111111111",
-  email: "ann@example.com",
-  displayName: "Ann",
-  roleId: "r-free",
-  roleName: "free",
-  roleDisplayName: "Free",
-  status: "active",
-  statusUntil: null,
-  emailVerified: true,
-  createdAt: "2026-10-26T12:00:00.000Z",
-  lastSignInAt: "2026-10-27T12:00:00.000Z",
-  isDeleted: false,
-  entitlements: [],
-  ...over,
-});
+const respond = (name: RouteFixtureName) => {
+  const [status, body] = routeAnswer(name);
+  return { ok: status >= 200 && status < 300, status, json: async () => body };
+};
+/** What a refusal's own message says (the screen shows it, by its code). */
+const messageOf = (name: RouteFixtureName) =>
+  (routeAnswer(name)[1] as { message: string }).message;
 
-const OLD_STAFF = user({
-  id: "22222222-2222-4222-8222-222222222222",
-  email: null,
-  displayName: "",
-  roleId: "r-super",
-  roleName: "super_admin",
-  roleDisplayName: "Super Admin",
-  emailVerified: false,
-  createdAt: "2026-06-07T12:00:00.000Z",
-  lastSignInAt: null,
-});
-
-const respond = (status: number, body: unknown) => ({
-  ok: status >= 200 && status < 300,
-  status,
-  json: async () => body,
-});
+/** The refusals each route answers before it reads anything (requireAdmin). */
+const GUARD_REFUSALS = [
+  "signed out",
+  "no permission",
+  "a suspended staff account",
+  "no second factor",
+  "rate limited",
+  "the permissions store down",
+] as const;
+const refusalsOf = (route: string, own: readonly string[] = []) =>
+  [...GUARD_REFUSALS, ...own].map((r) => `${route} — refused (${r})` as RouteFixtureName);
 
 const fetchMock = jest.fn();
 type Handler = (url: string, init?: RequestInit) => unknown;
@@ -85,21 +77,19 @@ const listCalls = () =>
 beforeEach(() => {
   fetchMock.mockReset();
   global.fetch = fetchMock as unknown as typeof fetch;
-  onList = () =>
-    respond(200, {
-      users: [user(), OLD_STAFF],
-      roles: ROLES,
-      page: { hasMore: false },
-    });
-  onPatch = () => respond(200, { success: true });
-  onErase = () => respond(200, { status: "completed" });
+  onList = () => respond(LIST);
+  onPatch = () => respond("PATCH /api/admin/users — changed");
+  onErase = (_u, init) =>
+    !init?.method || init.method === "GET"
+      ? respond("GET /api/admin/gdpr — no erasure pending")
+      : respond("POST /api/admin/gdpr — held for a second admin");
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
     const u = String(url);
     if (u.startsWith("/api/admin/users") && init?.method === "PATCH")
       return onPatch(u, init);
     if (u.startsWith("/api/admin/users")) return onList(u, init);
     if (u.startsWith("/api/admin/gdpr")) return onErase(u, init);
-    return respond(404, {});
+    throw new Error(`unexpected request: ${u}`);
   });
 });
 
@@ -184,12 +174,7 @@ describe("what a row shows", () => {
   });
 
   it("a restriction with an end date says until when", async () => {
-    onList = () =>
-      respond(200, {
-        users: [user({ status: "suspended", statusUntil: "2026-11-02T12:00:00.000Z" })],
-        roles: ROLES,
-        page: { hasMore: false },
-      });
+    onList = () => respond("GET /api/admin/users — Ann suspended until 2 November");
     await shown();
     expect(screen.getByText("Suspended until 2 Nov 2026")).toBeDefined();
   });
@@ -235,8 +220,7 @@ describe("search, sort and paging go to the server", () => {
   });
 
   it("next and previous pages move the offset; previous is off on the first page", async () => {
-    onList = () =>
-      respond(200, { users: [user(), OLD_STAFF], roles: ROLES, page: { hasMore: true } });
+    onList = () => respond("GET /api/admin/users — a page of 25, more to read");
     await shown();
     expect(screen.getByRole("button", { name: t("previous") })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: t("next") }));
@@ -252,7 +236,7 @@ describe("search, sort and paging go to the server", () => {
 
   it("no users matching a search says so, with the term", async () => {
     await shown();
-    onList = () => respond(200, { users: [], roles: ROLES, page: { hasMore: false } });
+    onList = () => respond("GET /api/admin/users — no account matches the search");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "zed" } });
     fireEvent.click(screen.getByRole("button", { name: t("search") }));
     expect(await screen.findByText(t("empty_search", { query: "zed" }))).toBeDefined();
@@ -262,18 +246,7 @@ describe("search, sort and paging go to the server", () => {
 describe("the detail panel", () => {
   it("identity, readable and stored role, standing, created, last sign-in, entitlements", async () => {
     onList = () =>
-      respond(200, {
-        users: [
-          user({
-            entitlements: [
-              { code: "beta", name: "Beta access", expiresAt: "2026-12-01T12:00:00Z" },
-            ],
-          }),
-          OLD_STAFF,
-        ],
-        roles: ROLES,
-        page: { hasMore: false },
-      });
+      respond("GET /api/admin/users — Ann with Beta access until 1 December");
     await shown();
     const panel = openRow("Ann");
     // TASK-190: the account id is hidden by default, shown with "Show details" (UsersPanel showIds).
@@ -341,7 +314,7 @@ describe("actions: shown only with the permission their route requires", () => {
 });
 
 describe("change role", () => {
-  async function change(to = "r-mod") {
+  async function change(to = roleId("moderator")) {
     await shown();
     const panel = openRow("Ann");
     fireEvent.change(
@@ -363,26 +336,18 @@ describe("change role", () => {
     const patch = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH")!;
     expect(JSON.parse(String(patch[1].body))).toEqual({
       userId: user().id,
-      roleId: "r-mod",
+      roleId: roleId("moderator"),
     });
   });
 
   it("held for a second admin (202 held): shown as held for approval — never as changed", async () => {
-    onPatch = () => respond(202, { success: false, held: true, proposalId: "p-1" });
+    onPatch = () => respond("PATCH /api/admin/users — held for a second admin");
     const panel = await change();
     const held = await within(panel).findByText(t("held"));
     expect(held).toHaveAttribute("data-held", "true");
     expect(within(panel).queryByText(t("changed"))).toBeNull();
     // Nothing changed yet: the list is not re-read as if it had.
     expect(listCalls()).toHaveLength(1);
-  });
-
-  it("a 202 that does not say held is not taken as done either", async () => {
-    onPatch = () => respond(202, {});
-    const panel = await change();
-    await waitFor(() => expect(within(panel).getByRole("alert")).toBeDefined());
-    expect(within(panel).queryByText(t("changed"))).toBeNull();
-    expect(within(panel).queryByText(t("held"))).toBeNull();
   });
 
   it("done (200 success): changed, and the list read again", async () => {
@@ -392,24 +357,23 @@ describe("change role", () => {
   });
 
   it("the same role: nothing sent", async () => {
-    await change("r-free");
+    await change(roleId("free"));
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
   });
 
-  it.each(Object.keys(REFUSAL_HANDLERS))(
-    "refused with %s: the refusal is shown by its code, never success or held",
-    async (code) => {
-      onPatch = () =>
-        respond(code.startsWith("service.") ? 503 : 403, {
-          code,
-          message: `the server says ${code}`,
-        });
-      const panel = await change();
-      expect(await within(panel).findByText(`the server says ${code}`)).toBeDefined();
-      expect(within(panel).queryByText(t("changed"))).toBeNull();
-      expect(within(panel).queryByText(t("held"))).toBeNull();
-    }
-  );
+  it.each(
+    refusalsOf("PATCH /api/admin/users", [
+      "no such account",
+      "a protected role",
+      "the roles store down",
+    ])
+  )("%s: the refusal is shown by its code, never success or held", async (name) => {
+    onPatch = () => respond(name);
+    const panel = await change();
+    expect(await within(panel).findByText(messageOf(name))).toBeDefined();
+    expect(within(panel).queryByText(t("changed"))).toBeNull();
+    expect(within(panel).queryByText(t("held"))).toBeNull();
+  });
 
   it("the network fails: said so", async () => {
     onPatch = () => {
@@ -447,9 +411,14 @@ describe("erase account data", () => {
     ).toBe(false);
   });
 
-  it("confirmed: erased — sent as an admin-action erasure of that account", async () => {
+  it("confirmed: held for a second admin — sent as an admin-action erasure of that account", async () => {
     const panel = await erase();
-    expect(await within(panel).findByText(t("erased"))).toBeDefined();
+    expect(await within(panel).findByText(t("erase_held"))).toHaveAttribute(
+      "data-held",
+      "true"
+    );
+    // Nothing is erased yet: no second erasure is offered, the pending one is not repeated.
+    expect(within(panel).queryByRole("button", { name: t("erase") })).toBeNull();
     const call = fetchMock.mock.calls.find(
       ([u, init]) => String(u).startsWith("/api/admin/gdpr") && init?.method === "POST"
     )!;
@@ -459,12 +428,17 @@ describe("erase account data", () => {
     });
   });
 
-  it("the answer stays until the panel is closed; closing reads the list again", async () => {
+  it("the held answer stays until the panel is closed; nothing was erased, so the list is not read again", async () => {
     const panel = await erase();
-    expect(await within(panel).findByText(t("erased"))).toBeDefined();
+    expect(await within(panel).findByText(t("erase_held"))).toBeDefined();
     expect(listCalls()).toHaveLength(1);
     fireEvent.click(within(panel).getByRole("button", { name: t("close") }));
-    await waitFor(() => expect(listCalls()).toHaveLength(2));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: new RegExp(t("detail_title")) })
+      ).toBeNull()
+    );
+    expect(listCalls()).toHaveLength(1);
   });
 
   // TASK-194 round 1, A6: an erasure already waiting for approval is shown after a reload, and
@@ -472,10 +446,8 @@ describe("erase account data", () => {
   it("an erasure pending approval is shown when the panel opens, with no erase button", async () => {
     onErase = (u, init) =>
       !init?.method || init.method === "GET"
-        ? respond(200, {
-            pending: { proposalId: "p-1", createdAt: "2026-10-29T00:00:00Z" },
-          })
-        : respond(409, { code: "admin.erasure_pending" });
+        ? respond("GET /api/admin/gdpr — an erasure pending")
+        : respond("POST /api/admin/gdpr — refused (an erasure already pending)");
     await shown();
     const panel = openRow("Ann");
     expect(await within(panel).findByText(t("erase_pending"))).toBeDefined();
@@ -489,10 +461,6 @@ describe("erase account data", () => {
   });
 
   it("no erasure pending: the erase button is offered", async () => {
-    onErase = (u, init) =>
-      !init?.method || init.method === "GET"
-        ? respond(200, { pending: null })
-        : respond(200, { status: "completed" });
     await shown();
     const panel = openRow("Ann");
     await waitFor(() =>
@@ -504,49 +472,41 @@ describe("erase account data", () => {
     expect(within(panel).queryByText(t("erase_pending"))).toBeNull();
   });
 
-  it("an incomplete purge is never shown as erased", async () => {
-    onErase = () => respond(200, { status: "partial" });
+  it.each(
+    refusalsOf("POST /api/admin/gdpr", ["an erasure already pending", "no such account"])
+  )("%s: shown by its code, never held", async (name) => {
+    onErase = (_u, init) =>
+      !init?.method || init.method === "GET"
+        ? respond("GET /api/admin/gdpr — no erasure pending")
+        : respond(name);
     const panel = await erase();
-    expect(
-      await within(panel).findByText(t("erase_incomplete", { status: "partial" }))
-    ).toBeDefined();
-    expect(within(panel).queryByText(t("erased"))).toBeNull();
+    expect(await within(panel).findByText(messageOf(name))).toBeDefined();
+    expect(within(panel).queryByText(t("erase_held"))).toBeNull();
   });
-
-  it.each(Object.keys(REFUSAL_HANDLERS))(
-    "refused with %s: shown by its code, never erased",
-    async (code) => {
-      onErase = () => respond(403, { code, message: `the server says ${code}` });
-      const panel = await erase();
-      expect(await within(panel).findByText(`the server says ${code}`)).toBeDefined();
-      expect(within(panel).queryByText(t("erased"))).toBeNull();
-    }
-  );
 });
 
 describe("the list's own read", () => {
   it("a 503 is 'could not be read' with a retry — never an empty list", async () => {
-    onList = () => respond(503, { code: "service.unavailable" });
+    onList = () => respond("GET /api/admin/users — refused (the permissions store down)");
     render(<UsersPanel hasPermission={everything} />);
     expect(
       await screen.findByText(renderMessage("screens.admin_console.unavailable_title"))
     ).toBeDefined();
     expect(screen.queryByText(t("empty"))).toBeNull();
-    onList = () =>
-      respond(200, { users: [user()], roles: ROLES, page: { hasMore: false } });
+    onList = () => respond("GET /api/admin/users — Ann alone");
     fireEvent.click(screen.getByRole("button", { name: /^Try reading .* again$/ }));
     expect(await screen.findByText("ann@example.com")).toBeDefined();
   });
 
-  it.each(Object.keys(REFUSAL_HANDLERS).filter((c) => c !== "service.unavailable"))(
-    "refused with %s: the refusal is shown, not an empty list",
-    async (code) => {
-      onList = () => respond(403, { code, message: `the server says ${code}` });
-      render(<UsersPanel hasPermission={everything} />);
-      expect(await screen.findByText(`the server says ${code}`)).toBeDefined();
-      expect(screen.queryByText(t("empty"))).toBeNull();
-    }
-  );
+  it.each([
+    ...refusalsOf("GET /api/admin/users").filter((n) => !n.endsWith("store down)")),
+    "GET /api/admin/users — the store failing" as RouteFixtureName,
+  ])("%s: the refusal is shown, not an empty list", async (name) => {
+    onList = () => respond(name);
+    render(<UsersPanel hasPermission={everything} />);
+    expect(await screen.findByText(messageOf(name))).toBeDefined();
+    expect(screen.queryByText(t("empty"))).toBeNull();
+  });
 
   it("a bumped refresh key reads the page again", async () => {
     const { rerender } = render(<UsersPanel hasPermission={everything} refreshKey={0} />);
@@ -597,14 +557,32 @@ describe("focus and the selected row (TASK-185 review)", () => {
     ).toBe(false);
   });
 
-  it("once the erasure has answered, focus returns to Erase", async () => {
+  // TASK-207: held, the Erase button is gone (the erasure is pending) — focus went nowhere.
+  it("once the erasure is held, focus moves to what says so", async () => {
     await shown();
     const panel = openRow("Ann");
     fireEvent.click(within(panel).getByRole("button", { name: t("erase") }));
     await act(async () => {
       fireEvent.click(within(panel).getByRole("button", { name: t("erase_confirm") }));
     });
-    await within(panel).findByText(t("erased"));
+    const held = await within(panel).findByText(t("erase_held"));
+    await waitFor(() => expect(held).toHaveFocus());
+  });
+
+  it("refused, focus returns to Erase", async () => {
+    onErase = (_u, init) =>
+      !init?.method || init.method === "GET"
+        ? respond("GET /api/admin/gdpr — no erasure pending")
+        : respond("POST /api/admin/gdpr — refused (no such account)");
+    await shown();
+    const panel = openRow("Ann");
+    fireEvent.click(within(panel).getByRole("button", { name: t("erase") }));
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: t("erase_confirm") }));
+    });
+    await within(panel).findByText(
+      messageOf("POST /api/admin/gdpr — refused (no such account)")
+    );
     await waitFor(() =>
       expect(within(panel).getByRole("button", { name: t("erase") })).toHaveFocus()
     );
@@ -636,22 +614,21 @@ describe("rows the routes refuse to change offer no change (TASK-185 review)", (
 
 describe("the role shown, the same-role answer, loading (TASK-185 review)", () => {
   it("the role chosen follows the account's role when the list is read again", async () => {
-    let role = { roleId: "r-free", roleName: "free", roleDisplayName: "Free" };
-    onList = () =>
-      respond(200, { users: [user(role)], roles: ROLES, page: { hasMore: false } });
+    let list: RouteFixtureName = "GET /api/admin/users — Ann alone";
+    onList = () => respond(list);
     const { rerender } = render(<UsersPanel hasPermission={everything} refreshKey={0} />);
     await screen.findByText("ann@example.com");
     const panel = openRow("Ann");
     const select = within(panel).getByRole("combobox", { name: t("change_role_label") });
-    expect(select).toHaveValue("r-free");
-    role = { roleId: "r-mod", roleName: "moderator", roleDisplayName: "Moderator" };
+    expect(select).toHaveValue(roleId("free"));
+    list = "GET /api/admin/users — Ann, now a moderator";
     rerender(<UsersPanel hasPermission={everything} refreshKey={1} />);
     await waitFor(() =>
       expect(
         within(
           screen.getByRole("region", { name: new RegExp(t("detail_title")) })
         ).getByRole("combobox", { name: t("change_role_label") })
-      ).toHaveValue("r-mod")
+      ).toHaveValue(roleId("moderator"))
     );
   });
 
@@ -665,8 +642,7 @@ describe("the role shown, the same-role answer, loading (TASK-185 review)", () =
   });
 
   it("paging is off while a page is being read", async () => {
-    onList = () =>
-      respond(200, { users: [user(), OLD_STAFF], roles: ROLES, page: { hasMore: true } });
+    onList = () => respond("GET /api/admin/users — a page of 25, more to read");
     await shown();
     let release: (v: unknown) => void = () => undefined;
     onList = () => new Promise((r) => (release = r));
@@ -677,7 +653,7 @@ describe("the role shown, the same-role answer, loading (TASK-185 review)", () =
     expect(screen.getByRole("button", { name: t("previous") })).toBeDisabled();
     expect(screen.getByText(t("loading"))).toBeDefined();
     await act(async () =>
-      release(respond(200, { users: [user()], roles: ROLES, page: { hasMore: true } }))
+      release(respond("GET /api/admin/users — a page of 25, more to read"))
     );
     await waitFor(() =>
       expect(screen.getByRole("button", { name: t("next") })).not.toBeDisabled()
@@ -688,10 +664,11 @@ describe("the role shown, the same-role answer, loading (TASK-185 review)", () =
     const { rerender } = render(<UsersPanel hasPermission={everything} refreshKey={0} />);
     await screen.findByText("ann@example.com");
     openRow("Ann");
-    onList = () =>
-      respond(403, { code: "auth.permission_denied", message: "no longer yours" });
+    onList = () => respond("GET /api/admin/users — refused (no permission)");
     rerender(<UsersPanel hasPermission={everything} refreshKey={1} />);
-    expect(await screen.findByText("no longer yours")).toBeDefined();
+    expect(
+      await screen.findByText(messageOf("GET /api/admin/users — refused (no permission)"))
+    ).toBeDefined();
     expect(screen.queryByText("ann@example.com")).toBeNull();
     expect(
       screen.queryByRole("region", { name: new RegExp(t("detail_title")) })

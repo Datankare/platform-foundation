@@ -12,62 +12,19 @@ import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import ReviewDashboard from "@/components/ReviewDashboard/ReviewDashboard";
 
-function okJson(body: unknown) {
-  return { ok: true, status: 200, json: async () => body };
-}
-function errJson(status: number, body: unknown = {}) {
-  return { ok: false, status, json: async () => body };
-}
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 
-function makeItem(overrides: Record<string, unknown> = {}) {
-  return {
-    id: "review-1",
-    source: "escalation",
-    priority: "high",
-    status: "pending",
-    moderationResult: {
-      action: "escalate",
-      triggeredBy: "classifier",
-      direction: "input",
-      contentType: "generation",
-      contentRatingLevel: 1,
-      blocklistMatches: [],
-      classifierOutput: {
-        safe: false,
-        categories: ["violence"],
-        confidence: 0.52,
-        severity: "medium",
-      },
-      reasoning: "Low confidence — escalating.",
-      severityAdjustment: 0,
-      contextFactors: ["translation context"],
-      attributeToUser: true,
-      pipelineLatencyMs: 100,
-      classifierCostUsd: 0.001,
-      trajectoryId: "traj-1",
-      agentId: "guardian-1",
-    },
-    explanationChain: {
-      id: "exp-1",
-      requestId: "req-1",
-      steps: [
-        {
-          phase: "classify",
-          description: "ran the classifier",
-          data: {},
-          durationMs: 10,
-        },
-      ],
-      conclusion: "Escalated for human review.",
-      createdAt: "2026-05-01T00:00:00Z",
-    },
-    targetUserId: "user-1",
-    requestId: "req-1",
-    createdAt: "2026-05-01T00:00:00Z",
-    updatedAt: "2026-05-01T00:00:00Z",
-    ...overrides,
-  };
+/** A route's own answer (__tests__/fixtures/route-responses.json), as fetch resolves it. */
+function answer(name: RouteFixtureName) {
+  const [status, body] = routeAnswer(name);
+  return { ok: status < 400, status, json: async () => body };
 }
+const NONE = "GET /api/moderation/review — none";
+const ONE = "GET /api/moderation/review — one pending escalation";
+const TWO = "GET /api/moderation/review — a pending and a claimed escalation";
+const PENDING = "GET /api/moderation/review?status=pending — the pending escalation";
+const CLAIMED = "GET /api/moderation/review — the escalation claimed";
+const ACT = "PATCH /api/moderation/review/[id] —";
 
 function fetchMock() {
   return global.fetch as unknown as jest.Mock;
@@ -97,19 +54,21 @@ describe("ReviewDashboard — states", () => {
   });
 
   it("shows the empty state when there are no items", async () => {
-    fetchMock().mockResolvedValueOnce(okJson({ items: [] }));
+    fetchMock().mockResolvedValueOnce(answer(NONE));
     render(<ReviewDashboard />);
     await waitFor(() => expect(screen.getByTestId("rd-empty")).toBeDefined());
   });
 
   it("shows an error when the queue cannot be loaded", async () => {
-    fetchMock().mockResolvedValueOnce(errJson(500));
+    fetchMock().mockResolvedValueOnce(
+      answer("GET /api/moderation/review — the store failing")
+    );
     render(<ReviewDashboard />);
     await waitFor(() => expect(screen.getByTestId("rd-error")).toBeDefined());
   });
 
   it("renders the decision context (confidence, trajectory, timeline)", async () => {
-    fetchMock().mockResolvedValueOnce(okJson({ items: [makeItem()] }));
+    fetchMock().mockResolvedValueOnce(answer(ONE));
     render(<ReviewDashboard />);
     await waitFor(() => screen.getByTestId("rd-item-review-1"));
     expect(screen.getByTestId("rd-confidence-review-1")).toBeDefined();
@@ -126,9 +85,9 @@ describe("ReviewDashboard — states", () => {
 describe("ReviewDashboard — claim / release", () => {
   it("claims a pending item", async () => {
     fetchMock()
-      .mockResolvedValueOnce(okJson({ items: [makeItem()] }))
-      .mockResolvedValueOnce(okJson({}))
-      .mockResolvedValueOnce(okJson({ items: [makeItem({ status: "claimed" })] }));
+      .mockResolvedValueOnce(answer(ONE))
+      .mockResolvedValueOnce(answer(`${ACT} claimed`))
+      .mockResolvedValueOnce(answer(CLAIMED));
 
     render(<ReviewDashboard />);
     await waitFor(() => screen.getByTestId("rd-claim-review-1"));
@@ -143,9 +102,9 @@ describe("ReviewDashboard — claim / release", () => {
 
   it("releases a claimed item", async () => {
     fetchMock()
-      .mockResolvedValueOnce(okJson({ items: [makeItem({ status: "claimed" })] }))
-      .mockResolvedValueOnce(okJson({}))
-      .mockResolvedValueOnce(okJson({ items: [makeItem()] }));
+      .mockResolvedValueOnce(answer(CLAIMED))
+      .mockResolvedValueOnce(answer(`${ACT} released`))
+      .mockResolvedValueOnce(answer(ONE));
 
     render(<ReviewDashboard />);
     await waitFor(() => screen.getByTestId("rd-release-review-1"));
@@ -159,15 +118,21 @@ describe("ReviewDashboard — claim / release", () => {
 
   it("surfaces a PATCH failure as an error", async () => {
     fetchMock()
-      .mockResolvedValueOnce(okJson({ items: [makeItem()] }))
-      .mockResolvedValueOnce(errJson(409, { error: "Already claimed" }));
+      .mockResolvedValueOnce(answer(ONE))
+      .mockResolvedValueOnce(answer(`${ACT} refused (claimed by another reviewer)`));
 
     render(<ReviewDashboard />);
     await waitFor(() => screen.getByTestId("rd-claim-review-1"));
     fireEvent.click(screen.getByTestId("rd-claim-review-1"));
 
     await waitFor(() =>
-      expect(screen.getByTestId("rd-error").textContent).toContain("Already claimed")
+      expect(screen.getByTestId("rd-error").textContent).toContain(
+        (
+          routeAnswer(`${ACT} refused (claimed by another reviewer)`)[1] as {
+            message: string;
+          }
+        ).message
+      )
     );
   });
 });
@@ -175,9 +140,9 @@ describe("ReviewDashboard — claim / release", () => {
 describe("ReviewDashboard — resolve", () => {
   it("resolves with uphold + notes", async () => {
     fetchMock()
-      .mockResolvedValueOnce(okJson({ items: [makeItem({ status: "claimed" })] }))
-      .mockResolvedValueOnce(okJson({}))
-      .mockResolvedValueOnce(okJson({ items: [] }));
+      .mockResolvedValueOnce(answer(CLAIMED))
+      .mockResolvedValueOnce(answer(`${ACT} resolved, upheld`))
+      .mockResolvedValueOnce(answer(NONE));
 
     render(<ReviewDashboard />);
     await waitFor(() => screen.getByTestId("rd-resolve-open-review-1"));
@@ -196,9 +161,7 @@ describe("ReviewDashboard — resolve", () => {
   });
 
   it("requires reviewer notes", async () => {
-    fetchMock().mockResolvedValueOnce(
-      okJson({ items: [makeItem({ status: "claimed" })] })
-    );
+    fetchMock().mockResolvedValueOnce(answer(CLAIMED));
 
     render(<ReviewDashboard />);
     await waitFor(() => screen.getByTestId("rd-resolve-open-review-1"));
@@ -213,9 +176,9 @@ describe("ReviewDashboard — resolve", () => {
 
   it("sends modifiedAction when decision is modify", async () => {
     fetchMock()
-      .mockResolvedValueOnce(okJson({ items: [makeItem({ status: "claimed" })] }))
-      .mockResolvedValueOnce(okJson({}))
-      .mockResolvedValueOnce(okJson({ items: [] }));
+      .mockResolvedValueOnce(answer(CLAIMED))
+      .mockResolvedValueOnce(answer(`${ACT} resolved, modified to a block`))
+      .mockResolvedValueOnce(answer(NONE));
 
     render(<ReviewDashboard />);
     await waitFor(() => screen.getByTestId("rd-resolve-open-review-1"));
@@ -242,9 +205,7 @@ describe("ReviewDashboard — resolve", () => {
 
 describe("ReviewDashboard — filter", () => {
   it("refetches with a status query when the filter changes", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(okJson({ items: [makeItem()] }))
-      .mockResolvedValueOnce(okJson({ items: [makeItem()] }));
+    fetchMock().mockResolvedValueOnce(answer(ONE)).mockResolvedValueOnce(answer(PENDING));
 
     render(<ReviewDashboard />);
     await waitFor(() => screen.getByTestId("rd-list"));
@@ -257,41 +218,44 @@ describe("ReviewDashboard — filter", () => {
     let releaseAll!: (v: unknown) => void;
     fetchMock()
       .mockReturnValueOnce(new Promise((r) => (releaseAll = r)))
-      .mockResolvedValueOnce(okJson({ items: [makeItem({ id: "pending-1" })] }));
+      .mockResolvedValueOnce(answer(PENDING));
 
     render(<ReviewDashboard />);
     fireEvent.click(screen.getByTestId("rd-filter-pending"));
-    await waitFor(() => screen.getByTestId("rd-item-pending-1"));
+    await waitFor(() => screen.getByTestId("rd-item-review-1"));
 
-    releaseAll(okJson({ items: [makeItem({ id: "stale-all" })] }));
+    // The slow "all" answer lists the claimed review-2 as well: it must not replace "pending".
+    releaseAll(answer(TWO));
     await new Promise((r) => setTimeout(r, 0));
-    expect(screen.queryByTestId("rd-item-stale-all")).toBeNull();
-    expect(screen.getByTestId("rd-item-pending-1")).toBeTruthy();
+    expect(screen.queryByTestId("rd-item-review-2")).toBeNull();
+    expect(screen.getByTestId("rd-item-review-1")).toBeTruthy();
   });
 
   it("never lets a Refresh overtaken by a filter change overwrite the newer list", async () => {
     let releaseRefresh!: (v: unknown) => void;
     fetchMock()
-      .mockResolvedValueOnce(okJson({ items: [makeItem({ id: "first" })] }))
+      .mockResolvedValueOnce(answer(ONE))
       .mockReturnValueOnce(new Promise((r) => (releaseRefresh = r)))
-      .mockResolvedValueOnce(okJson({ items: [makeItem({ id: "pending-1" })] }));
+      .mockResolvedValueOnce(answer(PENDING));
 
     render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-item-first"));
+    await waitFor(() => screen.getByTestId("rd-item-review-1"));
     fireEvent.click(screen.getByTestId("rd-refresh"));
     fireEvent.click(screen.getByTestId("rd-filter-pending"));
-    await waitFor(() => screen.getByTestId("rd-item-pending-1"));
+    await waitFor(() => expect(screen.queryByTestId("rd-loading")).toBeNull());
+    await waitFor(() => screen.getByTestId("rd-item-review-1"));
 
-    releaseRefresh(okJson({ items: [makeItem({ id: "stale-refresh" })] }));
+    // The overtaken Refresh's answer lists the claimed review-2 as well: it must not land.
+    releaseRefresh(answer(TWO));
     await new Promise((r) => setTimeout(r, 0));
-    expect(screen.queryByTestId("rd-item-stale-refresh")).toBeNull();
-    expect(screen.getByTestId("rd-item-pending-1")).toBeTruthy();
+    expect(screen.queryByTestId("rd-item-review-2")).toBeNull();
+    expect(screen.getByTestId("rd-item-review-1")).toBeTruthy();
   });
 
   it("shows loading from the click, and a click on the current filter does not refetch", async () => {
     let releasePending!: (v: unknown) => void;
     fetchMock()
-      .mockResolvedValueOnce(okJson({ items: [makeItem()] }))
+      .mockResolvedValueOnce(answer(ONE))
       .mockReturnValueOnce(new Promise((r) => (releasePending = r)));
 
     render(<ReviewDashboard />);
@@ -302,7 +266,7 @@ describe("ReviewDashboard — filter", () => {
 
     fireEvent.click(screen.getByTestId("rd-filter-pending"));
     expect(screen.getByTestId("rd-loading")).toBeTruthy();
-    releasePending(okJson({ items: [] }));
+    releasePending(answer("GET /api/moderation/review?status=pending — none"));
     await waitFor(() => screen.getByTestId("rd-empty"));
   });
 });
@@ -310,14 +274,9 @@ describe("ReviewDashboard — filter", () => {
 describe("ReviewDashboard — AI assist", () => {
   it("fetches and shows an advisory suggestion", async () => {
     fetchMock()
-      .mockResolvedValueOnce(okJson({ items: [makeItem({ status: "claimed" })] }))
+      .mockResolvedValueOnce(answer(CLAIMED))
       .mockResolvedValueOnce(
-        okJson({
-          recommendation: {
-            recommendation: "overturn",
-            rationale: "Historical context likely benign.",
-          },
-        })
+        answer("POST /api/moderation/review/[id]/assist — a suggestion")
       );
 
     render(<ReviewDashboard />);
@@ -335,11 +294,9 @@ describe("ReviewDashboard — AI assist", () => {
 
   it("prefills the resolve decision from the suggestion", async () => {
     fetchMock()
-      .mockResolvedValueOnce(okJson({ items: [makeItem({ status: "claimed" })] }))
+      .mockResolvedValueOnce(answer(CLAIMED))
       .mockResolvedValueOnce(
-        okJson({
-          recommendation: { recommendation: "overturn", rationale: "Context." },
-        })
+        answer("POST /api/moderation/review/[id]/assist — a suggestion")
       );
 
     render(<ReviewDashboard />);
@@ -354,8 +311,12 @@ describe("ReviewDashboard — AI assist", () => {
 
   it("shows the no-suggestion state when assist returns null (fail-open)", async () => {
     fetchMock()
-      .mockResolvedValueOnce(okJson({ items: [makeItem({ status: "claimed" })] }))
-      .mockResolvedValueOnce(okJson({ recommendation: null }));
+      .mockResolvedValueOnce(answer(CLAIMED))
+      .mockResolvedValueOnce(
+        answer(
+          "POST /api/moderation/review/[id]/assist — no suggestion (the model unavailable)"
+        )
+      );
 
     render(<ReviewDashboard />);
     await waitFor(() => screen.getByTestId("rd-assist-btn-review-1"));

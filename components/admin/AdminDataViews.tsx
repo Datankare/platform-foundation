@@ -21,6 +21,7 @@ import {
 import { groupPermissions } from "@/platform/auth/catalog-order";
 import { ExpandableText } from "@/components/admin/ExpandableText";
 import { personText } from "@/components/admin/people";
+import { isShownText, renderShown } from "@/platform/errors/shown-text";
 
 /** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
 const t = (key: string, values?: MessageValues) =>
@@ -154,6 +155,16 @@ function FeatureGap({ permissions }: { permissions?: readonly RolePermission[] }
   );
 }
 
+/**
+ * A role's description as the Roles screen shows it: the platform's note (a duplicate's source), in
+ * the catalog's words, then what an administrator wrote (TASK-207, N-107).
+ */
+export function roleDescription(note: unknown, description: unknown): string {
+  const written = typeof description === "string" ? description.trim() : "";
+  if (!isShownText(note)) return written;
+  return written ? `${renderShown(note)} ${written}` : renderShown(note);
+}
+
 export function RolesDataView({ data }: { data: any }) {
   const roles = data?.roles || [];
   const [expandedRole, setExpandedRole] = useState<string | null>(null);
@@ -235,8 +246,10 @@ export function RolesDataView({ data }: { data: any }) {
                 {isExpanded && (
                   <tr>
                     <td id={detailId} colSpan={5} className="px-4 py-3 bg-[#0d1320]">
-                      {r.description && (
-                        <p className="text-xs text-gray-400 mb-3">{r.description}</p>
+                      {(isShownText(r.descriptionNote) || r.description) && (
+                        <p className="text-xs text-gray-400 mb-3">
+                          {roleDescription(r.descriptionNote, r.description)}
+                        </p>
                       )}
                       {r.permissions && r.permissions.length > 0 ? (
                         // By category, each under its heading, by display name within it (TASK-192).

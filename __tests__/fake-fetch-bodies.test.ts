@@ -8,12 +8,11 @@
  * component test answers fetch with a fixture the real route handler produced
  * (__tests__/fixtures/route-responses.ts, made and checked by __tests__/route-fixtures.test.ts), or
  * drives the real route. Each hand-written body (helpers/fake-fetch-scan.ts says what counts) is
- * refused, except those counted per file in fake-fetch-baseline.json (repository root, per
- * repository — an app keeps its own), each file with its reason. A file over its count fails, a
- * file under it must lower it in the same commit
- * (`UPDATE_FAKE_FETCH_BASELINE=1 npx jest __tests__/fake-fetch-bodies.test.ts` lowers it, and
- * refuses to raise it); that the baseline itself is never raised by hand — no count above the base
- * branch's, no file added — is scripts/process-check.mjs's (CI Layer 0f, against the merge base).
+ * refused. fake-fetch-baseline.json (repository root, per repository — an app keeps its own)
+ * counted the bodies written before the rule, per file with its reason; TASK-207 (N-17) replaced
+ * every one with a route fixture, so it is empty, and it stays empty: any hand-written body fails
+ * here, in any file, and the file may hold no exception (the test below) — nor be raised by hand,
+ * which scripts/process-check.mjs refuses (CI Layer 0f, against the merge base).
  */
 import { readFileSync, writeFileSync } from "fs";
 import { join, relative, sep } from "path";
@@ -77,6 +76,14 @@ describe("screen tests answer fetch with the routes' own replies (TASK-200, rule
   const counts = current();
   const baseline = JSON.parse(readFileSync(BASELINE_FILE, "utf8")) as Baseline;
 
+  it("N-17 is done: the baseline excepts nothing — every hand-written body fails", () => {
+    expect({ count: baseline.count, files: baseline.files }).toEqual({
+      count: 0,
+      files: {},
+    });
+    expect(counts).toEqual({});
+  });
+
   it("no file has more hand-written bodies than its baseline; the baseline only shrinks", () => {
     const result = compare(counts, baseline);
     if (process.env.UPDATE_FAKE_FETCH_BASELINE === "1" && result.over.length === 0) {
@@ -118,6 +125,34 @@ describe("screen tests answer fetch with the routes' own replies (TASK-200, rule
     expect(handWrittenBodies(planted)).toEqual([12, 13, 14, 15, 16, 17]);
     // Not a component test that replaces fetch: nothing to count.
     expect(handWrittenBodies("const x = { json: () => ({ a: 1 }) };")).toEqual([]);
+  });
+
+  it("[self-test] counts a body reached through a name or a same-file function (TASK-207)", () => {
+    const planted = [
+      'import { render } from "@testing-library/react";',
+      "global.fetch = jest.fn() as unknown as typeof fetch;",
+      "let guest: { ok: boolean; body: unknown } = { ok: true, body: {} };",
+      "guest = { ok: false, body: { code: 'internal.error' } };",
+      "let features = {};",
+      "features = { sso_google: { available: true } };",
+      "function makeBody() { return { items: [] }; }",
+      "const fetchMock = jest.fn(async (url: string) =>",
+      "  url === '/a' ? { ok: guest.ok, json: async () => guest.body }",
+      "  : url === '/b' ? { ok: true, json: async () => features }",
+      "  : { ok: true, json: async () => makeBody() });",
+    ].join("\n");
+    expect(handWrittenBodies(planted)).toEqual([3, 4, 5, 6, 7]);
+    // A fixture taken by name, and a table of names, are no bodies.
+    const fixture = [
+      'import { render } from "@testing-library/react";',
+      'import { routeAnswer } from "@/__tests__/fixtures/route-responses";',
+      "global.fetch = jest.fn() as unknown as typeof fetch;",
+      "const names = new Map([['/a', 'GET /api/x — one']]);",
+      "const [status, body] = routeAnswer('GET /api/x — one');",
+      "const reply = { ok: status < 400, json: async () => body };",
+      "const named = () => ({ ok: true, json: async () => routeAnswer(names.get('/a')!)[1] });",
+    ].join("\n");
+    expect(handWrittenBodies(fixture)).toEqual([]);
   });
 
   it("[self-test] counts the bodies of a test that defines fetch, or mocks a client fetch wrapper", () => {

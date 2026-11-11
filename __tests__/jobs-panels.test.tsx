@@ -7,14 +7,14 @@
  * every answer is shown — and that both views pass axe's WCAG 2.2 AA rules.
  */
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import {
   OperatorJobsView,
   TenantJobsList,
   type JobsData,
 } from "@/components/admin/JobsPanels";
 import { routeAnswer } from "@/__tests__/fixtures/route-responses";
-import { shown } from "@/platform/errors/shown-text";
+import { renderMessage } from "@/platform/errors/messages";
 
 // axe-core is installed with @axe-core/playwright (the e2e audits); here it runs in jsdom.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -45,59 +45,16 @@ const sent = (n: number) => {
   };
 };
 
-const DATA: JobsData = {
-  schedules: [
-    {
-      kind: "moderation.escalation-reaper",
-      description: shown("screens.jobs.kinds.moderation_escalation_reaper"),
-      owner: "core",
-      scope: "each-tenant",
-      enabled: true,
-      intervalMinutes: 15,
-      minIntervalMinutes: 5,
-      maxIntervalMinutes: 60,
-      tenantOptOutKey: null,
-      state: {
-        nextRunAt: "2026-10-24T10:15:00.000Z",
-        lastRunAt: "2026-10-24T10:00:00.000Z",
-        lastEnqueued: 3,
-        lastStatus: "dead",
-        lastError: "The database was unavailable.",
-        lastFinishedAt: "2026-10-24T10:01:00.000Z",
-        reported: 3,
-        failing: 1,
-        queued: 1,
-        running: 0,
-        dead: 2,
-      },
-    },
-    {
-      kind: "social.curator",
-      description: shown("screens.jobs.kinds.social_curator"),
-      owner: "social",
-      scope: "each-tenant",
-      enabled: false,
-      intervalMinutes: 1440,
-      minIntervalMinutes: 60,
-      maxIntervalMinutes: 10080,
-      tenantOptOutKey: "social.scheduled_agents_enabled",
-      state: null,
-    },
-  ],
-  deadLetters: [
-    {
-      id: "11111111-1111-4111-8111-111111111111",
-      tenantId: "aaaaaaaa-0000-4000-8000-00000000000a",
-      kind: "gdpr.retention-purge",
-      status: "dead",
-      attempts: 5,
-      maxAttempts: 5,
-      lastError:
-        "2 of 3 due erasures did not complete; they stay due and are tried again.",
-      updatedAt: "2026-10-24T09:00:00.000Z",
-    },
-  ],
-};
+// The Jobs console's data is the route's own answer (__tests__/route-fixtures.test.ts makes it from
+// a store holding these jobs): the escalation reaper failing for one tenant of three, a module's
+// schedule turned off with a tenant opt-out, a required schedule, and dead letters — one coded,
+// one recorded before failures were coded (N-108).
+const HISTORY =
+  "GET /api/operator/jobs — failures, dead letters and a record from before codes";
+const DATA = routeAnswer(HISTORY)[1] as JobsData;
+const UNCODED = renderMessage("screens.jobs.errors.uncoded");
+const messageOf = (name: Parameters<typeof routeAnswer>[0]) =>
+  (routeAnswer(name)[1] as { message: string }).message;
 
 async function noViolations(container: HTMLElement) {
   const results = await axe.run(container, {
@@ -116,7 +73,8 @@ describe("OperatorJobsView", () => {
 
   it("shows each schedule, its state and the dead letters", () => {
     render(<OperatorJobsView data={DATA} />);
-    expect(screen.getByText("moderation.escalation-reaper")).toBeDefined();
+    // The schedule, and its two dead jobs.
+    expect(screen.getAllByText("moderation.escalation-reaper")).toHaveLength(3);
     expect(screen.getByText("Every 15 minutes")).toBeDefined();
     expect(
       screen.getByText(
@@ -124,30 +82,48 @@ describe("OperatorJobsView", () => {
       )
     ).toBeDefined();
     expect(screen.getByText("1 queued · 0 running · 2 dead")).toBeDefined();
-    expect(screen.getByText("No job has finished yet")).toBeDefined();
+    expect(screen.getAllByText("No job has finished yet").length).toBeGreaterThan(0);
     expect(
       screen.getByText(/a tenant may turn it off \(social.scheduled_agents_enabled\)/)
     ).toBeDefined();
-    expect(screen.getByText(/2 of 3 due erasures did not complete/)).toBeDefined();
+    expect(
+      screen.getByText("The job reported a failure (erasures_incomplete).")
+    ).toBeDefined();
+  });
+
+  // N-108: a record written before failures were coded holds the runner's English. The screen
+  // says, from the catalog, that it predates the codes; the stored text is behind a disclosure.
+  it("a record from before the codes: the catalog's note, its stored text behind a disclosure", () => {
+    const legacy = DATA.deadLetters!.find(
+      (j) => j.lastError === "The database was unavailable."
+    );
+    expect(legacy).toBeDefined();
+    const { container } = render(<OperatorJobsView data={DATA} />);
+    const note = screen.getByText(UNCODED, { exact: false });
+    const details = note.closest("td")!.querySelector("details")!;
+    expect(details.open).toBe(false);
+    expect(within(details).getByText("Show the stored text")).toBeDefined();
+    expect(within(details).getByText("The database was unavailable.")).toBeDefined();
+    // Every other failure is in the catalog's words (none shown as stored).
+    expect(container.querySelectorAll("details")).toHaveLength(1);
   });
 
   // TASK-194 round 18: a required schedule offers no "Turn off" — it is always on.
+  // TASK-207's walk at 390 px: the tables made the page wider than the phone (676 px), on the base
+  // too. Each scrolls within its card now; the page does not.
+  it("each table scrolls within its card, so the page fits a phone", () => {
+    const { container } = render(<OperatorJobsView data={DATA} />);
+    const tables = container.querySelectorAll("table");
+    expect(tables.length).toBeGreaterThan(1);
+    for (const table of tables)
+      expect(table.parentElement?.classList.contains("overflow-x-auto")).toBe(true);
+  });
+
   it("a required schedule has no Turn off, and says it is always on", () => {
-    render(
-      <OperatorJobsView
-        data={{
-          ...DATA,
-          schedules: [
-            {
-              ...DATA.schedules![0],
-              kind: "config.expire-approvals",
-              enabled: true,
-              required: true,
-            },
-          ],
-        }}
-      />
-    );
+    expect(
+      DATA.schedules!.find((x) => x.kind === "config.expire-approvals")?.required
+    ).toBe(true);
+    render(<OperatorJobsView data={DATA} />);
     expect(screen.getByText("config.expire-approvals")).toBeDefined();
     expect(
       screen.queryByRole("button", { name: /^Turn off config\.expire-approvals/ })
@@ -210,20 +186,25 @@ describe("OperatorJobsView", () => {
       routeAnswer("GET /api/operator/jobs — an operator")
     );
     render(<OperatorJobsView data={DATA} />);
-    fireEvent.click(screen.getByRole("button", { name: "Turn on social.curator" }));
+    fireEvent.click(screen.getByRole("button", { name: "Turn on test.optout" }));
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "back on" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     });
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toBe(
-        "Turn on social.curator: held for a second operator's approval."
+        "Turn on test.optout: held for a second operator's approval."
       )
     );
   });
 
   it("sets an interval only inside its bounds", async () => {
-    answers([200, { success: true }], [200, DATA]);
+    answers(
+      routeAnswer(
+        "PATCH /api/operator/jobs/schedules/[kind] — held for a second operator"
+      ),
+      routeAnswer(HISTORY)
+    );
     render(<OperatorJobsView data={DATA} />);
     const field = screen.getByLabelText(
       "New interval for moderation.escalation-reaper, in minutes"
@@ -249,35 +230,37 @@ describe("OperatorJobsView", () => {
   });
 
   it("runs a job now, and shows a refusal's own message", async () => {
-    answers([
-      503,
-      { code: "service.unavailable", message: "The audit log is unavailable." },
-    ]);
+    const refused =
+      "POST /api/operator/jobs/schedules/[kind]/run — refused (the audit log down)";
+    answers(routeAnswer(refused));
     render(<OperatorJobsView data={DATA} />);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Run social.curator now" }));
+      fireEvent.click(screen.getByRole("button", { name: "Run test.optout now" }));
     });
     await waitFor(() => expect(screen.getByRole("status")).toBeDefined());
     expect(sent(0)).toMatchObject({
-      url: "/api/operator/jobs/schedules/social.curator/run",
+      url: "/api/operator/jobs/schedules/test.optout/run",
       method: "POST",
     });
     expect(screen.getByRole("status").textContent).toBe(
-      "Run social.curator now failed: The audit log is unavailable."
+      `Run test.optout now failed: ${messageOf(refused)}`
     );
   });
 
   it("replays a dead job", async () => {
-    answers([200, { result: {} }], [200, { ...DATA, deadLetters: [] }]);
+    answers(
+      routeAnswer("POST /api/operator/jobs/dead/[id] — replayed"),
+      routeAnswer("GET /api/operator/jobs — the dead letters gone")
+    );
     render(<OperatorJobsView data={DATA} />);
     await act(async () => {
       fireEvent.click(
-        screen.getByRole("button", { name: "Replay gdpr.retention-purge" })
+        screen.getAllByRole("button", { name: "Replay gdpr.retention-purge" })[0]!
       );
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(sent(0)).toEqual({
-      url: "/api/operator/jobs/dead/11111111-1111-4111-8111-111111111111",
+      url: `/api/operator/jobs/dead/${DATA.deadLetters![0]!.id}`,
       method: "POST",
       body: { action: "replay" },
     });
@@ -285,15 +268,22 @@ describe("OperatorJobsView", () => {
   });
 
   it("asks to confirm a discard, and can be cancelled", async () => {
-    answers([200, { result: {} }], [200, DATA]);
+    answers(
+      routeAnswer("POST /api/operator/jobs/dead/[id] — discarded"),
+      routeAnswer(HISTORY)
+    );
     render(<OperatorJobsView data={DATA} />);
-    fireEvent.click(screen.getByRole("button", { name: "Discard gdpr.retention-purge" }));
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Discard gdpr.retention-purge" })[0]!
+    );
     expect(
       screen.getByText(/Discard this gdpr.retention-purge job for good/)
     ).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(fetchMock).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Discard gdpr.retention-purge" }));
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Discard gdpr.retention-purge" })[0]!
+    );
     const group = screen.getByRole("group", { name: "Discard gdpr.retention-purge" });
     await act(async () => {
       fireEvent.click(group.querySelector("button") as HTMLButtonElement);
@@ -306,11 +296,11 @@ describe("OperatorJobsView", () => {
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
     render(<OperatorJobsView data={DATA} />);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Run social.curator now" }));
+      fireEvent.click(screen.getByRole("button", { name: "Run test.optout now" }));
     });
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toBe(
-        "Run social.curator now failed: The request was refused."
+        "Run test.optout now failed: The request was refused."
       )
     );
   });
@@ -330,9 +320,11 @@ describe("TenantJobsList", () => {
 
   it("lists the tenant's jobs read-only, and is accessible", async () => {
     const { container } = render(<TenantJobsList jobs={DATA.deadLetters} />);
-    expect(screen.getByText("gdpr.retention-purge")).toBeDefined();
-    expect(screen.getByText("Dead-lettered")).toBeDefined();
-    expect(screen.getByText("5 of 5")).toBeDefined();
+    expect(screen.getAllByText("gdpr.retention-purge")).toHaveLength(2);
+    expect(screen.getAllByText("Dead-lettered")).toHaveLength(DATA.deadLetters!.length);
+    expect(screen.getAllByText("1 of 1")).toHaveLength(2);
+    // The record from before the codes: the catalog's note, its stored text disclosed on request.
+    expect(screen.getByText(UNCODED, { exact: false })).toBeDefined();
     expect(screen.queryByRole("button")).toBeNull();
     await noViolations(container);
   });

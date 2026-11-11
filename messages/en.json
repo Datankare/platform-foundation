@@ -420,7 +420,6 @@
       "add_label": "Config key to add to dual-control",
       "already": "\"{key}\" is already dual-controlled.",
       "held": "Change held for approval{id, select, none {} other { ({kind, select, approval {approval} other {proposal}} {id})}} — an independent approver must clear it in Approvals.",
-      "applied": "Change applied.",
       "not_applied": "The change could not be applied.",
       "comment_add": "Add {key} to dual-control",
       "comment_remove": "Remove {key} from dual-control"
@@ -634,7 +633,9 @@
         "data_scope": "The job used the data layer outside its transaction (a programming error).",
         "sqlstate": "A database statement failed (SQLSTATE {detail}).",
         "unexpected": "The job failed with an unexpected {detail}.",
-        "threw": "The job failed: it threw a {detail} value."
+        "threw": "The job failed: it threw a {detail} value.",
+        "uncoded": "A failure recorded before failures were coded.",
+        "uncoded_show": "Show the stored text"
       }
     },
     "mfa": {
@@ -757,8 +758,6 @@
         "erase_warning": "This erases the account and every record of its data. It cannot be undone.",
         "erase_confirm": "Erase permanently",
         "erase_cancel": "Cancel",
-        "erased": "The account data was erased.",
-        "erase_incomplete": "The erasure did not complete ({status}); nothing more was done.",
         "erase_held": "Held for approval: a second administrator who may erase accounts must approve this erasure in Approvals before anything is erased.",
         "erase_pending": "Erasure pending approval: a second administrator who may erase accounts must approve it in Approvals. Nothing has been erased yet.",
         "working": "Working…",
@@ -849,7 +848,8 @@
         "category_profile": "Profile",
         "category_privacy": "Privacy",
         "permissions_toggle": "{count, plural, one {# permission} other {# permissions}} of {role}",
-        "lacks_feature_permissions": "Lacks {permissions}: its holders cannot use those features."
+        "lacks_feature_permissions": "Lacks {permissions}: its holders cannot use those features.",
+        "duplicated_from": "Duplicated from {source}."
       },
       "results": {
         "approval_policy_updated": "Approval policy updated (version {version}, {rules, plural, one {# rule} other {# rules}}). Every action held today is restricted and is approved by a person whatever these rules say; they decide only for actions below that risk.",

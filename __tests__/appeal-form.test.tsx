@@ -12,15 +12,16 @@
 import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AppealForm from "@/components/AppealForm/AppealForm";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 
 const LONG_REASON = "This is a sufficiently long and detailed appeal reason.";
 
-function okJson(data: unknown): Response {
-  return { ok: true, status: 200, json: async () => data } as unknown as Response;
+/** The appeals route's own answer (__tests__/fixtures/route-responses.json). */
+function answer(name: RouteFixtureName): Response {
+  const [status, body] = routeAnswer(name);
+  return { ok: status < 400, status, json: async () => body } as unknown as Response;
 }
-function errJson(status: number, data: unknown = {}): Response {
-  return { ok: false, status, json: async () => data } as unknown as Response;
-}
+const SUBMITTED = "POST /api/moderation/appeals — submitted";
 
 beforeEach(() => {
   global.fetch = jest.fn();
@@ -56,16 +57,16 @@ describe("AppealForm", () => {
 
   it("submits the appeal and shows the success state", async () => {
     const onSubmitted = jest.fn();
-    (global.fetch as jest.Mock).mockResolvedValueOnce(
-      okJson({ item: { id: "appeal-1" } })
-    );
+    (global.fetch as jest.Mock).mockResolvedValueOnce(answer(SUBMITTED));
 
     render(<AppealForm originalDecisionId="traj-1" onSubmitted={onSubmitted} />);
     fireEvent.change(screen.getByTestId("af-reason"), { target: { value: LONG_REASON } });
     fireEvent.click(screen.getByTestId("af-submit"));
 
     await waitFor(() => expect(screen.getByTestId("af-success")).toBeDefined());
-    expect(onSubmitted).toHaveBeenCalledWith({ id: "appeal-1" });
+    expect(onSubmitted).toHaveBeenCalledWith(
+      (routeAnswer(SUBMITTED)[1] as { item: unknown }).item
+    );
 
     const call = (global.fetch as jest.Mock).mock.calls[0];
     expect(call[0]).toBe("/api/moderation/appeals");
@@ -75,7 +76,7 @@ describe("AppealForm", () => {
 
   it("shows a failure box on a server error and no success", async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce(
-      errJson(409, { error: "An appeal is already pending for this decision" })
+      answer("POST /api/moderation/appeals — refused (an appeal already pending)")
     );
 
     render(<AppealForm originalDecisionId="traj-1" />);

@@ -22,6 +22,7 @@ jest.mock("@/components/admin/leave-console", () => ({
 
 import AdminPage from "@/app/admin/page";
 import { AuthContextProvider } from "@/platform/auth/context";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 
 const TOKEN = "staff-access-token";
 const fetchMock = jest.fn();
@@ -29,25 +30,22 @@ type Call = [unknown, RequestInit | undefined];
 const signOutCalls = () =>
   (fetchMock.mock.calls as Call[]).filter(([u]) => String(u) === "/api/auth/sign-out");
 
-const json = (status: number, body: unknown) => ({
-  ok: status >= 200 && status < 300,
-  status,
-  json: async () => body,
-});
+/** A route's own answer (__tests__/fixtures/route-responses.json), as fetch resolves it. */
+const json = (name: RouteFixtureName) => {
+  const [status, body] = routeAnswer(name);
+  return { ok: status >= 200 && status < 300, status, json: async () => body };
+};
 
 /** The server: a moderator's session, its Approvals, and sign-out answered by `signOutAnswer`. */
 function serve(signOutAnswer: () => Promise<unknown>) {
   fetchMock.mockImplementation(async (url: unknown) => {
     const u = String(url);
     if (u === "/api/auth/sign-out") return signOutAnswer();
-    if (u.startsWith("/api/admin/session")) {
-      return json(200, {
-        roleName: "moderator",
-        permissions: ["can_access_admin", "can_moderate"],
-      });
-    }
-    if (u.startsWith("/api/admin/approvals")) return json(200, { approvals: [] });
-    return json(404, {});
+    if (u.startsWith("/api/admin/session"))
+      return json("GET /api/admin/session — a moderator");
+    if (u.startsWith("/api/admin/approvals"))
+      return json("GET /api/admin/approvals — none held");
+    throw new Error(`unexpected request: ${u}`);
   });
 }
 
@@ -92,7 +90,7 @@ beforeEach(() => {
 
 describe("the console's Sign Out ends the session (TASK-184)", () => {
   it("calls the server's sign-out with the access token, clears the tokens, then leaves for /auth", async () => {
-    serve(async () => json(200, { success: true }));
+    serve(async () => json("POST /api/auth/sign-out — signed out"));
     fireEvent.click(await openConsole());
     await waitFor(() => expect(leaveConsole).toHaveBeenCalledWith("/auth"));
     expect(signOutCalls()).toHaveLength(1);
@@ -114,14 +112,14 @@ describe("the console's Sign Out ends the session (TASK-184)", () => {
     await waitFor(() => expect(signOutCalls()).toHaveLength(1));
     await act(async () => await Promise.resolve());
     expect(leaveConsole).not.toHaveBeenCalled();
-    await act(async () => answer(json(200, { success: true })));
+    await act(async () => answer(json("POST /api/auth/sign-out — signed out")));
     await waitFor(() => expect(leaveConsole).toHaveBeenCalledWith("/auth"));
     expect(stored()).toEqual([null, null, null]);
   });
 
   it.each([
     ["unreachable", () => Promise.reject(new Error("offline"))],
-    ["answering 500", async () => json(500, { code: "internal.error" })],
+    ["answering 500", async () => json("POST /api/auth/sign-out — the provider failing")],
   ])(
     "with the server's sign-out %s, the session still ends here and the console leaves for /auth",
     async (_label, answer) => {

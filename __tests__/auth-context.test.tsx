@@ -3,6 +3,7 @@
  */
 
 import React from "react";
+import { routeAnswer } from "@/__tests__/fixtures/route-responses";
 import { render, screen, act } from "@testing-library/react";
 import { AuthContextProvider, useAuth } from "@/platform/auth/context";
 
@@ -137,7 +138,10 @@ describe("AuthContextProvider", () => {
   });
 
   it("signOut revokes on the server, then clears user state and localStorage", async () => {
-    const fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    const [status, body] = routeAnswer("POST /api/auth/sign-out — signed out");
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue({ ok: status < 400, status, json: async () => body });
     global.fetch = fetchMock as unknown as typeof fetch;
     render(
       <AuthContextProvider>

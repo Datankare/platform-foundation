@@ -410,9 +410,10 @@ describe("the Jobs console's words come from the catalog (TASK-206)", () => {
       const text = jobErrorText(r);
       expect([r, text === r, /screens\.jobs/.test(text)]).toEqual([r, false, false]);
     }
-    // A record from before the codes is shown as recorded.
-    expect(jobErrorText("The database was unavailable.")).toBe(
-      "The database was unavailable."
-    );
+    // A record from before the codes is said to be one, from the catalog (N-108) — never its
+    // stored English; an unknown code the same.
+    const { renderMessage } = jest.requireActual("@/platform/errors/messages");
+    for (const stored of ["The database was unavailable.", "nocode_known:x"])
+      expect(jobErrorText(stored)).toBe(renderMessage("screens.jobs.errors.uncoded"));
   });
 });

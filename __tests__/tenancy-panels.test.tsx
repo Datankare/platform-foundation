@@ -12,6 +12,7 @@ import {
   OperatorTenantsView,
   TenantSettingsView,
 } from "@/components/admin/TenancyPanels";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 
 const fetchMock = jest.fn();
 beforeAll(() => {
@@ -19,17 +20,18 @@ beforeAll(() => {
 });
 beforeEach(() => fetchMock.mockReset());
 
-function reply(status: number, body: unknown) {
+/** A route's own answer (__tests__/fixtures/route-responses.json), as fetch resolves it. */
+function reply(name: string) {
+  const [status, body] = routeAnswer(name as RouteFixtureName);
   return { ok: status < 400, status, json: async () => body } as unknown as Response;
 }
-/** Answer each call in turn; the last answer repeats. */
-function answers(...list: [number, unknown][]) {
+/** Answer each call in turn with these routes' answers; the last answer repeats. */
+function answers(...list: string[]) {
   let i = 0;
-  fetchMock.mockImplementation(async () => {
-    const [s, b] = list[Math.min(i++, list.length - 1)];
-    return reply(s, b);
-  });
+  fetchMock.mockImplementation(async () => reply(list[Math.min(i++, list.length - 1)]!));
 }
+const bodyOf = <T,>(name: string) => routeAnswer(name as RouteFixtureName)[1] as T;
+const messageOf = (name: string) => bodyOf<{ message: string }>(name).message;
 const sent = (n: number) => {
   const [url, init] = fetchMock.mock.calls[n] as [string, RequestInit | undefined];
   return {
@@ -39,33 +41,10 @@ const sent = (n: number) => {
   };
 };
 
-const TENANT = {
-  tenant: {
-    id: "11111111-1111-4111-8111-111111111111",
-    mode: "shared",
-    slug: "acme",
-    name: "Acme",
-    status: "active",
-  },
-  domains: [{ host: "acme.example.com", createdAt: "2026-01-01T00:00:00Z" }],
-  budget: { usedUsd: 12.5, budgetUsd: 100, exhausted: false, period: "2026-10-23" },
-  settings: [
-    {
-      key: "signups_enabled",
-      description: "Whether new accounts may sign up",
-      value: false,
-      platformValue: true,
-      overridden: true,
-    },
-    {
-      key: "max_devices_per_player",
-      description: null,
-      value: 3,
-      platformValue: 3,
-      overridden: false,
-    },
-  ],
-};
+type TenantData = Parameters<typeof TenantSettingsView>[0]["data"];
+const ACME_TENANT =
+  "GET /api/admin/tenant — a shared deployment's tenant, its spend under the cap";
+const TENANT = bodyOf<NonNullable<TenantData>>(ACME_TENANT);
 
 describe("TenantSettingsView", () => {
   it("shows loading until there is a tenant", () => {
@@ -94,7 +73,9 @@ describe("TenantSettingsView", () => {
   it("says when the tenant's agents have reached the cap", () => {
     render(
       <TenantSettingsView
-        data={{ ...TENANT, budget: { ...TENANT.budget, usedUsd: 100, exhausted: true } }}
+        data={bodyOf(
+          "GET /api/admin/tenant — a shared deployment's tenant, its cap reached"
+        )}
       />
     );
     expect(screen.getByText(/The cap is reached/)).toBeDefined();
@@ -102,13 +83,7 @@ describe("TenantSettingsView", () => {
 
   it("a single deployment: no addresses needed, no reset", () => {
     render(
-      <TenantSettingsView
-        data={{
-          ...TENANT,
-          tenant: { ...TENANT.tenant, mode: "single", name: null, slug: null },
-          domains: [],
-        }}
-      />
+      <TenantSettingsView data={bodyOf("GET /api/admin/tenant — a single deployment")} />
     );
     expect(screen.getByRole("heading", { name: "This deployment" })).toBeDefined();
     expect(screen.getByText("Not needed in a single-tenant deployment.")).toBeDefined();
@@ -116,7 +91,7 @@ describe("TenantSettingsView", () => {
   });
 
   it("saves a value as JSON when it parses, then reloads", async () => {
-    answers([200, { success: true }], [200, TENANT]);
+    answers("PUT /api/admin/config — saved", ACME_TENANT);
     render(<TenantSettingsView data={TENANT} />);
     const save = screen.getByRole("button", { name: "Save max_devices_per_player" });
     expect((save as HTMLButtonElement).disabled).toBe(true);
@@ -134,7 +109,7 @@ describe("TenantSettingsView", () => {
   });
 
   it("says when a change is held for approval", async () => {
-    answers([202, { pending: true }], [200, TENANT]);
+    answers("PUT /api/admin/config — held for approval", ACME_TENANT);
     render(<TenantSettingsView data={TENANT} />);
     fireEvent.change(screen.getByLabelText("New value for signups_enabled"), {
       target: { value: "true" },
@@ -144,28 +119,26 @@ describe("TenantSettingsView", () => {
   });
 
   it("shows the server's refusal and does not reload", async () => {
-    answers([403, { code: "admin.config_scope_refused", message: "Only operators." }]);
+    const refused = "PUT /api/admin/config — refused (not this tenant's to set)";
+    answers(refused);
     render(<TenantSettingsView data={TENANT} />);
     fireEvent.change(screen.getByLabelText("New value for signups_enabled"), {
       target: { value: "x" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save signups_enabled" }));
-    await screen.findByText("signups_enabled: Only operators.");
+    await screen.findByText(`signups_enabled: ${messageOf(refused)}`);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   // Round 15, nit 4: a write whose commit was lost may have applied — the page reads the setting
   // again, so the admin sees its actual value, and says the outcome is unknown.
-  const LOST = "The change may or may not have taken effect: check before you retry.";
+  const LOST = messageOf("PUT /api/admin/config — the commit lost");
 
   it("after a lost commit (save) reloads the setting and says so", async () => {
-    const after = {
-      ...TENANT,
-      settings: TENANT.settings.map((x) =>
-        x.key === "max_devices_per_player" ? { ...x, value: 7, overridden: true } : x
-      ),
-    };
-    answers([503, { code: "admin.write_indeterminate", message: LOST }], [200, after]);
+    answers(
+      "PUT /api/admin/config — the commit lost",
+      "GET /api/admin/tenant — after a lost commit, max_devices_per_player 7"
+    );
     render(<TenantSettingsView data={TENANT} />);
     fireEvent.change(screen.getByLabelText("New value for max_devices_per_player"), {
       target: { value: "7" },
@@ -177,13 +150,10 @@ describe("TenantSettingsView", () => {
   });
 
   it("after a lost commit (reset) reloads the setting and says so", async () => {
-    const after = {
-      ...TENANT,
-      settings: TENANT.settings.map((x) =>
-        x.key === "signups_enabled" ? { ...x, value: true, overridden: false } : x
-      ),
-    };
-    answers([503, { code: "admin.write_indeterminate", message: LOST }], [200, after]);
+    answers(
+      "DELETE /api/admin/config — the commit lost",
+      "GET /api/admin/tenant — after a lost commit, signups_enabled the platform's"
+    );
     render(<TenantSettingsView data={TENANT} />);
     const reset = "Use the platform default for signups_enabled";
     fireEvent.click(screen.getByRole("button", { name: reset }));
@@ -194,7 +164,7 @@ describe("TenantSettingsView", () => {
   });
 
   it("goes back to the default through DELETE", async () => {
-    answers([200, { success: true }], [200, TENANT]);
+    answers("DELETE /api/admin/config — the platform default again", ACME_TENANT);
     render(<TenantSettingsView data={TENANT} />);
     fireEvent.click(
       screen.getByRole("button", { name: "Use the platform default for signups_enabled" })
@@ -216,52 +186,10 @@ describe("TenantSettingsView", () => {
   });
 });
 
-const ROWS = [
-  {
-    id: "t-active",
-    slug: "acme",
-    name: "Acme",
-    status: "active",
-    domains: ["acme.example.com"],
-    userCount: 4,
-  },
-  {
-    id: "t-suspended",
-    slug: "beta",
-    name: "Beta",
-    status: "suspended",
-    domains: [],
-    userCount: 1,
-  },
-  {
-    id: "t-deleted",
-    slug: "gone",
-    name: "Gone",
-    status: "deleted",
-    domains: [],
-    userCount: 0,
-    purgeAfter: "2026-11-20T00:00:00Z",
-  },
-  {
-    id: "t-pending",
-    slug: "doomed",
-    name: "Doomed",
-    status: "active",
-    domains: [],
-    userCount: 2,
-    pendingDeletion: { requestId: "req-1", requestedBy: "op-1" },
-  },
-  {
-    id: "t-purged",
-    slug: "purged",
-    name: "Purged",
-    status: "deleted",
-    domains: [],
-    userCount: 0,
-    purgeAfter: "2026-01-01T00:00:00Z",
-    purgedAt: "2026-01-02T00:00:00Z",
-  },
-];
+const TENANTS = "GET /api/operator/tenants — every state";
+type TenantRows = Parameters<typeof OperatorTenantsView>[0]["data"];
+const ROWS = bodyOf<NonNullable<TenantRows>>(TENANTS).tenants ?? [];
+const idOf = (slug: string) => ROWS.find((t) => t.slug === slug)!.id;
 
 describe("OperatorTenantsView", () => {
   const view = () => render(<OperatorTenantsView data={{ tenants: ROWS }} />);
@@ -309,7 +237,7 @@ describe("OperatorTenantsView", () => {
   });
 
   it("asks for a reason inline, then suspends with it", async () => {
-    answers([200, { success: true }], [200, { tenants: ROWS }]);
+    answers("POST /api/operator/tenants/[id]/state — suspended", TENANTS);
     view();
     fireEvent.click(button("Suspend Acme"));
     const form = screen.getByRole("form", { name: "Suspend Acme" });
@@ -322,7 +250,7 @@ describe("OperatorTenantsView", () => {
     fireEvent.click(confirm);
     await screen.findByText("Suspend Acme: done.");
     expect(sent(0)).toEqual({
-      url: "/api/operator/tenants/t-active/state",
+      url: `/api/operator/tenants/${idOf("acme")}/state`,
       method: "POST",
       body: { action: "suspend", reason: "unpaid" },
     });
@@ -341,33 +269,45 @@ describe("OperatorTenantsView", () => {
   });
 
   it("requests a deletion with its reason", async () => {
-    answers([202, { success: true }], [200, { tenants: ROWS }]);
+    answers("POST /api/operator/tenants/[id]/deletion — requested", TENANTS);
     view();
     fireEvent.click(button("Request deletion of Acme (another operator approves)"));
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "closed" } });
     fireEvent.submit(screen.getByRole("form"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(sent(0)).toEqual({
-      url: "/api/operator/tenants/t-active/deletion",
+      url: `/api/operator/tenants/${idOf("acme")}/deletion`,
       method: "POST",
       body: { reason: "closed" },
     });
   });
 
   it("decides a pending deletion, and shows a refusal (own request)", async () => {
-    answers([403, { code: "tenant.self_approval", message: "Another operator must." }]);
+    const refused = "POST /api/operator/deletions/[id] — refused (its own requester)";
+    answers(refused);
     view();
     fireEvent.click(button("Approve the deletion of Doomed"));
-    await screen.findByText("Approve the deletion of Doomed: Another operator must.");
+    await screen.findByText(`Approve the deletion of Doomed: ${messageOf(refused)}`);
+    const pending = ROWS.find((t) => t.slug === "doomed")!.pendingDeletion!;
     expect(sent(0)).toEqual({
-      url: "/api/operator/deletions/req-1",
+      url: `/api/operator/deletions/${pending.requestId}`,
       method: "POST",
       body: { decision: "approve" },
     });
   });
 
   it("adds and removes addresses", async () => {
-    answers([200, { success: true }], [200, { tenants: ROWS }]);
+    let call = 0;
+    fetchMock.mockImplementation(async () =>
+      reply(
+        [
+          "POST /api/operator/tenants/[id]/domains — added",
+          TENANTS,
+          "DELETE /api/operator/tenants/[id]/domains — removed",
+          TENANTS,
+        ][Math.min(call++, 3)]!
+      )
+    );
     view();
     fireEvent.click(button("Add an address for Beta"));
     fireEvent.change(screen.getByLabelText("Address"), {
@@ -376,20 +316,20 @@ describe("OperatorTenantsView", () => {
     fireEvent.click(button("Confirm"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(sent(0)).toEqual({
-      url: "/api/operator/tenants/t-suspended/domains",
+      url: `/api/operator/tenants/${idOf("beta")}/domains`,
       method: "POST",
       body: { host: "beta.example.com" },
     });
     fireEvent.click(button("Remove acme.example.com"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(sent(2)).toMatchObject({
-      url: "/api/operator/tenants/t-active/domains?host=acme.example.com",
+      url: `/api/operator/tenants/${idOf("acme")}/domains?host=acme.example.com`,
       method: "DELETE",
     });
   });
 
   it("makes a user administrator by email", async () => {
-    answers([200, { success: true }], [200, { tenants: ROWS }]);
+    answers("POST /api/operator/tenants/[id]/admins — made administrator", TENANTS);
     view();
     fireEvent.click(button("Make one of Acme's users its administrator"));
     const field = screen.getByLabelText("Email") as HTMLInputElement;
@@ -398,14 +338,14 @@ describe("OperatorTenantsView", () => {
     fireEvent.click(button("Confirm"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(sent(0)).toEqual({
-      url: "/api/operator/tenants/t-active/admins",
+      url: `/api/operator/tenants/${idOf("acme")}/admins`,
       method: "POST",
       body: { email: "a@acme.example.com" },
     });
   });
 
   it("provisions a tenant, splitting the addresses, and clears the form", async () => {
-    answers([201, { tenant: { id: "new" } }], [200, { tenants: ROWS }]);
+    answers("POST /api/operator/tenants — provisioned", TENANTS);
     view();
     const provision = button("Provision");
     expect((provision as HTMLButtonElement).disabled).toBe(true);
@@ -429,17 +369,18 @@ describe("OperatorTenantsView", () => {
   });
 
   it("keeps the form when provisioning is refused", async () => {
-    answers([409, { code: "tenant.conflict", message: "That slug is taken." }]);
+    const refused = "POST /api/operator/tenants — refused (the slug taken)";
+    answers(refused);
     view();
     fireEvent.change(screen.getByLabelText("Slug"), { target: { value: "acme" } });
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Acme 2" } });
     fireEvent.click(button("Provision"));
-    await screen.findByText("Provision: That slug is taken.");
+    await screen.findByText(`Provision: ${messageOf(refused)}`);
     expect((screen.getByLabelText("Slug") as HTMLInputElement).value).toBe("acme");
   });
 
   it("purges due tenants", async () => {
-    answers([200, { purged: [] }], [200, { tenants: ROWS }]);
+    answers("POST /api/operator/purge — none due", TENANTS);
     view();
     fireEvent.click(button("Purge due"));
     await screen.findByText("Purge due tenants: done.");
@@ -447,100 +388,56 @@ describe("OperatorTenantsView", () => {
   });
 
   it("shows each readiness check, its state named for screen readers", async () => {
-    answers([
-      200,
-      {
-        mode: "shared",
-        ready: false,
-        checks: [
-          {
-            name: "database",
-            state: "ready",
-            detail: {
-              key: "screens.readiness.database_ready",
-              params: { role: "app_tenant" },
-            },
-          },
-          {
-            name: "identity",
-            state: "not_ready",
-            detail: {
-              key: "screens.readiness.identity_not_ready",
-              params: {
-                reason: {
-                  key: "screens.readiness.attribute_writable",
-                  params: { client: "web", attribute: "custom:tenant_id" },
-                },
-              },
-            },
-          },
-          {
-            name: "owner_connection",
-            state: "unknown",
-            detail: { key: "screens.readiness.owner_unset" },
-          },
-        ],
-      },
-    ]);
+    answers("GET /api/operator/readiness — this deployment");
     view();
     fireEvent.click(button("Check"));
     // Each check by the catalog's name, and its detail worded by the catalog (TASK-206).
-    await screen.findByText(/web can write custom:tenant_id/);
-    expect(screen.getByText(/under row-level security/)).toBeDefined();
-    expect(screen.getByText("(ready)")).toBeDefined();
-    expect(screen.getByText("(not ready)")).toBeDefined();
-    expect(screen.getByText("(unknown)")).toBeDefined();
+    await screen.findByText(
+      new RegExp(renderMessage("screens.readiness.owner_unset").slice(0, 30))
+    );
+    expect(
+      screen.getByText(
+        new RegExp(renderMessage("screens.readiness.database_role_missing"))
+      )
+    ).toBeDefined();
+    expect(screen.getAllByText("(ready)").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("(not ready)").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("(unknown)").length).toBeGreaterThan(0);
   });
 
   it("reports a failed readiness check", async () => {
-    answers([403, { code: "admin.operator_only", message: "Operators only." }]);
+    const refused = "GET /api/operator/readiness — refused (no permission)";
+    answers(refused);
     view();
     await act(async () => {
       fireEvent.click(button("Check"));
     });
-    await screen.findByText("Readiness: Operators only.");
+    await screen.findByText(`Readiness: ${messageOf(refused)}`);
   });
 });
 
 describe("OperatorTenantsView — one tenant's settings, as an operator", () => {
-  const ENTRIES = [
-    {
-      key: "max_devices_per_player",
-      description: "Devices",
-      value: 5,
-      platformValue: 3,
-      overridden: true,
-      tenantOverridable: true,
-      permissionTier: "standard",
-    },
-    {
-      key: "agent.budget.tenant_max_cost_per_day",
-      description: "Tenant cap",
-      value: 100,
-      platformValue: 100,
-      overridden: false,
-      tenantOverridable: false,
-      permissionTier: "safety",
-    },
-  ];
-  const HELD = [
-    {
-      source: "config-approval",
-      id: "apr-1",
-      label: "moderation.strike_ban_threshold",
-      requester: "op-1",
-      requiredPermission: "config_manage_safety",
-    },
-  ];
+  const CONFIG =
+    "GET /api/operator/tenants/[id]/config — every setting, one only operators set";
+  const HELD =
+    "GET /api/operator/tenants/[id]/approvals — a two-person approval, its requester not here";
+  const NONE = "GET /api/operator/tenants/[id]/approvals — none";
+  const DECIDE = "POST /api/operator/tenants/[id]/approvals/[approvalId] —";
+  const heldId = (name: string) =>
+    bodyOf<{ approvals: { id: string }[] }>(name).approvals.at(-1)!.id;
   /** Route each call by URL and method. */
-  function routes(table: Record<string, [number, unknown]>) {
+  /** Route each "METHOD url" to the fixture that answers it (a table of names, not bodies). */
+  function routes(table: ReadonlyMap<string, string>) {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       const k = `${init?.method ?? "GET"} ${url}`;
-      const hit = table[k] ?? [404, { code: "x", message: `no route ${k}` }];
-      return reply(hit[0], hit[1]);
+      const name = table.get(k);
+      if (!name) throw new Error(`unexpected request: ${k}`);
+      return reply(name);
     });
   }
-  const base = "/api/operator/tenants/t-active";
+  const base = `/api/operator/tenants/${idOf("acme")}`;
+  // The erasure's account is not in this tenant's users: the label says so.
+  const ERASE = "Erase the account an account that is no longer found";
   const open = async () => {
     render(<OperatorTenantsView data={{ tenants: ROWS }} />);
     fireEvent.click(screen.getByRole("button", { name: "Settings of Acme" }));
@@ -553,17 +450,21 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
   });
 
   it("lists every setting — including those only operators set — and the held changes", async () => {
-    routes({
-      [`GET ${base}/config`]: [200, { entries: ENTRIES }],
-      [`GET ${base}/approvals`]: [200, { approvals: HELD }],
-    });
+    routes(
+      new Map([
+        [`GET ${base}/config`, CONFIG],
+        [`GET ${base}/approvals`, HELD],
+      ])
+    );
     await open();
     expect(screen.getByText("agent.budget.tenant_max_cost_per_day")).toBeDefined();
     expect(screen.getByText("operators only · safety")).toBeDefined();
     expect(screen.getByText("its administrators may set this")).toBeDefined();
     expect(screen.getByText("Waiting for approval")).toBeDefined();
     // The requester is never named by id (TASK-202, N-63): a listing that names none says so.
-    expect(document.body.textContent).not.toContain("op-1");
+    const requester = bodyOf<{ approvals: { requester: string }[] }>(HELD).approvals[0]!
+      .requester;
+    expect(document.body.textContent).not.toContain(requester);
     expect(
       screen.getByText(/requested by an account not found in this tenant/)
     ).toBeDefined();
@@ -573,11 +474,13 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
   });
 
   it("sets a platform-governed key for the tenant through the operator route", async () => {
-    routes({
-      [`GET ${base}/config`]: [200, { entries: ENTRIES }],
-      [`GET ${base}/approvals`]: [200, { approvals: [] }],
-      [`PUT ${base}/config`]: [200, { success: true }],
-    });
+    routes(
+      new Map([
+        [`GET ${base}/config`, CONFIG],
+        [`GET ${base}/approvals`, NONE],
+        [`PUT ${base}/config`, "PUT /api/operator/tenants/[id]/config — saved"],
+      ])
+    );
     await open();
     fireEvent.change(
       screen.getByLabelText("New value for agent.budget.tenant_max_cost_per_day"),
@@ -598,12 +501,20 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
   });
 
   it("says when a change waits for a second approver, and resets through DELETE", async () => {
-    routes({
-      [`GET ${base}/config`]: [200, { entries: ENTRIES }],
-      [`GET ${base}/approvals`]: [200, { approvals: [] }],
-      [`PUT ${base}/config`]: [202, { success: true, pending: true }],
-      [`DELETE ${base}/config?key=max_devices_per_player`]: [200, { success: true }],
-    });
+    routes(
+      new Map([
+        [`GET ${base}/config`, CONFIG],
+        [`GET ${base}/approvals`, NONE],
+        [
+          `PUT ${base}/config`,
+          "PUT /api/operator/tenants/[id]/config — held for approval",
+        ],
+        [
+          `DELETE ${base}/config?key=max_devices_per_player`,
+          "DELETE /api/operator/tenants/[id]/config — the platform default again",
+        ],
+      ])
+    );
     await open();
     fireEvent.change(screen.getByLabelText("New value for max_devices_per_player"), {
       target: { value: "9" },
@@ -619,24 +530,25 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
   });
 
   it("decides a held change in that tenant, and shows a refusal", async () => {
-    routes({
-      [`GET ${base}/config`]: [200, { entries: ENTRIES }],
-      [`GET ${base}/approvals`]: [200, { approvals: HELD }],
-      [`POST ${base}/approvals/apr-1`]: [
-        403,
-        { code: "approvals.self_approval", message: "You requested this change." },
-      ],
-    });
+    const refused = `${DECIDE} refused (its own requester)`;
+    const id = heldId(HELD);
+    routes(
+      new Map([
+        [`GET ${base}/config`, CONFIG],
+        [`GET ${base}/approvals`, HELD],
+        [`POST ${base}/approvals/${id}`, refused],
+      ])
+    );
     await open();
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Approve the held change moderation.strike_ban_threshold",
+        name: "Approve the held change Setting moderation.strike_ban_threshold",
       })
     );
     await screen.findByText(
-      "moderation.strike_ban_threshold: You requested this change."
+      `Setting moderation.strike_ban_threshold: ${messageOf(refused)}`
     );
-    const post = fetchMock.mock.calls.find(([u]) => u === `${base}/approvals/apr-1`) as [
+    const post = fetchMock.mock.calls.find(([u]) => u === `${base}/approvals/${id}`) as [
       string,
       RequestInit,
     ];
@@ -650,33 +562,31 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
   // reader (decision-outcome.ts): what became of the approval, and when; the list read again.
   it.each([
     [
-      {
-        code: "admin.write_indeterminate",
-        message: "M.",
-        settling: true,
-        settlesWithinMinutes: 75,
-      },
-      "moderation.strike_ban_threshold: M. Its outcome is being checked: if it did not apply, it is listed again within 75 minutes.",
+      `${DECIDE} approved, its apply settling`,
+      "Its outcome is being checked: if it did not apply, it is listed again within 75 minutes.",
     ],
     [
-      { code: "approvals.stale", message: "M.", withdrawn: true },
-      "moderation.strike_ban_threshold: M. It was withdrawn; the requester must ask again.",
+      `${DECIDE} approved, stale and withdrawn`,
+      "It was withdrawn; the requester must ask again.",
     ],
   ])(
-    "a decision's outcome (%j) is said as the Approvals panel says it, and the list read again",
-    async (body, said) => {
-      routes({
-        [`GET ${base}/config`]: [200, { entries: ENTRIES }],
-        [`GET ${base}/approvals`]: [200, { approvals: HELD }],
-        [`POST ${base}/approvals/apr-1`]: [409, body],
-      });
+    "a decision's outcome (%s) is said as the Approvals panel says it, and the list read again",
+    async (answer, then) => {
+      const said = `Setting moderation.strike_ban_threshold: ${messageOf(answer)} ${then}`;
+      routes(
+        new Map([
+          [`GET ${base}/config`, CONFIG],
+          [`GET ${base}/approvals`, HELD],
+          [`POST ${base}/approvals/${heldId(HELD)}`, answer],
+        ])
+      );
       await open();
       const reads = () =>
         fetchMock.mock.calls.filter(([u]) => u === `${base}/approvals`).length;
       const before = reads();
       fireEvent.click(
         screen.getByRole("button", {
-          name: "Approve the held change moderation.strike_ban_threshold",
+          name: "Approve the held change Setting moderation.strike_ban_threshold",
         })
       );
       await screen.findByText(said);
@@ -685,23 +595,21 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
   );
 
   it("an undecided held change offers its three decisions, and withdraws it through the operator route (round 7, I-3)", async () => {
-    const undecided = {
-      source: "runtime",
-      id: "hold-9",
-      label: "purge_user_data",
-      requester: "admin-1",
-      requiredPermission: "admin_purge_user_data",
-      undecided: true,
-      noEligibleDecider: true,
-    };
-    routes({
-      [`GET ${base}/config`]: [200, { entries: ENTRIES }],
-      [`GET ${base}/approvals`]: [200, { approvals: [undecided] }],
-      [`POST ${base}/approvals/hold-9`]: [
-        200,
-        { decision: "withdraw", status: "rejected" },
-      ],
-    });
+    const UNDECIDED =
+      "GET /api/operator/tenants/[id]/approvals — an undecided erasure no one in it may decide";
+    const undecided = bodyOf<{ approvals: { id: string; undecided?: boolean }[] }>(
+      UNDECIDED
+    ).approvals.find((a) => a.undecided)!;
+    routes(
+      new Map([
+        [`GET ${base}/config`, CONFIG],
+        [`GET ${base}/approvals`, UNDECIDED],
+        [
+          `POST ${base}/approvals/${undecided.id}`,
+          `${DECIDE} an undecided erasure withdrawn`,
+        ],
+      ])
+    );
     await open();
     // No one in the tenant may decide it: said, for the operator.
     expect(
@@ -710,33 +618,32 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
       )
     ).toBeDefined();
     expect(
-      screen.queryByRole("button", { name: "Approve the held change Erase an account" })
+      screen.queryByRole("button", { name: `Approve the held change ${ERASE} again` })
     ).toBeNull();
     expect(
       screen.getByRole("button", {
         // Named in words (TASK-202, N-62): the tool's id was the label.
-        name: "Mark Erase an account executed: verified that it took effect",
+        name: `Mark ${ERASE} executed: verified that it took effect`,
       })
     ).toBeDefined();
     expect(
       screen.getByRole("button", {
-        name: "Approve Erase an account again: verified that it did not take effect",
+        name: `Approve ${ERASE} again: verified that it did not take effect`,
       })
     ).toBeDefined();
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Withdraw Erase an account: verified that it did not take effect; it will not run",
+        name: `Withdraw ${ERASE}: verified that it did not take effect; it will not run`,
       })
     );
     await waitFor(() =>
-      expect(fetchMock.mock.calls.some(([u]) => u === `${base}/approvals/hold-9`)).toBe(
-        true
-      )
+      expect(
+        fetchMock.mock.calls.some(([u]) => u === `${base}/approvals/${undecided.id}`)
+      ).toBe(true)
     );
-    const post = fetchMock.mock.calls.find(([u]) => u === `${base}/approvals/hold-9`) as [
-      string,
-      RequestInit,
-    ];
+    const post = fetchMock.mock.calls.find(
+      ([u]) => u === `${base}/approvals/${undecided.id}`
+    ) as [string, RequestInit];
     expect(JSON.parse(String(post[1].body))).toEqual({
       decision: "withdraw",
       source: "runtime",
@@ -744,35 +651,31 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
   });
 
   it("an undecided duplicate refused approval again says what to do with it (round 8, item 1)", async () => {
-    const undecided = {
-      source: "runtime",
-      id: "hold-8",
-      label: "purge_user_data",
-      requester: "admin-1",
-      requiredPermission: "admin_purge_user_data",
-      undecided: true,
-    };
-    routes({
-      [`GET ${base}/config`]: [200, { entries: ENTRIES }],
-      [`GET ${base}/approvals`]: [200, { approvals: [undecided] }],
-      [`POST ${base}/approvals/hold-8`]: [
-        409,
-        {
-          code: "approvals.duplicate_undecided",
-          message: renderMessage("errors.approvals.duplicate_undecided"),
-        },
-      ],
-    });
+    const UNDECIDED =
+      "GET /api/operator/tenants/[id]/approvals — an undecided erasure no one in it may decide";
+    const undecided = bodyOf<{ approvals: { id: string; undecided?: boolean }[] }>(
+      UNDECIDED
+    ).approvals.find((a) => a.undecided)!;
+    routes(
+      new Map([
+        [`GET ${base}/config`, CONFIG],
+        [`GET ${base}/approvals`, UNDECIDED],
+        [
+          `POST ${base}/approvals/${undecided.id}`,
+          `${DECIDE} an undecided erasure approved again, another open`,
+        ],
+      ])
+    );
     await open();
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Approve Erase an account again: verified that it did not take effect",
+        name: `Approve ${ERASE} again: verified that it did not take effect`,
       })
     );
     // As the Approvals panel says it (round 17: one reader): an erasure's duplicate is named.
     await screen.findByText(
       renderMessage("screens.held.result_duplicate_undecided", {
-        label: "Erase an account",
+        label: ERASE,
       })
     );
     expect(
@@ -783,18 +686,19 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
   });
 
   it("an unreadable tenant's settings say why; Close removes the panel", async () => {
-    routes({
-      [`GET ${base}/config`]: [
-        409,
-        { code: "tenant.not_shared", message: "One tenant." },
-      ],
-      [`GET ${base}/approvals`]: [
-        409,
-        { code: "tenant.not_shared", message: "One tenant." },
-      ],
-    });
+    const refused =
+      "GET /api/operator/tenants/[id]/config — refused (a single deployment)";
+    routes(
+      new Map([
+        [`GET ${base}/config`, refused],
+        [
+          `GET ${base}/approvals`,
+          "GET /api/operator/tenants/[id]/approvals — refused (a single deployment)",
+        ],
+      ])
+    );
     await open();
-    expect(screen.getByText("Settings of Acme: One tenant.")).toBeDefined();
+    expect(screen.getByText(`Settings of Acme: ${messageOf(refused)}`)).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("heading", { name: "Settings of Acme" })).toBeNull();
   });

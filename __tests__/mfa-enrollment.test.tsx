@@ -10,6 +10,7 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import qrcode from "qrcode-generator";
 import MfaEnrollment from "@/components/admin/MfaEnrollment";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 
 jest.mock("qrcode-generator", () => {
   const actual = jest.requireActual("qrcode-generator");
@@ -28,22 +29,28 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-const ok = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
-const refused = (body: unknown) => ({ ok: false, status: 400, json: async () => body });
+/** A route's own answer (__tests__/fixtures/route-responses.json), as fetch resolves it. */
+const answer = (name: RouteFixtureName) => {
+  const [status, body] = routeAnswer(name);
+  return { ok: status < 400, status, json: async () => body };
+};
+const SETUP = "POST /api/auth/mfa/setup — the secret and its URI";
+const { secretCode: SECRET, qrCodeUri: URI } = routeAnswer(SETUP)[1] as {
+  secretCode: string;
+  qrCodeUri: string;
+};
 
 describe("MfaEnrollment", () => {
   it("enrols: the secret, then the first code, then asks to sign in again", async () => {
     const onSignOut = jest.fn();
     fetchMock
-      .mockResolvedValueOnce(
-        ok({ success: true, secretCode: "ABCDEF", qrCodeUri: "otpauth://x" })
-      )
-      .mockResolvedValueOnce(ok({ success: true, mfaEnabled: true }));
+      .mockResolvedValueOnce(answer(SETUP))
+      .mockResolvedValueOnce(answer("POST /api/auth/mfa/verify — enabled"));
     render(<MfaEnrollment onSignOut={onSignOut} />);
     fireEvent.click(screen.getByText("Set up two-step verification"));
     await waitFor(() => screen.getByLabelText(/6-digit code/));
     fireEvent.click(screen.getByText("Can't scan? Show key"));
-    expect(screen.getByText("ABCDEF")).toBeInTheDocument();
+    expect(screen.getByText(SECRET)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/6-digit code/), {
       target: { value: "12a3456" },
     });
@@ -58,8 +65,10 @@ describe("MfaEnrollment", () => {
 
   it("shows the server's message when a code is not accepted, and stays on the code", async () => {
     fetchMock
-      .mockResolvedValueOnce(ok({ success: true, secretCode: "ABCDEF" }))
-      .mockResolvedValueOnce(refused({ message: "That code is not correct." }));
+      .mockResolvedValueOnce(answer("POST /api/auth/mfa/setup — the secret, no URI"))
+      .mockResolvedValueOnce(
+        answer("POST /api/auth/mfa/verify — refused (the code is wrong)")
+      );
     render(<MfaEnrollment onSignOut={jest.fn()} />);
     fireEvent.click(screen.getByText("Set up two-step verification"));
     await waitFor(() => screen.getByLabelText(/6-digit code/));
@@ -73,13 +82,8 @@ describe("MfaEnrollment", () => {
     expect(screen.getByText("Confirm")).toBeInTheDocument();
   });
 
-  const URI =
-    "otpauth://totp/PlatformFoundation?secret=JBSWY3DPEHPK3PXP&issuer=PlatformFoundation";
-
   it("draws the setup URI as a QR code and keeps the key hidden until asked for", async () => {
-    fetchMock.mockResolvedValueOnce(
-      ok({ success: true, secretCode: "JBSWY3DPEHPK3PXP", qrCodeUri: URI })
-    );
+    fetchMock.mockResolvedValueOnce(answer(SETUP));
     const logs = (["log", "info", "warn", "error", "debug"] as const).map((m) =>
       jest.spyOn(console, m).mockImplementation(() => {})
     );
@@ -101,20 +105,20 @@ describe("MfaEnrollment", () => {
     expect(qrFactory).toHaveBeenCalledTimes(1);
 
     // Neither the secret nor the URI is on screen (or in markup) until "Show key".
-    expect(container.innerHTML).not.toContain("JBSWY3DPEHPK3PXP");
+    expect(container.innerHTML).not.toContain(SECRET);
     const toggle = screen.getByText("Can't scan? Show key");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
-    expect(screen.getByText("JBSWY3DPEHPK3PXP")).toBeInTheDocument();
+    expect(screen.getByText(SECRET)).toBeInTheDocument();
     expect(screen.getByText(URI)).toBeInTheDocument();
     fireEvent.click(screen.getByText("Hide key"));
-    expect(container.innerHTML).not.toContain("JBSWY3DPEHPK3PXP");
+    expect(container.innerHTML).not.toContain(SECRET);
 
     // Only the setup call went out; nothing carrying the secret was logged.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe("/api/auth/mfa/setup");
     for (const spy of logs) {
-      expect(JSON.stringify(spy.mock.calls)).not.toContain("JBSWY3DPEHPK3PXP");
+      expect(JSON.stringify(spy.mock.calls)).not.toContain(SECRET);
       spy.mockRestore();
     }
   });
@@ -123,9 +127,7 @@ describe("MfaEnrollment", () => {
     qrFactory.mockImplementation(() => {
       throw new Error("code length overflow");
     });
-    fetchMock.mockResolvedValueOnce(
-      ok({ success: true, secretCode: "ABCDEF", qrCodeUri: URI })
-    );
+    fetchMock.mockResolvedValueOnce(answer(SETUP));
     render(<MfaEnrollment onSignOut={jest.fn()} />);
     fireEvent.click(screen.getByText("Set up two-step verification"));
     await waitFor(() =>
@@ -133,27 +135,28 @@ describe("MfaEnrollment", () => {
     );
     expect(screen.queryByRole("img")).toBeNull();
     fireEvent.click(screen.getByText("Can't scan? Show key"));
-    expect(screen.getByText("ABCDEF")).toBeInTheDocument();
+    expect(screen.getByText(SECRET)).toBeInTheDocument();
   });
 
   it("draws no code when setup returns no URI, and the key is still behind the toggle", async () => {
-    fetchMock.mockResolvedValueOnce(ok({ success: true, secretCode: "ABCDEF" }));
+    fetchMock.mockResolvedValueOnce(
+      answer("POST /api/auth/mfa/setup — the secret, no URI")
+    );
     render(<MfaEnrollment onSignOut={jest.fn()} />);
     fireEvent.click(screen.getByText("Set up two-step verification"));
     await waitFor(() => screen.getByText("Can't scan? Show key"));
     expect(screen.queryByRole("img")).toBeNull();
-    expect(screen.queryByText("ABCDEF")).toBeNull();
+    expect(screen.queryByText(SECRET)).toBeNull();
   });
 
   it("shows the server's message when setup is refused, and a generic one when it cannot be reached", async () => {
-    fetchMock.mockResolvedValueOnce(
-      refused({ message: "Software tokens are not enabled." })
-    );
+    const limited = "POST /api/auth/mfa/setup — refused (rate limited)";
+    fetchMock.mockResolvedValueOnce(answer(limited));
     render(<MfaEnrollment onSignOut={jest.fn()} />);
     fireEvent.click(screen.getByText("Set up two-step verification"));
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "Software tokens are not enabled."
+        (routeAnswer(limited)[1] as { message: string }).message
       )
     );
     expect(screen.queryByRole("img")).toBeNull();
@@ -168,11 +171,9 @@ describe("MfaEnrollment", () => {
 
   // TASK-181: a pool with authenticator MFA off answers feature.not_configured (501).
   it("says authenticator setup is off for the pool when the feature is not configured", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: false,
-      status: 501,
-      json: async () => ({ code: "feature.not_configured", message: "Not available." }),
-    });
+    fetchMock.mockResolvedValueOnce(
+      answer("POST /api/auth/mfa/setup — refused (authenticator MFA off for the pool)")
+    );
     render(<MfaEnrollment onSignOut={jest.fn()} />);
     fireEvent.click(screen.getByText("Set up two-step verification"));
     await waitFor(() =>

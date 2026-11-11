@@ -282,8 +282,14 @@ describe("ExecutionResultsPanel", () => {
 
 import AdminPromptBar from "@/components/admin/AdminPromptBar";
 
-// Mock fetch for prompt bar
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
+
+// Mock fetch for prompt bar: each answer is the route's own (__tests__/fixtures/route-responses).
 global.fetch = jest.fn();
+const routeReply = (name: RouteFixtureName) => {
+  const [status, body] = routeAnswer(name);
+  return { ok: status < 400, status, json: async () => body };
+};
 
 describe("AdminPromptBar", () => {
   beforeEach(() => {
@@ -321,17 +327,13 @@ describe("AdminPromptBar", () => {
   });
 
   it.each([
-    [429, "rate.limited", { retryAfterSeconds: 30 }],
-    [401, "auth.required", {}],
-    [403, "account.restricted", { feature: "admin" }],
-  ])(
-    "a %s %s refusal is shown by the shared notice, not as a plan",
-    async (status, code, params) => {
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: false,
-        status,
-        json: async () => ({ code, params }),
-      });
+    ["rate limited", "POST /api/admin/ai — refused (rate limited)"],
+    ["signed out", "POST /api/admin/ai — refused (signed out)"],
+    ["restricted", "POST /api/admin/ai — refused (a suspended staff account)"],
+  ] as [string, RouteFixtureName][])(
+    "a refusal (%s) is shown by the shared notice, not as a plan",
+    async (_label, name) => {
+      (global.fetch as jest.Mock).mockResolvedValue(routeReply(name));
       const onPlan = jest.fn();
       const { container } = render(
         <AdminPromptBar panel="roles" onPlanReceived={onPlan} />
@@ -346,11 +348,9 @@ describe("AdminPromptBar", () => {
   );
 
   it("shows a declined request's catalog message, through the shared refusal handler (TASK-186)", async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: false,
-      status: 422,
-      json: async () => ({ code: "ai.request_declined", params: {} }),
-    });
+    (global.fetch as jest.Mock).mockResolvedValue(
+      routeReply("POST /api/admin/ai — the model declined")
+    );
     const onPlan = jest.fn();
     render(<AdminPromptBar panel="roles" onPlanReceived={onPlan} />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "do it" } });
@@ -425,6 +425,24 @@ describe("RolesDataView", () => {
     fireEvent.click(screen.getByText("Admin"));
     expect(screen.getByText("can_play")).toBeDefined();
     expect(screen.getByText("Can Play")).toBeDefined();
+  });
+
+  // TASK-207, N-107: a duplicated role's note was English the SQL wrote into its description; it
+  // is the catalog's key and values (description_note), rendered here, before what was written.
+  it("a duplicated role's note is the catalog's, then the description an administrator wrote", () => {
+    const data = routeAnswer("GET /api/admin/roles — the roles")[1] as {
+      roles: { displayName: string; description: string | null }[];
+    };
+    render(<RolesDataView data={data} />);
+    fireEvent.click(screen.getByText("Roles admin (copy)"));
+    const note = renderMessage("screens.admin_console.roles.duplicated_from", {
+      source: "roles_admin",
+    });
+    expect(note).toBe("Duplicated from roles_admin.");
+    expect(screen.getByText(`${note} Manages roles.`)).toBeDefined();
+    // The original role has neither: nothing is shown for it.
+    fireEvent.click(screen.getByText("Roles admin"));
+    expect(screen.queryByText(/Duplicated from/)).toBeNull();
   });
 });
 

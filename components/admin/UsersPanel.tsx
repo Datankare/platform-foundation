@@ -563,10 +563,9 @@ export function UsersPanel({
           hasPermission={hasPermission}
           isSelf={selected.id === selfId}
           showId={showIds}
-          onClose={(changed) => {
+          onClose={() => {
             returnTo.current = selected.id;
             setSelectedId(null);
-            if (changed) reload();
           }}
           onChanged={reload}
         />
@@ -657,7 +656,6 @@ type Outcome =
   | { readonly kind: "done"; readonly text: string }
   | { readonly kind: "info"; readonly text: string }
   | { readonly kind: "held"; readonly text: string }
-  | { readonly kind: "incomplete"; readonly text: string }
   | { readonly kind: "refused"; readonly refusal: Refusal };
 
 function UserDetail({
@@ -676,12 +674,9 @@ function UserDetail({
   readonly isSelf: boolean;
   /** "Show details" is on: the account id is shown (TASK-190 — ids are hidden by default). */
   readonly showId: boolean;
-  /** `changed`: an erasure ran — the list is read again once the panel is closed. */
-  readonly onClose: (changed: boolean) => void;
+  readonly onClose: () => void;
   readonly onChanged: () => void;
 }) {
-  // An erased account leaves the list: re-reading at once would close this panel and its answer.
-  const [erasedHere, setErasedHere] = useState(false);
   const [roleId, setRoleId] = useState(user.roleId);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -690,6 +685,7 @@ function UserDetail({
   const heading = useRef<HTMLHeadingElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const eraseButton = useRef<HTMLButtonElement>(null);
+  const heldNote = useRef<HTMLParagraphElement>(null);
 
   // The role shown follows the account's: a re-read after a change (or by another admin) moves it.
   const [shownRoleOf, setShownRoleOf] = useState(user.roleId);
@@ -699,12 +695,14 @@ function UserDetail({
   }
   // Opened: focus moves to the panel's heading.
   useEffect(() => heading.current?.focus(), []);
-  // The erase confirmation takes focus; cancelled or answered, focus returns to its button.
+  // The erase confirmation takes focus; cancelled or refused, focus returns to its button — held,
+  // the button is gone (the erasure is pending), so focus goes to what says so (TASK-207: it was
+  // dropped to the page).
   useEffect(() => {
     if (confirmErase) dialog.current?.focus();
     else if (focusEraseNext.current) {
       focusEraseNext.current = false;
-      eraseButton.current?.focus();
+      (eraseButton.current ?? heldNote.current)?.focus();
     }
   }, [confirmErase]);
 
@@ -763,21 +761,13 @@ function UserDetail({
         body: JSON.stringify({ userId: user.id, reason: "admin-action" }),
       });
       const body = await bodyOf(res);
-      // An erasure is always held for a second admin (TASK-194, audit C-6): nothing is erased yet.
+      // An erasure asked here is always held for a second admin (TASK-194, audit C-6;
+      // ALWAYS_HELD_ACTIONS): nothing is erased yet. Any other answer is a refusal by its code,
+      // or one that says neither (TASK-207: a 200 "completed" was shown as erased, an answer this
+      // route never gives this request).
       if (res.status === 202 && body.held === true) {
         setOutcome({ kind: "held", text: t("erase_held") });
         setErasePending(true);
-      } else if (res.ok) {
-        const status = typeof body.status === "string" ? body.status : "";
-        setOutcome(
-          status === "completed"
-            ? { kind: "done", text: t("erased") }
-            : {
-                kind: "incomplete",
-                text: t("erase_incomplete", { status: status || t("dash") }),
-              }
-        );
-        setErasedHere(true);
       } else {
         setOutcome({ kind: "refused", refusal: refusalOf(res, body) });
       }
@@ -832,7 +822,7 @@ function UserDetail({
         >
           {t("detail_title")}: {shownName(user)}
         </h3>
-        <button type="button" className={QUIET} onClick={() => onClose(erasedHere)}>
+        <button type="button" className={QUIET} onClick={onClose}>
           {t("close")}
         </button>
       </div>
@@ -954,15 +944,12 @@ function UserDetail({
         )}
         {outcome?.kind === "held" && (
           <p
+            ref={heldNote}
             role="status"
             data-held="true"
-            className="rounded-lg border border-amber-700 bg-amber-900/20 px-3 py-2 text-sm text-amber-200"
+            tabIndex={-1}
+            className="rounded-lg border border-amber-700 bg-amber-900/20 px-3 py-2 text-sm text-amber-200 focus:outline-none"
           >
-            {outcome.text}
-          </p>
-        )}
-        {outcome?.kind === "incomplete" && (
-          <p role="alert" className="text-sm text-red-300">
             {outcome.text}
           </p>
         )}

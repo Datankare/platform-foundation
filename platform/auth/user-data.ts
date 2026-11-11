@@ -896,6 +896,8 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "role_permissions.permission_id": "the role catalog",
   "role_permissions.role_id": "the role catalog",
   "roles.description": "the role catalog",
+  "roles.description_note":
+    "the role catalog: a screen message's key and a role's name (TASK-207)",
   "roles.display_name": "the role catalog",
   "roles.name": "the role catalog",
   "platform_config.allowed_values": "a setting's definition",

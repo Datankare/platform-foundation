@@ -438,16 +438,22 @@ export async function handleDuplicateRole(
           }
           const now = check(source);
           if (now) return now;
+          // The note is a catalog key and its values, rendered by the Roles screen; the
+          // description keeps only what an administrator wrote (TASK-207, N-107; migration 065).
           const { rows } = await tx.query<{ id: string }>(
-            `insert into roles (name, display_name, description, is_default, sort_order)
-             select $1, $2, 'Duplicated from ' || $3 || '. ' || coalesce(s.description, ''),
-                    false, $5::int
+            `insert into roles
+               (name, display_name, description, description_note, is_default, sort_order)
+             select $1, $2, coalesce(s.description, ''), $3::jsonb, false, $5::int
                from roles s where s.id = $4::uuid
              returning id`,
             [
               new_name ?? null,
               new_display_name ?? null,
-              String(source_role),
+              JSON.stringify(
+                shown("screens.admin_console.roles.duplicated_from", {
+                  source: String(source_role),
+                })
+              ),
               source.id,
               NEW_ROLE_SORT_ORDER,
             ]

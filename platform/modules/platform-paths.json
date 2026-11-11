@@ -1058,6 +1058,7 @@
     "supabase/migrations/062_expire_approvals_required.sql",
     "supabase/migrations/063_applied_migrations_checksum.sql",
     "supabase/migrations/064_retention_and_migration_order.sql",
+    "supabase/migrations/065_role_description_note.sql",
     "supabase/optional/rag_rls_backstop.sql",
     "supabase/optional/redact_orphan_addresses.sql",
     "supabase/platform-migrations.json",

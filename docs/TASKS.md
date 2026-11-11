@@ -7,6 +7,132 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-207 — Residuals 55g: every screen test answered by its route, a duplicated role's note in the catalog, a job's old failure shown honestly
+
+| Field        | Detail                                                                                          |
+| ------------ | ----------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-207                                                                                        |
+| **Type**     | Defect (screen tests asserting answers no route sends; server English on screens) and test debt |
+| **Severity** | Important (N-17: two real screen defects found by it); N-107, N-108 Low                         |
+| **Phase**    | Phase 5                                                                                         |
+| **Target**   | v6.0.0 (RC)                                                                                     |
+| **Status**   | Fixed on develop (sub-batch 55g, the last of the residuals batch); closes TASK-204's N-17       |
+| **Logged**   | 2026-11-09 (register N-17 / R-81, R-83, carried by 55d and 55f; N-107, N-108 found by 55f)      |
+
+Sub-batch 55g of the residuals register, in both repositories (Playform: its TASK-5008).
+
+**N-17 — every screen test's fetch answer is its route's.** `fake-fetch-baseline.json` excepted
+196 hand-written bodies in 19 files here (Playform 253 in 24). Each is replaced by a fixture the
+real route handler produced (`__tests__/route-fixtures.test.ts`, extended: the admin console's
+session, Users and erasure, the kill switch, appeals, session renewal, MFA, Jobs, dual control,
+decisions, the review queue, the one list, tenancy and tenant settings; Playform's own routes in
+its `route-fixtures.app.test.ts`). The baseline is `{ count: 0, files: {} }` in both repositories
+and the guard (`fake-fetch-bodies.test.ts`) asserts it stays so: any hand-written body fails.
+
+- **The scanner sees more.** It counted a body only where written in the mock's call; a literal
+  bound to a name first (`const body = {…}`, assigned later) or returned by a function in the
+  same file was not counted. It follows both now (`fake-fetch-scan.ts`: `boundLiterals`,
+  `reachedLiterals`, with a `[self-test]` that fails on the old scanner). On the base the new
+  scanner counts 199 in 19 files here and 257 in 24 in Playform; now 0 and 0.
+- **Real defects found** (each fixed, with a test that fails without the fix):
+  - **The dual-control panel listed nothing.** It read `get_config`'s answer as `data.value`; the
+    route answers `data.entry.value`, so against the real route the panel always said "No keys are
+    dual-controlled." (`DualControlKeysPanel`; six of nine tests fail without the fix). The list is
+    itself always dual-controlled, so the panel's "applied", two-person and lost-write branches
+    were unreachable: removed, with `screens.dual_control.applied`.
+  - **The Users panel claimed an erasure it cannot do, and dropped focus.** An erasure from the
+    screen is always held (`ALWAYS_HELD_ACTIONS`); the tests answered 200 "completed" and
+    "partial", and the panel's "erased" and "incomplete" branch was unreachable: removed (with
+    `users.erased`, `users.erase_incomplete`). When the held note replaced the Erase button, focus
+    fell to the page; it moves to the note now.
+- **Tests that asserted answers no route sends** (each now the route's): a rate limit as
+  `rate_limit.exceeded` (it is `rate.limited`), `run_failed` as 502 (503), a self-approval as 403
+  with English and no code (409 `approvals.self_approval`), a review-queue claim conflict as
+  "Already claimed" (`moderation.item_state_conflict`), `/api/admin/session` answering
+  `account.not_found` (its guard cannot), an admin session opening no section (it always opens
+  one), kill-switch answers without `withdrawn` and `republished`, MFA setup refused as 400 (501
+  `feature.not_configured`), a renewed session for another user (refused `auth.token_invalid`),
+  tenancy messages and statuses the operator routes never send, invented ids and readiness checks.
+- **How fixtures are made:** the clock is frozen at `FIXTURE_NOW` while they are produced;
+  generated ids are numbered per answer; request ids, alone or quoted in a message, are fixed.
+  Only the stores beneath a route are stubbed; the guard, the permission lookup and the handler
+  are real.
+
+**N-107 — a duplicated role's note, and no answer shown as JSON.** Duplicating a role wrote
+`'Duplicated from ' || $3 || '. ' || …` into its description: English the database stored and the
+Roles screen showed in every locale. The note is now `roles.description_note`, a screen message's
+key and values (migration 065, with a check that it is one); the description keeps what an
+administrator wrote; `GET /api/admin/roles` answers `descriptionNote` and the Roles screen renders
+it (`roleDescription`). Rows written before are migrated by 065 (documented in
+MIGRATION_v5_to_v6; replayed twice in `migration-replay.sh`, a description written by hand left
+alone). The guard: rule C of `screen-text-indirect` now reads SQL's string literals too (`sqlPhrases`,
+`sqlWordSites`: app/api at 0; platform/ and lib/ hold ten known sites, listed with why, which
+fail when one is added or goes), and a new rule D fails on a screen that shows an answer as
+`JSON.stringify(…)` (Playform's agent console did, below).
+
+**N-108 — a job failure recorded before codes.** A job's last error recorded before TASK-206 is
+English the runner wrote. The Jobs screen no longer shows it as if it were the catalog's: such a
+record shows `screens.jobs.errors.uncoded` ("A failure recorded before failures were coded."),
+with the stored text behind a disclosure (`JobError`, `codedJobError`); a coded one shows its
+catalog sentence. No migration: the stored text is the record and is kept. Walked at 390 px.
+
+**Found by the walk at 390 px** (each on the base too; fixed, each with a test that fails without
+it): the Jobs screen's three tables made the page 676 px wide — each now scrolls within its card;
+and on the dual-control list (which now lists its keys) a long key pushed its Remove button past
+the edge — the key wraps and the button keeps its size.
+
+**Design check**
+
+- **Reach:** the Roles screen and `GET /api/admin/roles`; the command bar's `duplicate_role`; the
+  Jobs screen; the dual-control and Users panels; screen tests and their fixtures (no route's
+  answer changes but `descriptionNote`, added).
+- **Races:** none new. A duplicate writes its note in the statement that creates the role.
+- **Dependencies down:** the database down: as before (500 `internal.error`). A note whose key the
+  catalog lacks: the check refuses anything but a `screens.` key, and rule C checks every key a
+  `shown(…)` names.
+- **Erasure leftovers:** none new: the note holds a role's name, no person's data.
+- **Screens × responses:** the Roles screen renders `descriptionNote`; the Jobs screen an uncoded
+  failure; the dual-control panel reads `entry.value`. Every changed answer's fixture regenerated
+  by its handler (the drift test failed on the roles answer until it was).
+- **Journeys touched:** the admin console (walked at 1280 and 390 px, base and change), the Jobs
+  screen at 390 px (navigation paced under the rate limiter); the PF e2e suite, spec by spec.
+- **Weakens a tenant's protection?** No. The catalog is the platform's (ADR-053 D5); a duplicate is
+  still operator-only.
+
+**Threat model**
+
+- **Boundary:** text from the database and the routes to an administrator's screen.
+- **Actors that exist today:** the deployment's administrators and operators. None can do more
+  with this change: a role's note is written by server code only (`shown(…)`), and the column's
+  check refuses any other shape; a description an administrator writes is shown as written, as
+  before. No actor today could exploit the defects fixed (the dual-control panel showed too
+  little, never too much).
+- **Bypasses:** a screen showing an answer as JSON (rule D), English written in a statement in
+  app/api (rule C, SQL); a test asserting a body no route sends (the fake-fetch guard at 0, and
+  fixture drift).
+- **Forgeries:** none new: a note's key and values come from server code (the duplicate's source
+  is the role read under the lock); a client cannot set `description_note` — no route writes it
+  from input, and the column's check refuses any but a screen message's shape.
+- **Legitimate flows:** duplicating, listing and viewing roles; listing jobs, an old failure still
+  readable on request.
+- **Agreed before code:** the owner's brief for sub-batch 55g (2026-11-09).
+
+**Self-review**
+
+- **Consumers checked:** `roles` readers (the roles route, the command bar's search, which keeps
+  `description`, and the catalog loaders that select by name); `RolesDataView`; every caller of
+  `jobErrorText` (the console's three render sites); `DualControlKeysPanel`'s callers; the
+  `fake-fetch-scan` readers (the guard, `process-check`'s baseline rule); fixture loaders in both
+  repositories.
+- **Hostile re-read:** a note with an English key (refused by the check, tested), a role whose
+  description begins "Duplicated from" by hand (left alone, replayed), a JSON dump nested in a
+  screen's text (rule D's self-test), a body bound to a name or returned by a helper (scanner
+  self-test), a stored job error carrying markup (React escapes it; it is shown only on request).
+- **Found and left (out of scope, reported):** SQL in platform/ that stores English notes (proposal
+  decisions, an abandoned trajectory's reason, an erased note's placeholder, a carried-over ban's
+  reason, the audit export's "the platform"): ten sites, listed in rule C's known list; the tenancy
+  erasure label "Erase the account an account that is no longer found".
+
 ### TASK-206 — Residuals 55f: API answers in the catalog, one tenant directory, a job run's whole record, one full stop
 
 | Field        | Detail                                                                                           |
@@ -134,7 +260,7 @@ of the base and of this change, at 1280 px and 390 px.
 | **Severity** | Important (N-4, N-15, N-38, N-39, N-43, N-86, N-88, N-94); the rest Low and Nit                                                      |
 | **Phase**    | Phase 5                                                                                                                              |
 | **Target**   | v6.0.0 (RC)                                                                                                                          |
-| **Status**   | Open — N-17 remains (below); every other item fixed on develop (sub-batch 55d); owner steps below                                    |
+| **Status**   | Fixed on develop (sub-batch 55d; N-17 by TASK-207, sub-batch 55g); owner steps below                                                 |
 | **Logged**   | 2026-11-08 (the rebuilt residuals register: N-2 to N-21, N-38, N-39, N-41, N-43 to N-51, N-86, N-88, N-92, N-94, N-96, the sync bug) |
 
 Sub-batch 55d of the residuals register, in both repositories (Playform: its TASK-5005). Each item
@@ -268,8 +394,9 @@ names the register row; every fix has a test that fails without it.
   (anthropics/claude-code-security-review, MIT). The action and its exception in
   `check-model-ids` are gone (a stale exception is now a finding). Before 2026-12-31.
 
-**Not done: N-17.** The hand-written fetch bodies (platform-foundation 196 in 19 files, Playform
-253 in 24) are unchanged: each needs a route fixture made by its handler, a batch of its own.
+**N-17, done by TASK-207.** The hand-written fetch bodies (platform-foundation 196 in 19 files,
+Playform 253 in 24) were left by this batch; sub-batch 55g replaced every one with its route's
+fixture (TASK-207).
 
 **Owner steps** (each with its check): after the v6.0.0 promotion, re-enable the sync
 (PLAYFORM_MIGRATION_v0.8_to_v0.9 §7); in Playform, set the repository variable `JOURNEY_REQUIRED`

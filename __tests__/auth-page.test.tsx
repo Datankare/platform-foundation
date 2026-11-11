@@ -7,6 +7,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AuthPage from "@/components/auth/AuthPage";
 import { registerAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 
 // Mock the auth context
 const mockSetSession = jest.fn();
@@ -27,18 +28,21 @@ beforeAll(() => {
   registerAuthProvider(createMockAuthProvider());
 });
 
+/** A route's own answer (__tests__/fixtures/route-responses.json), as fetch resolves it. */
+function answer(name: RouteFixtureName) {
+  const [status, body] = routeAnswer(name);
+  return { ok: status < 400, status, json: async () => body };
+}
 /** GET /api/features — what the sign-in screen asks for its SSO providers (TASK-101). */
-let features: Record<string, { available: boolean }> = {};
-let guestResponse: { ok: boolean; body: unknown } = { ok: true, body: {} };
+let features: RouteFixtureName = "GET /api/features — no sign-in provider configured";
+let guest: RouteFixtureName = "POST /api/auth/guest — started";
 const fetchMock = jest.fn(async (url: string) =>
-  url === "/api/auth/guest"
-    ? { ok: guestResponse.ok, json: async () => guestResponse.body }
-    : { ok: true, json: async () => ({ features }) }
+  url === "/api/auth/guest" ? answer(guest) : answer(features)
 );
 
 beforeEach(() => {
   jest.clearAllMocks();
-  features = {};
+  features = "GET /api/features — no sign-in provider configured";
   global.fetch = fetchMock as unknown as typeof fetch;
   window.history.replaceState(null, "", "/auth");
 });
@@ -149,10 +153,7 @@ describe("AuthPage", () => {
   });
 
   it("starts a guest session with a server-minted token (ADR-050 D4)", async () => {
-    guestResponse = {
-      ok: true,
-      body: { success: true, guestId: "guest_abc", token: "guest.p.m", expiresAt: 1 },
-    };
+    guest = "POST /api/auth/guest — started";
     render(<AuthPage />);
     fireEvent.click(screen.getByText("Continue as Guest"));
     await waitFor(() =>
@@ -171,22 +172,16 @@ describe("AuthPage", () => {
   });
 
   it("shows the server's message when a guest session cannot start", async () => {
-    guestResponse = {
-      ok: false,
-      body: { code: "internal.error", message: "Something went wrong (ref req_1)." },
-    };
+    guest = "POST /api/auth/guest — the mint failing";
     render(<AuthPage />);
     fireEvent.click(screen.getByText("Continue as Guest"));
-    expect(await screen.findByText("Something went wrong (ref req_1).")).toBeDefined();
+    const { message } = routeAnswer(guest)[1] as { message: string };
+    expect(await screen.findByText(message)).toBeDefined();
     expect(mockSetSession).not.toHaveBeenCalled();
   });
 
   it("offers only the SSO providers /api/features reports available", async () => {
-    features = {
-      sso_google: { available: true },
-      sso_apple: { available: false },
-      sso_microsoft: { available: false },
-    };
+    features = "GET /api/features — Google sign-in configured";
     render(<AuthPage />);
     expect(await screen.findByText("Continue with Google")).toBeDefined();
     expect(screen.queryByText("Continue with Apple")).toBeNull();

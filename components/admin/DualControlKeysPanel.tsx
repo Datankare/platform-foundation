@@ -7,7 +7,8 @@
  * governed config path (POST /api/admin/config-ai/execute). Editing config.dual_control_keys
  * is itself dual-controlled: update_config raises it to `restricted`, so the change HOLDS and
  * its proposal lands in the Approvals queue for an independent approver — this panel surfaces
- * that. No key is edited directly; the hold is enforced server-side.
+ * that. No key is edited directly; the hold is enforced server-side (ALWAYS_DUAL_CONTROLLED,
+ * platform/admin/config-handlers.ts): a change made here is held, or refused — never applied.
  */
 
 import React, { useEffect, useState } from "react";
@@ -23,7 +24,8 @@ export interface ConfigAiResult {
   success?: boolean;
   held?: boolean;
   data?: {
-    value?: unknown;
+    /** get_config: the setting's entry, its value the list (TASK-207: read as `data.value`). */
+    entry?: { value?: unknown } | null;
     applied?: boolean;
     pendingApproval?: boolean;
     proposalId?: string;
@@ -93,7 +95,7 @@ export function DualControlKeysPanel() {
   const [error, setError] = useState<string | null>(null);
 
   function showKeys(res: ConfigAiResult) {
-    const value = res.data?.value;
+    const value = res.data?.entry?.value;
     setKeys(Array.isArray(value) ? (value as string[]) : []);
     if (res.error) setError(res.error);
     setLoading(false);
@@ -120,8 +122,9 @@ export function DualControlKeysPanel() {
       changeComment: change,
       confirmed: true,
     });
-    // Waiting on another admin — a runtime hold, or two-person approval (round 12, I-1: it read
-    // as "Change applied." with the list updated, though nothing had changed).
+    // The list is always dual-controlled: the change waits on another admin (a runtime hold), or
+    // it is refused. Anything else is not applied either (TASK-207: an "applied" answer, a
+    // two-person filing and a lost commit were tested here; the route gives this key none).
     if (isPending(res)) {
       const id = res.data?.proposalId ?? res.data?.approval?.id;
       setNotice(
@@ -130,18 +133,8 @@ export function DualControlKeysPanel() {
           kind: res.data?.proposalId ? "proposal" : "approval",
         })
       );
-    } else if (res.success === false || res.error) {
-      setError(res.error ?? t("not_applied"));
-      // The commit was lost: it may have applied (round 15, nit 4) — read the list again, so
-      // what is shown is what it is.
-      if (res.code === "admin.write_indeterminate") {
-        const now = await readKeys();
-        const value = now.data?.value;
-        if (Array.isArray(value)) setKeys(value as string[]);
-      }
     } else {
-      setNotice(t("applied"));
-      setKeys(next);
+      setError(res.error ?? t("not_applied"));
     }
     setBusy(false);
   }
@@ -184,15 +177,15 @@ export function DualControlKeysPanel() {
           {keys.map((k) => (
             <li
               key={k}
-              className="flex items-center justify-between border-b border-gray-800/50 py-2"
+              className="flex items-center justify-between gap-2 border-b border-gray-800/50 py-2"
             >
-              <code className="text-xs text-gray-200">{k}</code>
+              <code className="min-w-0 break-all text-xs text-gray-200">{k}</code>
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => remove(k)}
                 aria-label={t("remove_label", { key: k })}
-                className="px-2 py-1 text-xs rounded bg-gray-800 border border-gray-700 text-gray-300 disabled:opacity-50"
+                className="shrink-0 px-2 py-1 text-xs rounded bg-gray-800 border border-gray-700 text-gray-300 disabled:opacity-50"
               >
                 {t("remove")}
               </button>

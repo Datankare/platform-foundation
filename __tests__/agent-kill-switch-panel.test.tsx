@@ -18,6 +18,7 @@ import {
 } from "@/components/admin/AgentKillSwitchPanel";
 import AdminShell from "@/components/admin/AdminShell";
 import { OperatorTenantsView } from "@/components/admin/TenancyPanels";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 
 // axe-core is installed with @axe-core/playwright (the e2e audits); here it runs in jsdom.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -38,12 +39,18 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
-function reply(status: number, body: unknown) {
+/** The route's own answer (__tests__/fixtures/route-responses.json), as fetch resolves it. */
+function reply(name: RouteFixtureName) {
+  const [status, body] = routeAnswer(name);
   return { ok: status < 400, status, json: async () => body } as unknown as Response;
 }
-function answer(status: number, body: unknown) {
-  fetchMock.mockImplementation(async () => reply(status, body));
+function answer(name: RouteFixtureName) {
+  fetchMock.mockImplementation(async () => reply(name));
 }
+const messageOf = (name: RouteFixtureName) =>
+  (routeAnswer(name)[1] as { message: string }).message;
+const TWO = "POST /api/admin/agents/suspend — two suspended, a held change withdrawn";
+const WITHDRAWN = (routeAnswer(TWO)[1] as { withdrawn: string[] }).withdrawn;
 const sent = (n: number) => {
   const [url, init] = fetchMock.mock.calls[n] as [string, RequestInit | undefined];
   return {
@@ -107,7 +114,7 @@ describe("the admin console's kill switch (config_manage_safety)", () => {
   });
 
   it("sends the trimmed reason to the admin route, and shows the agents suspended and the holds withdrawn", async () => {
-    answer(200, { suspended: ["agent:x", "agent:y"], withdrawn: ["hold-1"] });
+    answer(TWO);
     render(<AdminKillSwitchView />);
     await suspendWith("  incident 42  ");
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -122,13 +129,14 @@ describe("the admin console's kill switch (config_manage_safety)", () => {
       within(status).getByText("2 agents suspended: agent:x and agent:y.")
     ).toBeDefined();
     expect(within(status).getByText("1 pending hold withdrawn:")).toBeDefined();
-    expect(within(status).getByText("hold-1")).toBeDefined();
+    expect(WITHDRAWN).toHaveLength(1);
+    expect(within(status).getByText(WITHDRAWN[0]!)).toBeDefined();
     // Back to the form: a second suspension needs its own confirmation.
     expect(screen.queryByText("Suspend every agent now?")).toBeNull();
   });
 
   it("nothing active: says so, and whether the invalidation was published again", async () => {
-    answer(200, { suspended: [], withdrawn: [], republished: true });
+    answer("POST /api/admin/agents/suspend — none active, told again");
     render(<AdminKillSwitchView />);
     await suspendWith("again");
     expect(
@@ -141,26 +149,25 @@ describe("the admin console's kill switch (config_manage_safety)", () => {
   });
 
   it("nothing active and the invalidation not published: a warning", async () => {
-    answer(200, { suspended: [], republished: false });
+    answer(
+      "POST /api/admin/agents/suspend — none active, the invalidation not published"
+    );
     render(<AdminKillSwitchView />);
     await suspendWith("again");
     expect(await screen.findByText(/did not go through/)).toBeDefined();
   });
 
-  it("nothing active, no republish reported: only that none was active", async () => {
-    answer(200, { suspended: [], withdrawn: [] });
+  it("agents suspended: the republish is not reported (it is only for none active)", async () => {
+    answer("POST /api/admin/agents/suspend — one suspended");
     render(<AdminKillSwitchView />);
     await suspendWith("again");
-    await screen.findByText("No agent was active, so none was suspended.");
+    await screen.findByText("1 agent suspended: agent:x.");
     expect(screen.queryByText(/told again/)).toBeNull();
     expect(screen.queryByText(/did not go through/)).toBeNull();
   });
 
   it("a refusal shows the server's reason; a 503 is unavailable, never a refusal", async () => {
-    answer(409, {
-      code: "admin.kill_switch_failed",
-      message: "The agents could not all be suspended. Nothing was changed; try again.",
-    });
+    answer("POST /api/admin/agents/suspend — refused (the registry unreadable)");
     const { unmount } = render(<AdminKillSwitchView />);
     await suspendWith("x");
     expect((await screen.findByRole("alert")).textContent).toBe(
@@ -168,18 +175,19 @@ describe("the admin console's kill switch (config_manage_safety)", () => {
     );
     unmount();
 
-    answer(503, { code: "service.unavailable" });
+    answer("POST /api/admin/agents/suspend — refused (the audit log down)");
     render(<AdminKillSwitchView />);
     await suspendWith("x");
     expect((await screen.findByRole("alert")).textContent).toMatch(/unavailable/);
   });
 
-  it("a refusal with no message says it was refused; a network failure is unavailable", async () => {
-    answer(403, {});
+  it("a refusal by the guard shows its reason; a network failure is unavailable", async () => {
+    const refused = "POST /api/admin/agents/suspend — refused (no permission)";
+    answer(refused);
     const { unmount } = render(<AdminKillSwitchView />);
     await suspendWith("x");
     expect((await screen.findByRole("alert")).textContent).toBe(
-      "Not suspended: The request was refused."
+      `Not suspended: ${messageOf(refused)}`
     );
     unmount();
 
@@ -225,7 +233,7 @@ describe("the admin console's kill switch (config_manage_safety)", () => {
       true
     );
     await act(async () => {
-      release(reply(200, { suspended: ["agent:x"], withdrawn: [] }));
+      release(reply("POST /api/admin/agents/suspend — one suspended"));
     });
     await screen.findByText("1 agent suspended: agent:x.");
     fireEvent.change(reasonBox(), { target: { value: "y" } });
@@ -233,7 +241,7 @@ describe("the admin console's kill switch (config_manage_safety)", () => {
   });
 
   it("is accessible (axe, WCAG 2.2 AA): the form, the confirmation and the answer", async () => {
-    answer(200, { suspended: ["agent:x"], withdrawn: ["hold-1"] });
+    answer(TWO);
     const { container } = render(<AdminKillSwitchView />);
     await noViolations(container);
     fireEvent.change(reasonBox(), { target: { value: "x" } });
@@ -306,7 +314,7 @@ describe("the operators' per-tenant kill switch (platform_operate)", () => {
   });
 
   it("opens for that tenant, confirms, and sends the reason to its route", async () => {
-    answer(200, { suspended: ["agent:x"], withdrawn: [] });
+    answer("POST /api/operator/tenants/[id]/agents/suspend — one suspended");
     view();
     fireEvent.click(screen.getByRole("button", { name: "Agent kill switch for Beta" }));
     expect(

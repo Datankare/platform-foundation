@@ -51,46 +51,27 @@ import { DETAILS_ROLES, mayShowDetails } from "@/components/admin/ShowDetailsTog
 import { fullTimestamp } from "@/components/admin/admin-format";
 import { renderMessage } from "@/platform/errors/messages";
 import { shown } from "@/platform/errors/shown-text";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 
 const u = (key: string, values?: Record<string, string | number>) =>
   renderMessage(`screens.admin_console.users.${key}`, values);
 const SHOW = renderMessage("screens.admin_console.details.show");
 const HIDE = renderMessage("screens.admin_console.details.hide");
 
-const ROLES = [
-  { id: "r-free", name: "free", displayName: "Free" },
-  { id: "r-mod", name: "moderator", displayName: "Moderator" },
-];
-const MOD_ID = "33333333-3333-4333-8333-333333333333";
-const MOD = {
-  id: MOD_ID,
-  email: "mo@example.com",
-  displayName: "Mo",
-  roleId: "r-mod",
-  roleName: "moderator",
-  roleDisplayName: "Moderator",
-  status: "active",
-  statusUntil: null,
-  emailVerified: true,
-  createdAt: "2026-10-29T09:15:00.000Z",
-  lastSignInAt: "2026-10-29T10:00:00.000Z",
-  entitlements: [],
-};
-const ANN = {
-  ...MOD,
-  id: "11111111-1111-4111-8111-111111111111",
-  email: "ann@example.com",
-  displayName: "Ann",
-  roleId: "r-free",
-  roleName: "free",
-  roleDisplayName: "Free",
-};
+// Every answer is the routes' own (__tests__/fixtures/route-responses.json, made by
+// __tests__/route-fixtures.test.ts).
+type Listed = { users: { id: string; createdAt: string }[]; roles: unknown[] };
+const EVERYONE = "GET /api/admin/users — Ann and Mo, a moderator";
+const everyone = routeAnswer(EVERYONE)[1] as Listed;
+const ROLES = everyone.roles as Parameters<typeof filterChip>[2];
+const MOD = everyone.users.find((x) => x.id.startsWith("3333"))!;
+const MOD_ID = MOD.id;
 
-const json = (status: number, body: unknown) => ({
-  ok: status >= 200 && status < 300,
-  status,
-  json: async () => body,
-});
+/** A route's own answer, as fetch resolves it. */
+const json = (name: RouteFixtureName) => {
+  const [status, body] = routeAnswer(name);
+  return { ok: status >= 200 && status < 300, status, json: async () => body };
+};
 
 const fetchMock = jest.fn();
 /** The Users list's reads, as their query parameters. */
@@ -100,11 +81,14 @@ const listReads = () =>
     .filter((c) => c.url.startsWith("/api/admin/users?") && !c.init?.method)
     .map((c) => new URL(c.url, "http://x").searchParams);
 
-/** A list that answers as the server would: only moderators when role=moderator. */
+/** The list as the route answers it: only moderators when role=moderator. */
 function listAnswer(url: string) {
   const role = new URL(url, "http://x").searchParams.get("role");
-  const users = role?.toLowerCase() === "moderator" ? [MOD] : [ANN, MOD];
-  return json(200, { users, roles: ROLES, page: { hasMore: false } });
+  return json(
+    role?.toLowerCase() === "moderator"
+      ? "GET /api/admin/users — the moderators: Mo"
+      : EVERYONE
+  );
 }
 
 beforeEach(() => {
@@ -112,7 +96,7 @@ beforeEach(() => {
   global.fetch = fetchMock as unknown as typeof fetch;
   fetchMock.mockImplementation(async (url: string) => {
     if (String(url).startsWith("/api/admin/users")) return listAnswer(String(url));
-    return json(404, {});
+    throw new Error(`unexpected request: ${url}`);
   });
 });
 
@@ -195,7 +179,7 @@ describe("the Users list applies the command bar's filters, as chips", () => {
 
   it("a filtered list with no match says so", async () => {
     fetchMock.mockImplementation(async () =>
-      json(200, { users: [], roles: ROLES, page: { hasMore: false } })
+      json("GET /api/admin/users — no banned account")
     );
     render(<Holder initial={{ status: "banned" }} />);
     expect(await screen.findByText(u("empty_filtered"))).toBeDefined();
@@ -231,14 +215,13 @@ describe("the Users list applies the command bar's filters, as chips", () => {
         })
     );
     // A role whose display name the value alone cannot give: the catalog names it.
-    const QA = { id: "r-qa", name: "qa", displayName: "QA Lead" };
     render(<Holder initial={{ role: "qa", status: "active" }} />);
     // While the first page is read: a placeholder, never a guess that would then change.
     expect(screen.getByRole("button", { name: "Remove filter: Role: …" })).toBeDefined();
     expect(screen.queryByText("Role: Qa")).toBeNull();
     expect(screen.getByText("Status: Active")).toBeDefined();
     await act(async () =>
-      answer(json(200, { users: [MOD], roles: [...ROLES, QA], page: { hasMore: false } }))
+      answer(json("GET /api/admin/users — Mo, the roles with QA Lead"))
     );
     await screen.findByText("mo@example.com");
     expect(
@@ -247,7 +230,9 @@ describe("the Users list applies the command bar's filters, as chips", () => {
   });
 
   it("round 2 (9): a first read that failed names the role chip from its value", async () => {
-    fetchMock.mockImplementation(async () => json(500, {}));
+    fetchMock.mockImplementation(async () =>
+      json("GET /api/admin/users — the store failing")
+    );
     render(<Holder initial={{ role: "qa_lead" }} />);
     expect(
       await screen.findByRole("button", { name: "Remove filter: Role: Qa lead" })
@@ -255,13 +240,8 @@ describe("the Users list applies the command bar's filters, as chips", () => {
   });
 
   it("round 2 (N-1): a hand-off of the same filters goes back to page 1, nothing open", async () => {
-    const many = Array.from({ length: 25 }, (_, i) => ({
-      ...ANN,
-      id: `11111111-1111-4111-8111-${String(i).padStart(12, "0")}`,
-      email: `u${i}@example.com`,
-    }));
     fetchMock.mockImplementation(async () =>
-      json(200, { users: many, roles: ROLES, page: { hasMore: true } })
+      json("GET /api/admin/users — a page of 25 free accounts, more to read")
     );
     const { rerender } = render(<Holder initial={{ role: "free" }} handoff={1} />);
     await screen.findByText("u0@example.com");
@@ -306,26 +286,13 @@ describe("a plan the execute route refuses as a whole (round 11, item 1)", () =>
   it("says the refusal, as the shared handler words it — never nothing", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       const p = String(url).split("?")[0];
-      if (p === "/api/admin/session")
-        return json(200, {
-          roleName: "admin",
-          permissions: ["can_access_admin", "admin_manage_users"],
-        });
+      if (p === "/api/admin/session") return json("GET /api/admin/session — an admin");
       if (p === "/api/admin/users") return listAnswer(String(url));
       if (p === "/api/admin/ai")
-        return json(200, {
-          plan: {
-            message: "Searching moderators.",
-            actions: [{ tool: "search", input: { table: "users", role: "moderator" } }],
-          },
-        });
+        return json("POST /api/admin/ai — a plan: search users for moderators");
       if (p === "/api/admin/ai/execute")
-        return json(429, {
-          code: "rate.limited",
-          message: "Too many requests. Try again in 30 seconds.",
-          params: { retryAfterSeconds: 30 },
-        });
-      return json(200, {});
+        return json("POST /api/admin/ai/execute — refused (rate limited)");
+      throw new Error(`unexpected request: ${p}`);
     });
     render(<AdminPage />);
     await screen.findByText("ann@example.com");
@@ -335,7 +302,13 @@ describe("a plan the execute route refuses as a whole (round 11, item 1)", () =>
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     fireEvent.click(await screen.findByRole("button", { name: /Confirm 1 action/ }));
     expect(
-      await screen.findByText("Too many requests. Try again in 30 seconds.")
+      await screen.findByText(
+        (
+          routeAnswer("POST /api/admin/ai/execute — refused (rate limited)")[1] as {
+            message: string;
+          }
+        ).message
+      )
     ).toBeDefined();
   });
 });
@@ -619,43 +592,51 @@ describe("Show details: offered to admins and super-admins only", () => {
       expect(mayShowDetails(r as string)).toBe(false);
   });
 
-  const serveSession = (roleName: string, permissions: string[]) => {
+  const serveSession = (session: RouteFixtureName) => {
     fetchMock.mockImplementation(async (url: string) => {
       const p = String(url).split("?")[0];
-      if (p === "/api/admin/session") return json(200, { roleName, permissions });
+      if (p === "/api/admin/session") return json(session);
       if (p === "/api/admin/users") return listAnswer(String(url));
-      if (p === "/api/admin/approvals") return json(200, { approvals: [] });
-      return json(200, {});
+      if (p === "/api/admin/approvals")
+        return json("GET /api/admin/approvals — none held");
+      throw new Error(`unexpected request: ${p}`);
     });
   };
 
   it.each([
-    ["super_admin", true],
-    ["admin", true],
-    ["moderator", false],
-  ])("%s → toggle shown: %p", async (role, offered) => {
-    serveSession(role, ["can_access_admin", "admin_manage_users"]);
-    render(<AdminPage />);
-    await screen.findByText("ann@example.com");
-    await settle();
-    const toggle = screen.queryByRole("button", { name: SHOW });
-    if (!offered) {
-      expect(toggle).toBeNull();
+    ["super_admin", "GET /api/admin/session — a super admin", true],
+    ["admin", "GET /api/admin/session — an admin", true],
+    [
+      "moderator",
+      "GET /api/admin/session — a moderator whose role was given user management",
+      false,
+    ],
+  ] as [string, RouteFixtureName, boolean][])(
+    "%s → toggle shown: %p",
+    async (_role, session, offered) => {
+      serveSession(session);
+      render(<AdminPage />);
+      await screen.findByText("ann@example.com");
+      await settle();
+      const toggle = screen.queryByRole("button", { name: SHOW });
+      if (!offered) {
+        expect(toggle).toBeNull();
+        expect(screen.queryByText(MOD_ID)).toBeNull();
+        return;
+      }
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
       expect(screen.queryByText(MOD_ID)).toBeNull();
-      return;
+      fireEvent.click(toggle!);
+      expect(screen.getByRole("button", { name: HIDE })).toHaveAttribute(
+        "aria-pressed",
+        "true"
+      );
+      expect(screen.getByText(MOD_ID)).toBeDefined();
     }
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
-    expect(screen.queryByText(MOD_ID)).toBeNull();
-    fireEvent.click(toggle!);
-    expect(screen.getByRole("button", { name: HIDE })).toHaveAttribute(
-      "aria-pressed",
-      "true"
-    );
-    expect(screen.getByText(MOD_ID)).toBeDefined();
-  });
+  );
 
   it("round 1 (5): only where it changes something — not on a section with no id table", async () => {
-    serveSession("admin", ["can_access_admin", "admin_manage_users"]);
+    serveSession("GET /api/admin/session — an admin");
     render(<AdminPage />);
     await screen.findByText("ann@example.com");
     await settle();
@@ -671,46 +652,18 @@ describe("the console, end to end: 'show moderators' on Users filters the one li
     let executed: unknown;
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       const p = String(url).split("?")[0];
-      if (p === "/api/admin/session")
-        return json(200, {
-          roleName: "admin",
-          permissions: ["can_access_admin", "admin_manage_users"],
-        });
+      if (p === "/api/admin/session") return json("GET /api/admin/session — an admin");
       if (p === "/api/admin/users") return listAnswer(String(url));
+      // The planner's raw input (" MODERATOR  "): the page must not use it.
       if (p === "/api/admin/ai")
-        return json(200, {
-          plan: {
-            message: "Searching moderators.",
-            // The planner's raw input: the page must not use it.
-            actions: [
-              { tool: "search", input: { table: "users", role: " MODERATOR  " } },
-            ],
-          },
-        });
+        return json(
+          "POST /api/admin/ai — a plan: search users, role as the model gave it"
+        );
       if (p === "/api/admin/ai/execute") {
         executed = JSON.parse(String(init?.body));
-        return json(200, {
-          results: [
-            {
-              tool: "search",
-              success: true,
-              result: shown("screens.admin_console.search.summary_all", {
-                shown: 1,
-                matched: 1,
-                table: "users",
-              }),
-              table: {
-                table: "users",
-                columns: ["id", "email", "role"],
-                rows: [[MOD_ID, "mo@example.com", "Moderator"]],
-                matched: 1,
-                filters: { role: "moderator" },
-              },
-            },
-          ],
-        });
+        return json("POST /api/admin/ai/execute — search users: the moderators");
       }
-      return json(200, {});
+      throw new Error(`unexpected request: ${p}`);
     });
     render(<AdminPage />);
     await screen.findByText("ann@example.com");
@@ -750,36 +703,13 @@ describe("the console, end to end: 'show moderators' on Users filters the one li
   it("round 1 (1): removing the last chip dismisses the row too", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       const p = String(url).split("?")[0];
-      if (p === "/api/admin/session")
-        return json(200, {
-          roleName: "admin",
-          permissions: ["can_access_admin", "admin_manage_users"],
-        });
+      if (p === "/api/admin/session") return json("GET /api/admin/session — an admin");
       if (p === "/api/admin/users") return listAnswer(String(url));
       if (p === "/api/admin/ai")
-        return json(200, {
-          plan: {
-            message: "Searching moderators.",
-            actions: [{ tool: "search", input: { table: "users", role: "moderator" } }],
-          },
-        });
+        return json("POST /api/admin/ai — a plan: search users for moderators");
       if (p === "/api/admin/ai/execute")
-        return json(200, {
-          results: [
-            {
-              tool: "search",
-              success: true,
-              table: {
-                table: "users",
-                columns: ["id", "email"],
-                rows: [[MOD_ID, "mo@example.com"]],
-                matched: 1,
-                filters: { role: "moderator" },
-              },
-            },
-          ],
-        });
-      return json(200, {});
+        return json("POST /api/admin/ai/execute — search users: the moderators");
+      throw new Error(`unexpected request: ${p}`);
     });
     render(<AdminPage />);
     await screen.findByText("ann@example.com");

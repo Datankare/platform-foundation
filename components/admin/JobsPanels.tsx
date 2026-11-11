@@ -24,15 +24,43 @@ const t = (key: string, values?: MessageValues) =>
 
 /**
  * A job's recorded failure in the catalog's words (TASK-206, N-102): the runner records a code
- * (platform/jobs/errors.ts describeJobError), `kind` or `kind:detail`. One the catalog does not
- * know — a record from before the codes — is shown as recorded.
+ * (platform/jobs/errors.ts describeJobError), `kind` or `kind:detail`. Null for one the catalog
+ * does not know — a record written before the codes, which holds the runner's English.
  */
-export function jobErrorText(recorded: string): string {
+function codedJobError(recorded: string): string | null {
   const m = /^([a-z_]+)(?::(.+))?$/.exec(recorded);
-  if (!m) return recorded;
+  if (!m) return null;
   const key = `screens.jobs.errors.${m[1]}`;
   const text = renderMessage(key, { detail: m[2] ?? "", noted: m[2] ? "yes" : "no" });
-  return text === key ? recorded : text;
+  return text === key ? null : text;
+}
+
+/**
+ * A job's recorded failure as the console says it: the catalog's words, or — for a record from
+ * before the codes — the catalog's note that it predates them (TASK-207, N-108: it was shown as
+ * its stored English).
+ */
+export function jobErrorText(recorded: string): string {
+  return codedJobError(recorded) ?? t("errors.uncoded");
+}
+
+/**
+ * A job's recorded failure on screen: jobErrorText, and for a record from before the codes its
+ * stored text behind a disclosure — the operator's evidence, never the screen's words.
+ */
+export function JobError({ recorded }: { readonly recorded: string }) {
+  if (codedJobError(recorded) !== null) return <>{jobErrorText(recorded)}</>;
+  return (
+    <>
+      {t("errors.uncoded")}{" "}
+      <details className="inline">
+        <summary className="inline cursor-pointer underline">
+          {t("errors.uncoded_show")}
+        </summary>
+        <span className="block font-mono break-all">{recorded}</span>
+      </details>
+    </>
+  );
 }
 
 const card = "bg-[#111827] rounded-xl border border-gray-800 p-5";
@@ -297,15 +325,20 @@ function ScheduleRowView({
         <p className="text-xs text-gray-400">
           {t("next_run", { at: when(s?.nextRunAt) })}
         </p>
-        <p
+        <div
           className={`text-xs ${s?.lastStatus === "dead" ? "text-red-400" : "text-gray-400"}`}
         >
           {outcomeLabel(s?.lastStatus ?? null)}
           {row.scope === "each-tenant" && s?.failing
             ? ` (${t("outcome_tenants", { failing: s.failing, reported: s.reported ?? s.failing })})`
             : ""}
-          {s?.lastError ? ` — ${jobErrorText(s.lastError)}` : ""}
-        </p>
+          {s?.lastError ? (
+            <>
+              {" — "}
+              <JobError recorded={s.lastError} />
+            </>
+          ) : null}
+        </div>
       </td>
       <td className={td}>
         {t("queue_counts", {
@@ -415,28 +448,30 @@ export function OperatorJobsView({ data: initial }: { data: JobsData | undefined
             onDone={() => setPending(null)}
           />
         )}
-        <table className="w-full text-sm mt-3">
-          <thead>
-            <tr>
-              <th className={th}>{t("col_job")}</th>
-              <th className={th}>{t("col_schedule")}</th>
-              <th className={th}>{t("col_last")}</th>
-              <th className={th}>{t("col_queue")}</th>
-              <th className={th}>{t("col_actions")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.schedules.map((row) => (
-              <ScheduleRowView
-                key={row.kind}
-                row={row}
-                busy={busy}
-                ask={setPending}
-                act={act}
-              />
-            ))}
-          </tbody>
-        </table>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm mt-3 min-w-[36rem]">
+            <thead>
+              <tr>
+                <th className={th}>{t("col_job")}</th>
+                <th className={th}>{t("col_schedule")}</th>
+                <th className={th}>{t("col_last")}</th>
+                <th className={th}>{t("col_queue")}</th>
+                <th className={th}>{t("col_actions")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.schedules.map((row) => (
+                <ScheduleRowView
+                  key={row.kind}
+                  row={row}
+                  busy={busy}
+                  ask={setPending}
+                  act={act}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
         {status && <Status {...status} />}
       </section>
 
@@ -477,62 +512,71 @@ export function OperatorJobsView({ data: initial }: { data: JobsData | undefined
         {dead.length === 0 ? (
           <p className="text-sm text-gray-400 mt-3">{t("dead_none")}</p>
         ) : (
-          <table className="w-full text-sm mt-3">
-            <thead>
-              <tr>
-                <th className={th}>{t("col_job")}</th>
-                <th className={th}>{t("col_tenant")}</th>
-                <th className={th}>{t("col_attempts")}</th>
-                <th className={th}>{t("col_error")}</th>
-                <th className={th}>{t("col_actions")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dead.map((job) => (
-                <tr key={job.id}>
-                  <td className={td}>
-                    <span className="font-mono text-blue-300">{job.kind}</span>
-                    <p className="text-xs text-gray-400">{when(job.updatedAt)}</p>
-                  </td>
-                  <td className={`${td} font-mono text-xs`}>
-                    {job.tenantId ?? t("platform")}
-                  </td>
-                  <td className={td}>
-                    {t("attempts", { attempts: job.attempts, max: job.maxAttempts })}
-                  </td>
-                  <td className={`${td} text-red-300`}>
-                    {job.lastError ? jobErrorText(job.lastError) : t("no_error")}
-                  </td>
-                  <td className={td}>
-                    <div className="flex flex-wrap gap-1">
-                      <button
-                        className={quiet}
-                        aria-label={t("replay_label", { kind: job.kind })}
-                        disabled={busy}
-                        onClick={() =>
-                          void act(
-                            t("replay_label", { kind: job.kind }),
-                            `/api/operator/jobs/dead/${encodeURIComponent(job.id)}`,
-                            { method: "POST", body: JSON.stringify({ action: "replay" }) }
-                          )
-                        }
-                      >
-                        {t("replay")}
-                      </button>
-                      <button
-                        className={quiet}
-                        aria-label={t("discard_label", { kind: job.kind })}
-                        disabled={busy}
-                        onClick={() => setConfirmDiscard(job)}
-                      >
-                        {t("discard")}
-                      </button>
-                    </div>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm mt-3 min-w-[36rem]">
+              <thead>
+                <tr>
+                  <th className={th}>{t("col_job")}</th>
+                  <th className={th}>{t("col_tenant")}</th>
+                  <th className={th}>{t("col_attempts")}</th>
+                  <th className={th}>{t("col_error")}</th>
+                  <th className={th}>{t("col_actions")}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {dead.map((job) => (
+                  <tr key={job.id}>
+                    <td className={td}>
+                      <span className="font-mono text-blue-300">{job.kind}</span>
+                      <p className="text-xs text-gray-400">{when(job.updatedAt)}</p>
+                    </td>
+                    <td className={`${td} font-mono text-xs`}>
+                      {job.tenantId ?? t("platform")}
+                    </td>
+                    <td className={td}>
+                      {t("attempts", { attempts: job.attempts, max: job.maxAttempts })}
+                    </td>
+                    <td className={`${td} text-red-300`}>
+                      {job.lastError ? (
+                        <JobError recorded={job.lastError} />
+                      ) : (
+                        t("no_error")
+                      )}
+                    </td>
+                    <td className={td}>
+                      <div className="flex flex-wrap gap-1">
+                        <button
+                          className={quiet}
+                          aria-label={t("replay_label", { kind: job.kind })}
+                          disabled={busy}
+                          onClick={() =>
+                            void act(
+                              t("replay_label", { kind: job.kind }),
+                              `/api/operator/jobs/dead/${encodeURIComponent(job.id)}`,
+                              {
+                                method: "POST",
+                                body: JSON.stringify({ action: "replay" }),
+                              }
+                            )
+                          }
+                        >
+                          {t("replay")}
+                        </button>
+                        <button
+                          className={quiet}
+                          aria-label={t("discard_label", { kind: job.kind })}
+                          disabled={busy}
+                          onClick={() => setConfirmDiscard(job)}
+                        >
+                          {t("discard")}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     </div>
@@ -554,35 +598,37 @@ export function TenantJobsList({ jobs }: { jobs: JobRow[] | null | undefined }) 
       ) : jobs.length === 0 ? (
         <p className="text-sm text-gray-400 mt-3">{t("tenant_none")}</p>
       ) : (
-        <table className="w-full text-sm mt-3">
-          <thead>
-            <tr>
-              <th className={th}>{t("col_job")}</th>
-              <th className={th}>{t("col_status")}</th>
-              <th className={th}>{t("col_attempts")}</th>
-              <th className={th}>{t("col_updated")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.map((job) => (
-              <tr key={job.id}>
-                <td className={td}>
-                  <span className="font-mono text-blue-300">{job.kind}</span>
-                  {job.lastError && (
-                    <p className="text-xs text-red-300 mt-1">
-                      {jobErrorText(job.lastError)}
-                    </p>
-                  )}
-                </td>
-                <td className={td}>{statusLabel(job.status)}</td>
-                <td className={td}>
-                  {t("attempts", { attempts: job.attempts, max: job.maxAttempts })}
-                </td>
-                <td className={td}>{when(job.updatedAt)}</td>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm mt-3 min-w-[36rem]">
+            <thead>
+              <tr>
+                <th className={th}>{t("col_job")}</th>
+                <th className={th}>{t("col_status")}</th>
+                <th className={th}>{t("col_attempts")}</th>
+                <th className={th}>{t("col_updated")}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {jobs.map((job) => (
+                <tr key={job.id}>
+                  <td className={td}>
+                    <span className="font-mono text-blue-300">{job.kind}</span>
+                    {job.lastError && (
+                      <div className="text-xs text-red-300 mt-1">
+                        <JobError recorded={job.lastError} />
+                      </div>
+                    )}
+                  </td>
+                  <td className={td}>{statusLabel(job.status)}</td>
+                  <td className={td}>
+                    {t("attempts", { attempts: job.attempts, max: job.maxAttempts })}
+                  </td>
+                  <td className={td}>{when(job.updatedAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );

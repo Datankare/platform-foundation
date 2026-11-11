@@ -13,6 +13,7 @@
  * WCAG 2.2 AA rules. (The routes' 503 for a malformed value: __tests__/admin-thin-routes.test.ts.)
  */
 import React from "react";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
@@ -140,30 +141,23 @@ describe("the admin console keeps a 503 as 'unavailable'", () => {
   });
 
   it("the first panel is read at once; its 503 is shown as unavailable, and a retry reads it again", async () => {
-    let usersStatus = 503;
+    // Each answer is the route's own (__tests__/fixtures/route-responses.json).
+    const answer = (name: RouteFixtureName) => {
+      const [status, body] = routeAnswer(name);
+      return { ok: status < 400, status, json: async () => body };
+    };
+    let users: RouteFixtureName =
+      "GET /api/admin/users — refused (the permissions store down)";
     fetchMock.mockImplementation(async (url: string) => {
       const u = String(url);
-      if (u.includes("/api/admin/session")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ roleName: "super_admin", permissions: ["*"] }),
-        };
-      }
-      if (u.includes("/api/admin/users")) {
-        return usersStatus === 503
-          ? {
-              ok: false,
-              status: 503,
-              json: async () => ({ code: "service.unavailable" }),
-            }
-          : { ok: true, status: 200, json: async () => ({ users: [] }) };
-      }
-      return { ok: false, status: 404, json: async () => ({}) };
+      if (u.includes("/api/admin/session"))
+        return answer("GET /api/admin/session — the development bypass");
+      if (u.includes("/api/admin/users")) return answer(users);
+      throw new Error(`unexpected request: ${u}`);
     });
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(UNAVAILABLE));
-    usersStatus = 200;
+    users = "GET /api/admin/users — no accounts";
     fireEvent.click(screen.getByRole("button", { name: /^Try reading .* again$/ }));
     await waitFor(() => expect(screen.queryByText(UNAVAILABLE)).toBeNull());
     expect(

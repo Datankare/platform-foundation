@@ -6,34 +6,19 @@ import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
 import { renderMessage } from "@/platform/errors/messages";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
-import { shown } from "@/platform/errors/shown-text";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 
-const holds: PendingApproval[] = [
-  {
-    source: "runtime",
-    id: "p1",
-    label: "config.set moderation.strike_ban_threshold",
-    requester: "admin-1234567890",
-    requiredPermission: "config_manage_safety",
-    reason: shown("screens.held.reason_held", {
-      risk: "restricted",
-      effects: [],
-      effected: "no",
-    }),
-    createdAt: "2026-01-02T00:00:00.000Z",
-  },
-  {
-    source: "config-approval",
-    id: "a1",
-    label: "moderation.blocklist_only_surfaces",
-    requester: "admin-2",
-    requiredPermission: "config_manage_standard",
-    reason: shown("screens.held.reason_two_person", {
-      key: "moderation.blocklist_only_surfaces",
-    }),
-    createdAt: "2026-01-01T00:00:00.000Z",
-  },
-];
+// Every list and every answer is the routes' own (__tests__/fixtures/route-responses.json, made by
+// __tests__/route-fixtures.test.ts): a held change to the dual-control list (a runtime hold) and a
+// two-person approval of a safety setting.
+const list = (name: RouteFixtureName) =>
+  (routeAnswer(name)[1] as { approvals: PendingApproval[] }).approvals;
+const holds = list(
+  "GET /api/admin/approvals — held changes, to a second admin who may decide them"
+);
+const DECISION = "POST /api/admin/approvals/[id] —";
+const messageOf = (name: RouteFixtureName) =>
+  (routeAnswer(name)[1] as { message: string }).message;
 
 const fetchMock = jest.fn();
 beforeAll(() => {
@@ -43,15 +28,17 @@ beforeEach(() => {
   fetchMock.mockReset();
 });
 
-function resolveFetch(status: number, body: unknown) {
-  fetchMock.mockResolvedValue({
-    ok: status < 400,
-    status,
-    json: async () => body,
-  } as unknown as Response);
+/** A route's own answer, as fetch resolves it. */
+function reply(name: RouteFixtureName): Response {
+  const [status, body] = routeAnswer(name);
+  return { ok: status < 400, status, json: async () => body } as unknown as Response;
+}
+function resolveFetch(name: string) {
+  fetchMock.mockResolvedValue(reply(name as RouteFixtureName));
 }
 
-const approveBtn = "Approve: config.set moderation.strike_ban_threshold";
+const LABEL = "Setting config.dual_control_keys";
+const approveBtn = `Approve: ${LABEL}`;
 
 /** Approve (or reject) a row: its button, then the confirm step's (TASK-202, N-61). */
 function decideRow(name: string, confirm = "Approve and apply") {
@@ -62,7 +49,7 @@ function decideRow(name: string, confirm = "Approve and apply") {
 describe("HeldActionsPanel — ADR-040 040a/040c", () => {
   it("renders a card per hold with approve/reject controls", () => {
     render(<HeldActionsPanel data={{ approvals: holds }} />);
-    expect(screen.getByText(/strike_ban_threshold/)).toBeDefined();
+    expect(screen.getAllByText(/strike_ban_threshold/).length).toBeGreaterThan(0);
     // Why it waits, in words (TASK-202, N-61): no state → a dual-controlled change.
     expect(screen.getAllByText(/Under dual control/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: approveBtn })).toBeDefined();
@@ -70,12 +57,12 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
   });
 
   it("approves a hold through the decision route and removes the row", async () => {
-    resolveFetch(200, { decision: "approve", outcome: "approved" });
+    resolveFetch(`${DECISION} approved, it took effect`);
     render(<HeldActionsPanel data={{ approvals: holds }} />);
     decideRow(approveBtn);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/approvals/p1",
+      `/api/admin/approvals/${holds[0]!.id}`,
       expect.objectContaining({ method: "POST" })
     );
     await waitFor(() =>
@@ -84,13 +71,13 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
   });
 
   it("an approval says it took effect, announced, then shows the empty list (TASK-186)", async () => {
-    resolveFetch(200, { decision: "approve", outcome: "approved", applied: true });
-    render(<HeldActionsPanel data={{ approvals: [holds[0]] }} />);
+    resolveFetch(`${DECISION} approved, it took effect`);
+    render(<HeldActionsPanel data={{ approvals: [holds[0]!] }} />);
     decideRow(approveBtn);
     const status = await screen.findByRole("status");
     await waitFor(() =>
       expect(status.textContent).toContain(
-        "Approved: config.set moderation.strike_ban_threshold. It took effect."
+        `Approved: ${LABEL}. Applied: the setting is now ["signups_enabled","config.dual_control_keys","default_language"].`
       )
     );
     expect(status.getAttribute("aria-live")).toBe("polite");
@@ -103,30 +90,25 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
   it("the result stays until dismissed (TASK-202, N-62: it went by itself after seconds)", async () => {
     jest.useFakeTimers();
     try {
-      resolveFetch(200, { decision: "reject" });
-      render(<HeldActionsPanel data={{ approvals: [holds[0]] }} />);
-      decideRow("Reject: config.set moderation.strike_ban_threshold", "Reject it");
+      resolveFetch(`${DECISION} rejected`);
+      render(<HeldActionsPanel data={{ approvals: [holds[0]!] }} />);
+      decideRow(`Reject: ${LABEL}`, "Reject it");
       await waitFor(() =>
         expect(screen.getByRole("status").textContent).toContain(
-          "Rejected: config.set moderation.strike_ban_threshold. Nothing was changed."
+          `Rejected: ${LABEL}. Nothing was changed.`
         )
       );
       act(() => {
         jest.advanceTimersByTime(10 * 60_000);
       });
-      expect(screen.getByRole("status").textContent).toContain("Rejected: config.set");
+      expect(screen.getByRole("status").textContent).toContain(`Rejected: ${LABEL}`);
     } finally {
       jest.useRealTimers();
     }
   });
 
   it("a held change now waiting for a second approval says so, not 'took effect'", async () => {
-    resolveFetch(200, {
-      decision: "approve",
-      outcome: "approved",
-      applied: false,
-      pendingApproval: { id: "x" },
-    });
+    resolveFetch(`${DECISION} approved, now waiting for a second approval`);
     render(<HeldActionsPanel data={{ approvals: holds }} />);
     decideRow(approveBtn);
     await waitFor(() =>
@@ -137,14 +119,12 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
   });
 
   it("approved but the run failed: the reason, through the refusal handler; the row stays", async () => {
-    resolveFetch(502, { code: "approvals.run_failed", params: {} });
+    resolveFetch(`${DECISION} approved, the run failed`);
     render(<HeldActionsPanel data={{ approvals: holds }} />);
     decideRow(approveBtn);
     const reason = renderMessage("errors.approvals.run_failed");
     await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toContain(
-        `${holds[0].label}: ${reason}`
-      )
+      expect(screen.getByRole("status").textContent).toContain(`${LABEL}: ${reason}`)
     );
     expect(screen.getByRole("alert").textContent).toBe(reason);
     expect(screen.getByRole("button", { name: approveBtn })).toBeDefined();
@@ -155,35 +135,26 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
   // route's real answer).
   it.each([
     [
-      409,
-      "approvals.already_pending",
-      { key: "moderation.strike_ban_threshold" },
+      "a change already waiting",
       /decide the change that is waiting first, then approve this one again/,
     ],
-    [503, "service.unavailable", { service: "audit" }, /approve it again to retry/],
+    ["the audit log down", /approve it again to retry/],
     // A refusal approving again would meet the same way: reject it, never "retry".
     [
-      422,
-      "admin.config_invalid_value",
-      { key: "moderation.strike_ban_threshold", reason: "above_max", max: 10 },
+      "the value now refused",
       /approving it again would be refused the same way: reject it/,
     ],
-    [404, "admin.target_not_found", { target: "k" }, /refused the same way: reject it/],
+    ["the setting gone", /refused the same way: reject it/],
   ])(
-    "approved, the run failed %i %s: what to do next, the row stays",
-    async (status, code, params, next) => {
-      resolveFetch(status, {
-        code,
-        params,
-        message: renderMessage(`errors.${code}`, params),
-        approvalKept: true,
-      });
+    "approved, the run failed (%s): what to do next, the row stays",
+    async (why, next) => {
+      const name = `${DECISION} approved, the run failed (${why})` as RouteFixtureName;
+      const status = routeAnswer(name)[0];
+      resolveFetch(name);
       render(<HeldActionsPanel data={{ approvals: holds }} />);
       decideRow(approveBtn);
       await waitFor(() => expect(screen.getByRole("status").textContent).toMatch(next));
-      expect(screen.getByRole("status").textContent).toContain(
-        renderMessage(`errors.${code}`, params)
-      );
+      expect(screen.getByRole("status").textContent).toContain(messageOf(name));
       if (status < 500)
         expect(screen.getByRole("status").textContent).not.toMatch(
           /approve it again to retry/
@@ -192,20 +163,15 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
     }
   );
 
-  it("surfaces the server error when approval is refused (e.g. self-approval 409)", async () => {
-    resolveFetch(409, {
-      error: "Self-approval is not permitted; an independent approver must clear this.",
-    });
+  it("surfaces the server error when approval is refused (self-approval 409)", async () => {
+    const refused = `${DECISION} refused (its own requester)` as RouteFixtureName;
+    resolveFetch(refused);
     render(<HeldActionsPanel data={{ approvals: holds }} />);
     decideRow(approveBtn);
     await waitFor(() => expect(screen.getByRole("alert")).toBeDefined());
     // Said at the row and in the results, which stay (TASK-202, N-62).
-    expect(screen.getByRole("alert").textContent).toMatch(
-      /Self-approval is not permitted/
-    );
-    expect(screen.getByRole("status").textContent).toMatch(
-      /Self-approval is not permitted/
-    );
+    expect(screen.getByRole("alert").textContent).toContain(messageOf(refused));
+    expect(screen.getByRole("status").textContent).toContain(messageOf(refused));
     // The row stays.
     expect(screen.getByRole("button", { name: approveBtn })).toBeDefined();
   });
@@ -213,17 +179,17 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
   it("replaces its rows when the page passes fresh data (no stale first render)", () => {
     const { rerender } = render(<HeldActionsPanel data={{ approvals: holds }} />);
     expect(screen.getByRole("button", { name: approveBtn })).toBeTruthy();
-    rerender(<HeldActionsPanel data={{ approvals: [holds[1]] }} />);
+    rerender(<HeldActionsPanel data={{ approvals: [holds[1]!] }} />);
     expect(screen.queryByRole("button", { name: approveBtn })).toBeNull();
-    expect(screen.getAllByText(/blocklist_only_surfaces/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/strike_ban_threshold/).length).toBeGreaterThan(0);
   });
 
   it("an undecided run verified not applied is withdrawn, never run: decision withdraw, and says so (round 5, item 2)", async () => {
-    resolveFetch(200, { decision: "withdraw", source: "runtime", status: "rejected" });
-    const undecided: PendingApproval = { ...holds[0], undecided: true };
-    render(<HeldActionsPanel data={{ approvals: [undecided] }} />);
+    resolveFetch(`${DECISION} an undecided run withdrawn`);
+    const [undecided] = list("GET /api/admin/approvals — a held change, undecided");
+    render(<HeldActionsPanel data={{ approvals: [undecided!] }} />);
     const withdraw = screen.getByRole("button", {
-      name: `Withdraw ${undecided.label}: verified that it did not take effect; it will not run`,
+      name: `Withdraw ${LABEL}: verified that it did not take effect; it will not run`,
     });
     fireEvent.click(withdraw);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -234,76 +200,64 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
     });
     const status = await screen.findByRole("status");
     await waitFor(() =>
-      expect(status.textContent).toContain(
-        `Withdrawn: ${undecided.label}. It will not run.`
-      )
+      expect(status.textContent).toContain(`Withdrawn: ${LABEL}. It will not run.`)
     );
   });
 
   it("an undecided duplicate refused approval again points at withdraw (round 6, I-2; round 8, item 1)", async () => {
-    resolveFetch(409, {
-      code: "approvals.duplicate_undecided",
-      error: renderMessage("errors.approvals.duplicate_undecided"),
-    });
-    const undecided: PendingApproval = {
-      ...holds[0],
-      label: "purge_user_data",
-      undecided: true,
-    };
-    render(<HeldActionsPanel data={{ approvals: [undecided] }} />);
+    resolveFetch(`${DECISION} an undecided erasure approved again, another open`);
+    const erasures = list(
+      "GET /api/admin/approvals — an undecided erasure, another open"
+    );
+    render(<HeldActionsPanel data={{ approvals: erasures }} />);
+    const erase = "Erase the account ann@example.com";
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Approve Erase an account again: verified that it did not take effect",
+        name: `Approve ${erase} again: verified that it did not take effect`,
       })
     );
     const status = await screen.findByRole("status");
     await waitFor(() =>
       expect(status.textContent).toContain(
-        "Erase an account: another erasure of this account is open, so this one is not approved again. Mark it executed if it took effect; if it did not, withdraw it."
+        `${erase}: another erasure of this account is open, so this one is not approved again. Mark it executed if it took effect; if it did not, withdraw it.`
       )
     );
     // The row stays, with its Withdraw control.
     expect(
       screen.getByRole("button", {
-        name: "Withdraw Erase an account: verified that it did not take effect; it will not run",
+        name: `Withdraw ${erase}: verified that it did not take effect; it will not run`,
       })
     ).toBeDefined();
   });
 
   it("an undecided run no one in the tenant may decide says a platform operator decides it (round 7, I-3)", () => {
-    const stuck: PendingApproval = {
-      ...holds[0],
-      label: "purge_user_data",
-      undecided: true,
-      noEligibleDecider: true,
-    };
-    render(<HeldActionsPanel data={{ approvals: [stuck] }} />);
+    const [stuck] = list(
+      "GET /api/admin/approvals — an undecided erasure, no one here may decide it"
+    );
+    expect(stuck!.noEligibleDecider).toBe(true);
+    render(<HeldActionsPanel data={{ approvals: [stuck!] }} />);
     expect(
       screen.getByText(
-        "No one here may approve this again or mark it executed: its requester and the account it acts on cannot decide it, and no one else in good standing who holds config_manage_safety with access to administration meets the change's own rules (one who holds it but not those rules may still withdraw it, if it did not take effect). A platform operator decides it — Operator → Tenants → this tenant → Settings → Held changes."
+        /^No one here may approve this again or mark it executed: its requester and the account it acts on cannot decide it, and no one else in good standing who holds admin_purge_user_data with access to administration meets the change's own rules .* A platform operator decides it — Operator → Tenants → this tenant → Settings → Held changes\.$/
       )
     ).toBeDefined();
   });
 
-  it("another kind of undecided duplicate gets the generic guidance, not an erasure's (round 9, N-1)", async () => {
-    resolveFetch(409, {
-      code: "approvals.duplicate_undecided",
-      error: renderMessage("errors.approvals.duplicate_undecided"),
-    });
-    const undecided: PendingApproval = { ...holds[0], undecided: true };
-    render(<HeldActionsPanel data={{ approvals: [undecided] }} />);
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: `Approve ${undecided.label} again: verified that it did not take effect`,
-      })
+  // Only an erasure's authority finds duplicates (HoldAuthority.duplicateOf, TASK-199), so the
+  // decision route answers no other hold with this code; the words for one are the generic ones.
+  it("another kind of undecided duplicate gets the generic guidance, not an erasure's (round 9, N-1)", () => {
+    const { refusedDecisionText } = jest.requireActual(
+      "@/components/admin/decision-outcome"
     );
-    const status = await screen.findByRole("status");
-    await waitFor(() =>
-      expect(status.textContent).toContain(
-        `${undecided.label}: Another hold for the same action on the same subject is open`
-      )
+    // The code and message as the decision route answers them (for an erasure's duplicate).
+    const duplicate = routeAnswer(
+      `${DECISION} an undecided erasure approved again, another open`
+    )[1] as { code: string; message: string };
+    const text = refusedDecisionText("update_config", duplicate, {}, LABEL);
+    expect(text).toContain(
+      `${LABEL}: Another hold for the same action on the same subject is open`
     );
-    expect(status.textContent).not.toMatch(/erasure/);
+    expect(text).not.toMatch(/erasure/);
   });
 
   it("the catalog's guidance names withdraw (round 6, I-2)", () => {
@@ -335,7 +289,7 @@ describe("a held approval-policy change (round 12, I-2)", () => {
         data={{
           approvals: [
             {
-              ...holds[0],
+              ...holds[0]!,
               id: "p-policy",
               label: "set_approval_policy",
               summary: {
@@ -380,50 +334,40 @@ describe("HeldActionsPanel — what became of the approval (TASK-194 round 16)",
   it.each([
     [
       "undecided",
-      409,
-      {
-        code: "approvals.indeterminate",
-        approvalKept: false,
-        undecidedWithinMinutes: 75,
-      },
+      "approved, its run's claim not given back",
+      approveBtn,
       /listed as undecided within 75 minutes: verify it, then mark it executed if it took effect, or withdraw it/,
     ],
     [
       "settling",
-      503,
-      { code: "admin.write_indeterminate", settling: true, settlesWithinMinutes: 75 },
+      "a two-person approval approved, its apply settling",
+      "Approve: Setting moderation.strike_ban_threshold",
       /outcome is being checked: if it did not apply, it is listed again within 75 minutes/,
     ],
     [
       "withdrawn",
-      422,
-      {
-        code: "admin.config_invalid_value",
-        params: { key: "k", reason: "above_max", max: 10 },
-        withdrawn: true,
-      },
+      "approved, refused for good and withdrawn",
+      approveBtn,
       /withdrawn; the requester must ask again/,
     ],
-  ])("%s: said, and the list read again", async (_name, status, body, said) => {
+  ])("%s: said, and the list read again", async (_name, answer, decided, said) => {
     fetchMock
-      .mockResolvedValueOnce({
-        ok: false,
-        status,
-        json: async () => body,
-      } as unknown as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ approvals: [holds[1]] }),
-      } as unknown as Response);
+      .mockResolvedValueOnce(reply(`${DECISION} ${answer}` as RouteFixtureName))
+      .mockResolvedValueOnce(
+        reply(
+          answer.startsWith("a two-person")
+            ? "GET /api/admin/approvals — a held change, undecided"
+            : "GET /api/admin/approvals — after a decision, the other held change"
+        )
+      );
     render(<HeldActionsPanel data={{ approvals: holds }} />);
-    decideRow(approveBtn);
+    decideRow(decided);
     await waitFor(() => expect(screen.getByRole("status").textContent).toMatch(said));
     expect(screen.getByRole("status").textContent).not.toMatch(
       /approve it again to retry/
     );
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: approveBtn })).toBeNull()
+      expect(screen.queryByRole("button", { name: decided })).toBeNull()
     );
     expect(fetchMock.mock.calls[1][0]).toBe("/api/admin/approvals");
   });
@@ -432,13 +376,21 @@ describe("HeldActionsPanel — what became of the approval (TASK-194 round 16)",
     const { refusedDecisionText } = jest.requireActual(
       "@/components/admin/decision-outcome"
     );
-    const refused = { code: "approvals.indeterminate", message: "m" };
-    const body = { approvalKept: false, undecidedWithinMinutes: 75 };
-    expect(refusedDecisionText("update_config", refused, body)).toMatch(
+    // The decision route's own answer for a run whose claim was not given back.
+    const answer = routeAnswer(
+      `${DECISION} approved, its run's claim not given back`
+    )[1] as {
+      code: string;
+      message: string;
+    };
+    const { code, message } = answer;
+    const claimLost = { code, message };
+    const body = answer;
+    expect(refusedDecisionText("update_config", claimLost, body)).toMatch(
       /refused as stale/
     );
     expect(
-      refusedDecisionText("set_entitlement_group_active", refused, body)
+      refusedDecisionText("set_entitlement_group_active", claimLost, body)
     ).not.toMatch(/stale|approve it again/);
   });
 });

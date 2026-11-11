@@ -190,6 +190,25 @@ SQL
 "${PSQL[@]}" -At -c "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'purge_log_status_check'" | grep -q "indeterminate" \
   || { echo "✗ purge_log does not accept a purge recorded indeterminate"; exit 1; }
 
+step "065: a duplicated role's note is a catalog key and values; one written before is migrated, once"
+# A role written by duplicate_role before 065, as its SQL wrote it; 065 applied again migrates it.
+"${PSQL[@]}" >/dev/null <<'SQL'
+INSERT INTO public.roles (name, display_name, description, is_default, sort_order)
+SELECT 'replay_065_copy', 'Replay 065', 'Duplicated from ' || r.name || '. Its own words.', false, 900
+  FROM public.roles r ORDER BY r.name LIMIT 1;
+INSERT INTO public.roles (name, display_name, description, is_default, sort_order)
+VALUES ('replay_065_written', 'Replay 065 b', 'Duplicated from the old catalog, by hand', false, 901);
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/065_role_description_note.sql" >/dev/null
+[ "$("${PSQL[@]}" -At -c "SELECT description || '|' || (description_note->>'key') || '|' || (description_note->'params'->>'source' = (SELECT name::text FROM public.roles WHERE name <> 'replay_065_copy' AND name <> 'replay_065_written' ORDER BY name LIMIT 1))::text FROM public.roles WHERE name = 'replay_065_copy'")" = "Its own words.|screens.admin_console.roles.duplicated_from|true" ] \
+  || { echo "✗ 065 did not migrate a duplicated role's English note to its key and values"; exit 1; }
+[ "$("${PSQL[@]}" -At -c "SELECT (description_note IS NULL)::text || '|' || description FROM public.roles WHERE name = 'replay_065_written'")" = "true|Duplicated from the old catalog, by hand" ] \
+  || { echo "✗ 065 changed a description an administrator wrote"; exit 1; }
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/065_role_description_note.sql" >/dev/null
+[ "$("${PSQL[@]}" -At -c "SELECT description FROM public.roles WHERE name = 'replay_065_copy'")" = "Its own words." ] \
+  || { echo "✗ 065 applied twice changed a migrated role again"; exit 1; }
+"${PSQL[@]}" -c "DELETE FROM public.roles WHERE name IN ('replay_065_copy', 'replay_065_written')" >/dev/null
+
 step "checks"
 "${PSQL[@]}" -At <<'SQL'
 DO $$

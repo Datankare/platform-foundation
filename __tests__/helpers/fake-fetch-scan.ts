@@ -15,7 +15,11 @@
  *   - a literal passed to a reply helper of the file — a function whose `json` member (or
  *     `Response.json` / `new Response(JSON.stringify(…))`) returns one of its parameters, or that
  *     passes its parameters on to such a helper — anywhere in the call's arguments (a tuple in a
- *     list of answers too), and a same-file `const` holding a literal that is passed so.
+ *     list of answers too), and a same-file `const` holding a literal that is passed so;
+ *   - (TASK-207, N-17) a body that reaches the reply through a name: every literal the file
+ *     binds to that name — declared (`let`/`var` too) or assigned later (`x = {…}`, `x.body = {…}`)
+ *     — when the body is the name or a property of it (`guest.body`); and the literal a same-file
+ *     function returns when the body is a call to it (`json: async () => makeBody()`).
  *
  * Bodies taken from __tests__/fixtures/route-responses (produced by the real route handlers in
  * __tests__/route-fixtures.test.ts) are identifiers imported from there: never counted.
@@ -310,6 +314,57 @@ function literalConsts(sf: ts.SourceFile): Map<string, ts.Expression> {
   return out;
 }
 
+/** The name at the root of `x`, `x.y`, `x["y"]`, `x!.y` (undefined for anything else). */
+function rootName(e: ts.Expression): string | undefined {
+  let x = unwrap(e);
+  while (ts.isPropertyAccessExpression(x) || ts.isElementAccessExpression(x))
+    x = unwrap(x.expression);
+  return ts.isIdentifier(x) ? x.text : undefined;
+}
+
+/**
+ * Every literal the file binds to a name (TASK-207): `let`/`var`/`const X = <literal>`, and
+ * `X = <literal>` or `X.y = <literal>` anywhere — by the root name.
+ */
+function boundLiterals(sf: ts.SourceFile): Map<string, ts.Node[]> {
+  const out = new Map<string, ts.Node[]>();
+  const add = (name: string | undefined, v: ts.Expression) => {
+    const x = unwrap(v);
+    if (!name || !isLiteral(x)) return;
+    out.set(name, [...(out.get(name) ?? []), x]);
+  };
+  const visit = (n: ts.Node): void => {
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer)
+      add(n.name.text, n.initializer);
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      !ts.isObjectLiteralExpression(n.left) &&
+      !ts.isArrayLiteralExpression(n.left)
+    )
+      add(rootName(n.left), n.right);
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** The literals a body reaches through a name or a same-file function (TASK-207). */
+function reachedLiterals(
+  e: ts.Expression,
+  bound: Map<string, ts.Node[]>,
+  fns: Map<string, Fn>,
+  out: Set<ts.Node>
+): void {
+  const x = unwrap(e);
+  const name = rootName(x);
+  if (name) for (const lit of bound.get(name) ?? []) out.add(lit);
+  if (ts.isCallExpression(x) && ts.isIdentifier(x.expression)) {
+    const fn = fns.get(x.expression.text);
+    if (fn) for (const r of returned(fn)) if (isLiteral(resolvedValue(r))) out.add(r);
+  }
+}
+
 /** The 1-based lines of each hand-written response body in a component test's source. */
 export function handWrittenBodies(
   text: string,
@@ -327,15 +382,22 @@ export function handWrittenBodies(
   const fns = namedFunctions(sf);
   const helpers = replyHelpers(fns);
   const consts = literalConsts(sf);
+  const bound = boundLiterals(sf);
   const found = new Set<ts.Node>();
   const visit = (n: ts.Node): void => {
-    for (const e of bodyExpressions(n)) literalsIn(e, consts, found);
+    for (const e of bodyExpressions(n)) {
+      literalsIn(e, consts, found);
+      reachedLiterals(e, bound, fns, found);
+    }
     if (
       ts.isCallExpression(n) &&
       ts.isIdentifier(n.expression) &&
       helpers.has(n.expression.text)
     )
-      n.arguments.forEach((a) => literalsIn(a, consts, found));
+      n.arguments.forEach((a) => {
+        literalsIn(a, consts, found);
+        reachedLiterals(a, bound, fns, found);
+      });
     ts.forEachChild(n, visit);
   };
   visit(sf);
