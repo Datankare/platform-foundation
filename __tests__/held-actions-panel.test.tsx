@@ -6,6 +6,7 @@ import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
 import { renderMessage } from "@/platform/errors/messages";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
+import { shown } from "@/platform/errors/shown-text";
 
 const holds: PendingApproval[] = [
   {
@@ -14,7 +15,11 @@ const holds: PendingApproval[] = [
     label: "config.set moderation.strike_ban_threshold",
     requester: "admin-1234567890",
     requiredPermission: "config_manage_safety",
-    reason: "Held at effectiveRisk restricted — needs an independent approver.",
+    reason: shown("screens.held.reason_held", {
+      risk: "restricted",
+      effects: [],
+      effected: "no",
+    }),
     createdAt: "2026-01-02T00:00:00.000Z",
   },
   {
@@ -23,7 +28,9 @@ const holds: PendingApproval[] = [
     label: "moderation.blocklist_only_surfaces",
     requester: "admin-2",
     requiredPermission: "config_manage_standard",
-    reason: "raises the blocklist scope",
+    reason: shown("screens.held.reason_two_person", {
+      key: "moderation.blocklist_only_surfaces",
+    }),
     createdAt: "2026-01-01T00:00:00.000Z",
   },
 ];
@@ -208,7 +215,7 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
     expect(screen.getByRole("button", { name: approveBtn })).toBeTruthy();
     rerender(<HeldActionsPanel data={{ approvals: [holds[1]] }} />);
     expect(screen.queryByRole("button", { name: approveBtn })).toBeNull();
-    expect(screen.getByText(/blocklist_only_surfaces/)).toBeTruthy();
+    expect(screen.getAllByText(/blocklist_only_surfaces/).length).toBeGreaterThan(0);
   });
 
   it("an undecided run verified not applied is withdrawn, never run: decision withdraw, and says so (round 5, item 2)", async () => {

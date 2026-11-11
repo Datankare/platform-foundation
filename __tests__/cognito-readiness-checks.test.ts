@@ -24,6 +24,7 @@ import {
   compareClientSecrets,
 } from "@/platform/auth/admin-key-readiness";
 import { TEST_JWKS } from "./helpers/test-jwt";
+import { renderShown, type ShownText } from "@/platform/errors/shown-text";
 
 const BASE: CognitoConfig = {
   region: "us-east-1",
@@ -107,8 +108,10 @@ describe("checkErasureAccess (N-22)", () => {
     for (const a of answers) mockFetch.mockResolvedValueOnce(a);
     const r = await new CognitoAuthProvider(ADMIN).checkErasureAccess();
     expect(r).toMatchObject({ state: "denied", action });
-    expect((r as { reason: string }).reason).toContain(`cognito-idp:${action}`);
-    expect((r as { reason: string }).reason).toContain("cognito-tenancy-and-erasure");
+    // The catalog's key and values (TASK-206): the console words it.
+    const reason = renderShown((r as { reason: ShownText }).reason);
+    expect(reason).toContain(`cognito-idp:${action}`);
+    expect(reason).toContain("cognito-tenancy-and-erasure");
   });
 
   it("[hostile] a pool user named like the probe: the delete is never sent", async () => {

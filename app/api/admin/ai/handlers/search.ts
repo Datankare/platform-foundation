@@ -67,6 +67,7 @@ import {
   type SearchFilter,
 } from "../search-filters";
 import { renderMessage } from "@/platform/errors/messages";
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { likeTerm } from "@/lib/pagination";
 import { logger } from "@/lib/logger";
 import { SEARCHABLE_TABLES } from "../tool-permissions";
@@ -282,10 +283,17 @@ export function parseSearchFilters(
   // every other action answers one (round 12, nit 3); a filter's bad value, invalid_value.
   return {
     ok: false,
-    result: coded(parsed.unknownKey ? "request.unknown_input" : "request.invalid_value", {
-      field: parsed.field,
-      allowed: [...parsed.allowed],
-    }),
+    result: parsed.unknownKey
+      ? coded("request.unknown_input", {
+          field: parsed.field,
+          allowed: [...parsed.allowed],
+        })
+      : coded("request.invalid_value", {
+          field: parsed.field,
+          allowed: [...parsed.allowed],
+          ...(parsed.expected ? { expected: parsed.expected } : {}),
+          ...(parsed.max !== undefined ? { max: parsed.max } : {}),
+        }),
   };
 }
 
@@ -465,7 +473,7 @@ export async function withAccountNames(result: ActionResult): Promise<ActionResu
     const found = accounts.get(idOf(v) ?? "");
     if (!found) return null;
     return found.erased
-      ? renderMessage("screens.admin_console.people.erased")
+      ? shown("screens.admin_console.people.erased")
       : (found.email ?? null);
   };
   const at = Math.min(actorAt, targetAt);
@@ -617,12 +625,18 @@ export function searchSummary(
   maxBytes: number = SEARCH_RESULT_MAX_BYTES,
   /** Name the rows left out (by their first column); false when that is an id the caller may not see. */
   nameRows: boolean = true
-): string {
-  const shown = fitted.shown.length;
+): ShownText {
+  const shownCount = fitted.shown.length;
   const key =
-    matched === 0 ? "summary_none" : shown === matched ? "summary_all" : "summary_some";
-  const line = renderMessage(`screens.admin_console.search.${key}`, {
-    shown,
+    matched === 0
+      ? "summary_none"
+      : shownCount === matched
+        ? "summary_all"
+        : "summary_some";
+  // The catalog's words for the screen (TASK-206, N-102): a key and its values, never a line
+  // written here.
+  const line = shown(`screens.admin_console.search.${key}`, {
+    shown: shownCount,
     matched,
     table,
   });
@@ -630,12 +644,12 @@ export function searchSummary(
   const named = nameRows
     ? fitted.omitted.filter((id): id is string => id !== undefined)
     : [];
-  const which = named.length
-    ? ` (${named.slice(0, 20).join(", ")}${named.length > 20 ? ", …" : ""})`
-    : "";
-  return `${line} ${renderMessage("screens.admin_console.search.not_shown", {
+  return shown("screens.admin_console.search.not_shown", {
+    summary: line,
     count: fitted.omitted.length,
-    which,
+    which: named.length ? "named" : "unnamed",
+    rows: named.slice(0, 20),
+    more: named.length > 20 ? "yes" : "no",
     kib: Math.round(maxBytes / 1024),
-  })}`;
+  });
 }

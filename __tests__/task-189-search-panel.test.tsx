@@ -14,6 +14,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import ExecutionResultsPanel from "@/components/admin/ExecutionResultsPanel";
 import ActionConfirmPanel from "@/components/admin/ActionConfirmPanel";
 import { describeSearch } from "@/components/admin/search-description";
+import { shown as shownText } from "@/platform/errors/shown-text";
 
 describe("TASK-189: the panel shows a search as a table", () => {
   it("renders the columns and rows; other actions are unchanged", () => {
@@ -23,7 +24,11 @@ describe("TASK-189: the panel shows a search as a table", () => {
           {
             tool: "search",
             success: true,
-            result: "2 rows of users.",
+            result: shownText("screens.admin_console.search.summary_all", {
+              shown: 2,
+              matched: 2,
+              table: "users",
+            }),
             table: {
               table: "users",
               columns: ["email", "display_name", "email_verified", "last_sign_in_at"],
@@ -33,7 +38,16 @@ describe("TASK-189: the panel shows a search as a table", () => {
               ],
             },
           },
-          { tool: "create_role", success: true, result: "Role created" },
+          {
+            tool: "create_role",
+            success: true,
+            result: shownText("screens.admin_console.results.role_created", {
+              name: "Editor",
+              count: 2,
+              gap: "none",
+              missing: [],
+            }),
+          },
         ]}
         onDismiss={jest.fn()}
       />
@@ -49,7 +63,7 @@ describe("TASK-189: the panel shows a search as a table", () => {
     expect(within(grid).getByText("Yes")).toBeDefined();
     expect(within(grid).getByText("No")).toBeDefined();
     expect(within(grid).getByText("—")).toBeDefined();
-    expect(screen.getByText("Role created")).toBeDefined();
+    expect(screen.getByText("Role “Editor” created with 2 permissions.")).toBeDefined();
     expect(screen.queryByText(/"email"/)).toBeNull();
   });
 
@@ -60,7 +74,11 @@ describe("TASK-189: the panel shows a search as a table", () => {
           {
             tool: "search",
             success: true,
-            result: "No rows of users match.",
+            result: shownText("screens.admin_console.search.summary_none", {
+              shown: 0,
+              matched: 0,
+              table: "users",
+            }),
             table: { table: "users", columns: ["email"], rows: [] },
           },
         ]}
@@ -78,7 +96,11 @@ describe("TASK-189: the panel shows a search as a table", () => {
           {
             tool: "search",
             success: true,
-            result: "1 row of x.",
+            result: shownText("screens.admin_console.search.summary_all", {
+              shown: 1,
+              matched: 1,
+              table: "x",
+            }),
             table: { table: "x", columns: ["unnamed_col"], rows: [["v"]] },
           },
         ]}
@@ -98,7 +120,11 @@ describe("TASK-189 round 1: long values and JSON values", () => {
           {
             tool: "search",
             success: true,
-            result: "1 row of roles.",
+            result: shownText("screens.admin_console.search.summary_all", {
+              shown: 1,
+              matched: 1,
+              table: "roles",
+            }),
             table: { table: "roles", columns: ["description"], rows: [[long]] },
           },
         ]}
@@ -121,7 +147,11 @@ describe("TASK-189 round 1: long values and JSON values", () => {
           {
             tool: "search",
             success: true,
-            result: "2 rows of platform_config.",
+            result: shownText("screens.admin_console.search.summary_all", {
+              shown: 2,
+              matched: 2,
+              table: "platform_config",
+            }),
             table: {
               table: "platform_config",
               columns: ["key", "value"],

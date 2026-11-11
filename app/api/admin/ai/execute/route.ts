@@ -5,6 +5,7 @@
  * Sprint 6
  */
 
+import { shown as shownText } from "@/platform/errors/shown-text";
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
@@ -212,7 +213,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
                 success: false,
                 held: true,
                 proposalId: outcome.proposalId,
-                error: "Held for a second administrator's approval; it has not run",
+                result: shownText("screens.admin_console.results.held_second_admin"),
               }
             : outcome.result;
       } catch (err) {

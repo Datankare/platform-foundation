@@ -28,6 +28,7 @@ import { AuditDataView, RolesDataView } from "@/components/admin/AdminDataViews"
 import { applyUsersSearch } from "@/components/admin/users-search-handoff";
 import ExecutionResultsPanel from "@/components/admin/ExecutionResultsPanel";
 import { SEARCH_SQL, searchParams } from "@/app/api/admin/ai/handlers/search";
+import { shown } from "@/platform/errors/shown-text";
 
 const perm = (code: string, displayName: string, category: string) => ({
   code,
@@ -369,7 +370,11 @@ describe("TASK-192 (4): a refused users search before a successful one", () => {
   const ok = (filters: Record<string, unknown>) => ({
     tool: "search",
     success: true,
-    result: "1 user matched",
+    result: shown("screens.admin_console.search.summary_all", {
+      shown: 1,
+      matched: 1,
+      table: "users",
+    }),
     table: {
       table: "users",
       columns: [],

@@ -14,6 +14,7 @@
  * @see ADR-012 Auth Architecture
  */
 
+import { shown } from "@/platform/errors/shown-text";
 import { createHmac } from "node:crypto";
 import type { AuthProvider } from "@/platform/auth/provider";
 import type {
@@ -1454,7 +1455,7 @@ export class CognitoAuthProvider implements AuthProvider {
     } catch {
       return {
         state: "unknown",
-        reason: "administrative credentials are not configured",
+        reason: shown("screens.readiness.no_admin_credentials"),
       };
     }
     try {
@@ -1474,19 +1475,25 @@ export class CognitoAuthProvider implements AuthProvider {
       if (!attr) {
         return {
           state: "missing",
-          reason: `the pool has no ${TENANT_ATTRIBUTE} attribute`,
+          reason: shown("screens.readiness.attribute_missing", {
+            attribute: TENANT_ATTRIBUTE,
+          }),
         };
       }
       if (attr.AttributeDataType && attr.AttributeDataType !== "String") {
         return {
           state: "unsafe",
-          reason: `${TENANT_ATTRIBUTE} is not a String attribute`,
+          reason: shown("screens.readiness.attribute_not_string", {
+            attribute: TENANT_ATTRIBUTE,
+          }),
         };
       }
       if (attr.Mutable === false) {
         return {
           state: "unsafe",
-          reason: `${TENANT_ATTRIBUTE} is immutable — the platform could never assign it after sign-up`,
+          reason: shown("screens.readiness.attribute_immutable", {
+            attribute: TENANT_ATTRIBUTE,
+          }),
         };
       }
       // Every app client of the pool, not only this one: a user can obtain a token from any
@@ -1531,7 +1538,10 @@ export class CognitoAuthProvider implements AuthProvider {
         if (!c.WriteAttributes || c.WriteAttributes.includes(TENANT_ATTRIBUTE)) {
           return {
             state: "unsafe",
-            reason: `${which} can write ${TENANT_ATTRIBUTE}; remove it from the client's writable attributes`,
+            reason: shown("screens.readiness.attribute_writable", {
+              client: which,
+              attribute: TENANT_ATTRIBUTE,
+            }),
           };
         }
         if (
@@ -1541,7 +1551,9 @@ export class CognitoAuthProvider implements AuthProvider {
         ) {
           return {
             state: "unsafe",
-            reason: `the app client cannot read ${TENANT_ATTRIBUTE}; add it to the client's readable attributes`,
+            reason: shown("screens.readiness.attribute_unreadable", {
+              attribute: TENANT_ATTRIBUTE,
+            }),
           };
         }
         for (const name of c.SupportedIdentityProviders ?? []) {
@@ -1562,7 +1574,10 @@ export class CognitoAuthProvider implements AuthProvider {
         if (Object.prototype.hasOwnProperty.call(mapping, TENANT_ATTRIBUTE)) {
           return {
             state: "unsafe",
-            reason: `the ${name} sign-in maps a claim into ${TENANT_ATTRIBUTE}; remove that attribute mapping`,
+            reason: shown("screens.readiness.attribute_mapped", {
+              provider: name,
+              attribute: TENANT_ATTRIBUTE,
+            }),
           };
         }
       }
@@ -1570,7 +1585,9 @@ export class CognitoAuthProvider implements AuthProvider {
     } catch (error) {
       return {
         state: "unknown",
-        reason: `the pool could not be described (${error instanceof CognitoError ? error.cognitoType : "error"})`,
+        reason: shown("screens.readiness.pool_undescribed", {
+          error: error instanceof CognitoError ? error.cognitoType : "error",
+        }),
       };
     }
   }
@@ -1761,20 +1778,25 @@ export class CognitoAuthProvider implements AuthProvider {
     if (!credentials) {
       return {
         state: "missing",
-        reason:
-          "COGNITO_ADMIN_ACCESS_KEY_ID is not set — no identity is ever erased (TENANCY_OPERATIONS §3.3: every Cognito deployment needs the key)",
+        reason: shown("screens.readiness.erasure_no_key"),
       };
     }
     const denied = (action: string): ErasureAccessReadiness => ({
       state: "denied",
       action,
-      reason: `the administrative key may not call cognito-idp:${action} on this pool — give it the policy ${COGNITO_ADMIN_POLICY} (TENANCY_OPERATIONS §3.3)`,
+      reason: shown("screens.readiness.erasure_denied", {
+        action: action,
+        policy: COGNITO_ADMIN_POLICY,
+      }),
     });
     const isDenied = (e: unknown) =>
       e instanceof CognitoError && isAccessRefusal(e.cognitoType);
     const unknown = (action: string, e: unknown): ErasureAccessReadiness => ({
       state: "unknown",
-      reason: `${action} did not answer (${e instanceof CognitoError ? e.cognitoType : "error"})`,
+      reason: shown("screens.readiness.no_answer", {
+        action: action,
+        error: e instanceof CognitoError ? e.cognitoType : "error",
+      }),
     });
     let step = "DescribeUserPool";
     try {
@@ -1790,7 +1812,7 @@ export class CognitoAuthProvider implements AuthProvider {
           this.config.userPoolId
         )
       ) {
-        return { state: "unknown", reason: "DescribeUserPool answered another pool" };
+        return { state: "unknown", reason: shown("screens.readiness.another_pool") };
       }
       step = "ListUsers";
       const found = await callCognito(
@@ -1806,7 +1828,9 @@ export class CognitoAuthProvider implements AuthProvider {
       if (((found.Users as unknown[] | undefined) ?? []).length > 0) {
         return {
           state: "unknown",
-          reason: `a pool user is named ${ERASURE_PROBE_USERNAME}; the delete was not tried`,
+          reason: shown("screens.readiness.probe_user_exists", {
+            user: ERASURE_PROBE_USERNAME,
+          }),
         };
       }
       step = "AdminDeleteUser";
@@ -1819,7 +1843,7 @@ export class CognitoAuthProvider implements AuthProvider {
       // A delete of a name no user has cannot succeed; it is not taken as proof.
       return {
         state: "unknown",
-        reason: "AdminDeleteUser answered for a user that cannot exist",
+        reason: shown("screens.readiness.delete_answered_absent"),
       };
     } catch (error) {
       if (
@@ -1844,7 +1868,7 @@ export class CognitoAuthProvider implements AuthProvider {
     if (!credentials) {
       return {
         state: "not_checkable",
-        reason: "the administrative key is not set, so the app client cannot be read",
+        reason: shown("screens.readiness.client_unreadable_no_key"),
       };
     }
     try {
@@ -1863,7 +1887,10 @@ export class CognitoAuthProvider implements AuthProvider {
     } catch (error) {
       return {
         state: "unknown",
-        reason: `DescribeUserPoolClient did not answer (${error instanceof CognitoError ? error.cognitoType : "error"})`,
+        reason: shown("screens.readiness.no_answer", {
+          action: "DescribeUserPoolClient",
+          error: error instanceof CognitoError ? error.cognitoType : "error",
+        }),
       };
     }
   }

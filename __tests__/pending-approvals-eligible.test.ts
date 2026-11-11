@@ -21,6 +21,7 @@ import {
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
 import type { HoldAuthority } from "@/platform/admin/hold-authority";
 import { CALLERS } from "./helpers/test-identities";
+import { renderShown } from "@/platform/errors/shown-text";
 
 let proposals: InMemoryProposalStore;
 
@@ -133,7 +134,7 @@ it("asks for the hold's permission and can_access_admin, never the requester or 
 it("an undecided row's reason names all three decisions, withdraw among them (round 8, pre-existing)", async () => {
   await undecided(1);
   const [row] = await listPendingApprovals([authority]);
-  expect(row.reason).toMatch(
+  expect(renderShown(row.reason)).toMatch(
     /mark it executed — or, if it did not take effect, approve it again or withdraw it/
   );
 });

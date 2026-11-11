@@ -23,6 +23,7 @@ import {
   STORED_JSON_MAX_BYTES,
   storedJsonViolation,
 } from "@/platform/errors/json-limits";
+import { renderShown } from "@/platform/errors/shown-text";
 
 describe("r10 M5: search over 1 MiB", () => {
   const rows = Array.from({ length: 20 }, (_, i) => [i, "d".repeat(200_000)]);
@@ -34,8 +35,8 @@ describe("r10 M5: search over 1 MiB", () => {
       SEARCH_RESULT_MAX_BYTES
     );
     expect(fitted.shown).toEqual([rows[0]]);
-    expect(searchSummary("roles", rows.length, fitted)).toMatch(
-      /^Showing 1 of 20 matching rows of roles\. 19 rows left out \(1, 2, 3, .*, 19\): the result is limited to 256 KiB\.$/
+    expect(renderShown(searchSummary("roles", rows.length, fitted))).toMatch(
+      /^Showing 1 of 20 matching rows of roles\. 19 rows left out \(1, 2, 3, .*, and 19\): the result is limited to 256 KiB\.$/
     );
   });
 
@@ -46,13 +47,13 @@ describe("r10 M5: search over 1 MiB", () => {
     ];
     const fitted = fitSearchRows(small, columns);
     expect(fitted).toEqual({ shown: small, omitted: [] });
-    expect(searchSummary("roles", 2, fitted)).toBe("2 rows of roles.");
+    expect(renderShown(searchSummary("roles", 2, fitted))).toBe("2 rows of roles.");
   });
 
   it('a single row larger than the limit is not shown, and said so — never "no rows match" (TASK-189 round 1)', () => {
     const fitted = fitSearchRows([[null, "e".repeat(SEARCH_RESULT_MAX_BYTES)]], columns);
     expect(fitted.shown).toEqual([]);
-    const text = searchSummary("roles", 1, fitted);
+    const text = renderShown(searchSummary("roles", 1, fitted));
     expect(text).toBe(
       "Showing 0 of 1 matching row of roles. 1 row left out: the result is limited to 256 KiB."
     );

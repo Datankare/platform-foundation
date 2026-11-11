@@ -29,7 +29,6 @@ import {
   listJobDefinitions,
   listJobOwners,
   listScheduledJobs,
-  MAX_ERROR_LENGTH,
   platformHomeTenant,
   registerJob,
   resetJobRegistry,
@@ -276,13 +275,14 @@ describe("retry backoff", () => {
 // ── Errors ─────────────────────────────────────────────────────────────
 
 describe("what a failed job records", () => {
-  it("keeps a JobFailure's own wording, cleaned and bounded", () => {
+  it("records a JobFailure's token, and only the fact of a sentence (TASK-206: codes, never English)", () => {
+    expect(describeJobError(new JobFailure("no_tenant"))).toBe("reported:no_tenant");
+    // A sentence a handler wrote is the log's (internalDetail), never the record's.
     expect(describeJobError(new JobFailure("  Two\nerasures\tfailed.  "))).toBe(
-      "Two erasures failed."
+      "reported"
     );
-    const long = describeJobError(new JobFailure("x".repeat(5000)));
-    expect(long.length).toBe(MAX_ERROR_LENGTH);
-    expect(describeJobError(new JobFailure(""))).toBe("The job reported a failure.");
+    expect(describeJobError(new JobFailure("x".repeat(5000)))).toBe("reported");
+    expect(describeJobError(new JobFailure(""))).toBe("reported");
   });
 
   it("never records a database's own message", () => {
@@ -293,41 +293,35 @@ describe("what a failed job records", () => {
       { code: "23505" }
     );
     const text = describeJobError(pg);
-    expect(text).toBe("A database statement failed (SQLSTATE 23505).");
+    expect(text).toBe("sqlstate:23505");
     expect(text).not.toMatch(/users|constraint/);
     expect(
       describeJobError(new DataUnavailableError("connect ECONNREFUSED 10.0.0.5"))
-    ).toBe("The database was unavailable.");
+    ).toBe("database_unavailable");
   });
 
   it("records only the class of an unexpected Error", () => {
     expect(describeJobError(new TypeError("secret=abc in a message"))).toBe(
-      "The job failed with an unexpected TypeError."
+      "unexpected:TypeError"
     );
     const odd = new Error("x");
     odd.name = "<script>alert(1)</script>";
-    expect(describeJobError(odd)).toBe("The job failed with an unexpected Error.");
+    expect(describeJobError(odd)).toBe("unexpected:Error");
   });
 
   it.each([
-    ["a string", "token=hunter2", "The job failed: it threw a string value."],
-    ["null", null, "The job failed: it threw null."],
-    ["undefined", undefined, "The job failed: it threw a undefined value."],
-    [
-      "an object",
-      { password: "x" },
-      "The job failed: it threw a non-Error object value.",
-    ],
-    ["a number", 42, "The job failed: it threw a number value."],
-    ["a symbol", Symbol("s"), "The job failed: it threw a symbol value."],
+    ["a string", "token=hunter2", "threw:string"],
+    ["null", null, "threw:null"],
+    ["undefined", undefined, "threw:undefined"],
+    ["an object", { password: "x" }, "threw:object"],
+    ["a number", 42, "threw:number"],
+    ["a symbol", Symbol("s"), "threw:symbol"],
   ])("describes a thrown %s without its content", (_l, value, want) => {
     expect(describeJobError(value)).toBe(want);
   });
 
   it("describes a timeout", () => {
-    expect(describeJobError(new JobTimeoutError(1500))).toBe(
-      "The job did not finish within its time (1500 ms)."
-    );
+    expect(describeJobError(new JobTimeoutError(1500))).toBe("timeout:1500");
   });
 });
 
@@ -481,7 +475,7 @@ describe("runDue", () => {
     expect(r).toMatchObject({ claimed: 1, retried: 1, dead: 0 });
     const queued = await store.getJob(id);
     expect(queued).toMatchObject({ status: "queued", attempts: 1 });
-    expect(queued?.lastError).toBe("The job failed with an unexpected Error.");
+    expect(queued?.lastError).toBe("unexpected:Error");
     // Not due until the backoff (750 ms at jitter 0.5 of the first 1 s) has passed.
     expect(new Date(queued!.runAt).getTime()).toBe(clock + 750);
     expect((await run([k])).claimed).toBe(0);
@@ -516,7 +510,7 @@ describe("runDue", () => {
     const r = await run([k]);
     expect(r.dead).toBe(1);
     const rec = await store.getJob(id);
-    expect(rec?.lastError).toMatch(/^The job failed: it threw/);
+    expect(rec?.lastError).toMatch(/^threw:/);
     expect(rec?.lastError).not.toMatch(/abc|secret/);
   });
 });
@@ -537,7 +531,7 @@ describe("runDue at its limits: misbehaving handlers, budgets, leases", () => {
       source: "enqueue",
     });
     await run([k]);
-    expect((await store.getJob(id))?.lastError).toBe("Refused at once.");
+    expect((await store.getJob(id))?.lastError).toBe("reported");
   });
 
   it("settles a handler that stops soon after its time as timed out", async () => {
@@ -562,9 +556,7 @@ describe("runDue at its limits: misbehaving handlers, budgets, leases", () => {
     const r = await runDue({ budgetMs: 4_000, kinds: [k], schedule: false });
     expect(r).toMatchObject({ claimed: 1, retried: 1, hung: 0 });
     expect(aborted).toBe(true);
-    expect((await store.getJob(id))?.lastError).toBe(
-      "The job did not finish within its time (1000 ms)."
-    );
+    expect((await store.getJob(id))?.lastError).toBe("timeout:1000");
   });
 
   it("moves on from a handler that hangs past its time, never past the budget, and never retries it while it runs", async () => {
@@ -615,7 +607,7 @@ describe("runDue at its limits: misbehaving handlers, budgets, leases", () => {
     await settleHungJobs();
     expect(await store.getJob(id)).toMatchObject({
       status: "queued",
-      lastError: "The job did not finish within its time (1000 ms).",
+      lastError: "timeout:1000",
     });
   });
 

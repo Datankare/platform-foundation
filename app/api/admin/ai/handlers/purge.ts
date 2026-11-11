@@ -14,6 +14,7 @@
  * must be a user of the current tenant (ADR-053 D5), a soft-deleted one included.
  */
 
+import { shown } from "@/platform/errors/shown-text";
 import { withTenantTx } from "@/platform/data";
 import { findRole } from "@/platform/auth/role-lookup";
 import { PROTECTED_ROLES, type VerifiedAdmin } from "@/platform/auth/role-governance";
@@ -39,7 +40,11 @@ export const PURGE_REASONS: readonly PurgeRequest["reason"][] = LISTED_PURGE_REA
 /** Why the input is not an erasure request, or null: a user id and a listed reason. */
 export function purgeInputProblem(input: Record<string, any>): ActionResult | null {
   if (typeof input.userId !== "string" || !USER_ID.test(input.userId)) {
-    return coded("request.invalid_value", { field: "userId", allowed: ["a user id"] });
+    return coded("request.invalid_value", {
+      field: "userId",
+      allowed: ["user_id"],
+      expected: "user_id",
+    });
   }
   if (!PURGE_REASONS.includes(input.reason)) {
     return coded("request.invalid_value", {
@@ -169,7 +174,9 @@ export async function handlePurgeUserData(
       return purge.status === "completed"
         ? {
             success: true,
-            result: `Account data ${request.dryRun ? "counted" : "erased"}`,
+            result: shown("screens.admin_console.results.account_purged", {
+              mode: request.dryRun ? "counted" : "erased",
+            }),
           }
         : coded("admin.purge_incomplete", { status: purge.status });
     },

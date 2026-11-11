@@ -56,6 +56,7 @@ import {
   handleUnblockUserFeature,
 } from "@/app/api/admin/ai/handlers/restrictions";
 import { handleSearch } from "@/app/api/admin/ai/handlers/search";
+import { renderShown, type ShownText } from "@/platform/errors/shown-text";
 
 const mockGetConfig = getConfig as jest.Mock;
 const mockWrite = writeGovernedConfig as jest.Mock;
@@ -187,7 +188,7 @@ describe("approval handler", () => {
       "00000000-0000-4000-8000-00000000a001"
     );
     expect(res.success).toBe(true);
-    expect(res.result).toMatch(/version 2/);
+    expect(renderShown(res.result as ShownText)).toMatch(/version 2/);
   });
 
   it("surfaces a store failure", async () => {
@@ -407,7 +408,7 @@ describe("search handler", () => {
     ];
     const res = await handleSearch({ table: "users" }, admin);
     expect(res.success).toBe(true);
-    expect(res.result).toBe("1 row of users.");
+    expect(renderShown(res.result as ShownText)).toBe("1 row of users.");
     expect(res.table?.rows[0][0]).toBe("00000000-0000-4000-8000-00000000b001");
     expect(JSON.stringify(res)).not.toMatch(/date_of_birth|"x"/);
     // The 20 newest rows, in a stable order (review 11 L-3).
@@ -483,6 +484,6 @@ describe("hostile cases", () => {
     // Review 9 H1: a hold is its own result — never success, never a failure.
     expect(res.success).toBe(false);
     expect(res.held).toBe(true);
-    expect(res.result).toMatch(/held for approval/);
+    expect(renderShown(res.result as ShownText)).toMatch(/held for approval/);
   });
 });

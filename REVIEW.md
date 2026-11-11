@@ -53,10 +53,11 @@ acknowledgement (TASK-197; [AI_ENGINEERING](docs/AI_ENGINEERING.md) §4.3).
    baselines (`coverage-baseline.json`, `refusal-coverage-baseline.json`,
    `screen-literal-baseline.json`, `journey-exemptions.json`, `fake-fetch-baseline.json`,
    `body-schema-baseline.json`), the route fixtures (`__tests__/fixtures/route-responses.json`)
-   and the generated error docs (`docs/API_ERRORS.md`, `docs/APP_API_ERRORS.md`). One exception: a baseline that loosens (a
-   gap added, a floor lowered, an exemption added) weakens a gate and is a finding (process-check
-   refuses one that rises; TASK-200). The baselines and `platform-paths.json` are not High tier
-   (they change with routine work); the check's script and the workflows are.
+   and the generated error docs (`docs/API_ERRORS.md`, `docs/APP_API_ERRORS.md`). One exception:
+   a baseline that loosens (a gap added, a floor lowered, an exemption added) weakens a gate and is
+   a finding (process-check refuses one that rises; TASK-200). The baselines and
+   `platform-paths.json` are not High tier (they change with routine work); the check's script and
+   the workflows are.
 9. **The summary opens with a count** — "2 Important, 1 Nit, 0 Pre-existing." — and when there
    is nothing to fix it says so plainly: "Nothing to fix."
 
@@ -139,4 +140,4 @@ had asked whether a person could do the job on screen. Each breach is **Importan
 
     The change's author walks each changed admin flow in a browser against a production build
     (`npm run build && npm run start` on a seeded database) before calling it done, and keeps the
-    screenshots with the change's record (CLAUDE.md, "Admin changes are walked").
+    screenshots with the change's record (CLAUDE.md, "Before handing a change to the owner").

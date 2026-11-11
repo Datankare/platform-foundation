@@ -512,7 +512,7 @@ dbDescribe(`${SUITE} /api/operator/tenants`, () => {
       409,
       "tenant.conflict"
     );
-    expect(dupe.params).toEqual({ reason: "Tenant slug is taken" });
+    expect(dupe.params).toEqual({ reason: "slug_taken" });
     const s2 = slug();
     provisioned.push(s2);
     await expectCode(
@@ -809,7 +809,14 @@ dbDescribe(`${SUITE} POST /api/operator/tenants/[id]/state`, () => {
       409,
       "tenant.conflict"
     );
-    expect(again.params).toEqual({ reason: "The tenant is suspended, not active." });
+    expect(again.params).toEqual({
+      reason: "state",
+      status: "suspended",
+      expected: "active",
+    });
+    expect(again.message).toBe(
+      "That could not be done: the tenant is suspended, not active."
+    );
     expect(
       (await audits("tenant_suspended", t.id)).map((r) => r.details.outcome)
     ).toEqual(["attempted", "attempted", "failed"]);
@@ -1074,7 +1081,7 @@ dbDescribe(`${SUITE} POST /api/operator/deletions/[id]`, () => {
       409,
       "tenant.conflict"
     );
-    expect(body.params).toEqual({ reason: "The request has expired." });
+    expect(body.params).toEqual({ reason: "request_expired" });
     expect((await statusOf(id)).status).toBe("expired");
     expect((await tenantRow(t.id)).status).toBe("active");
   });
@@ -1156,9 +1163,7 @@ dbDescribe(`${SUITE} POST /api/operator/purge`, () => {
       409,
       "tenant.conflict"
     );
-    expect(restore.params).toEqual({
-      reason: "The tenant's data has been purged; it cannot be restored.",
-    });
+    expect(restore.params).toEqual({ reason: "purged" });
     expect((await tenantRow(d.id)).status).toBe("deleted");
   });
 
@@ -1504,7 +1509,10 @@ dbDescribe(`${SUITE} GET /api/operator/readiness`, () => {
       expect(c).toEqual({
         name: expect.any(String),
         state: expect.stringMatching(/^(ready|not_ready|not_needed|unknown)$/),
-        detail: expect.any(String),
+        // The catalog's key and values (TASK-206, N-102).
+        detail: expect.objectContaining({
+          key: expect.stringMatching(/^screens\.readiness\./),
+        }),
       });
     }
     const byName = Object.fromEntries(

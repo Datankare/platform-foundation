@@ -17,6 +17,7 @@
  * - Testable: interface enables mock implementations for testing
  */
 
+import type { ShownText } from "@/platform/errors/shown-text";
 import type { ErrorCode } from "@/platform/errors/registry";
 import type { MessageValues } from "@/platform/errors/messages";
 import type {
@@ -343,6 +344,9 @@ export interface AuthProvider {
 }
 
 /**
+ * Each `reason` below is the catalog's key and values (TASK-206, N-102): the operator console
+ * words it.
+ *
  * - `ready`   — the key is set and the pool allowed both the lookup and the delete;
  * - `denied`  — the key is set and the pool refused one of them (`action` names which);
  * - `missing` — no administrative key is configured: no identity is ever erased;
@@ -350,8 +354,8 @@ export interface AuthProvider {
  */
 export type ErasureAccessReadiness =
   | { readonly state: "ready" }
-  | { readonly state: "denied"; readonly reason: string; readonly action: string }
-  | { readonly state: "missing" | "unknown"; readonly reason: string };
+  | { readonly state: "denied"; readonly reason: ShownText; readonly action: string }
+  | { readonly state: "missing" | "unknown"; readonly reason: ShownText };
 
 /**
  * - `ready`         — the secret held matches the app client's (or neither has one);
@@ -364,7 +368,7 @@ export type ClientSecretReadiness =
   | { readonly state: "ready" }
   | {
       readonly state: "mismatch" | "not_checkable" | "unknown";
-      readonly reason: string;
+      readonly reason: ShownText;
     };
 
 /**
@@ -393,4 +397,4 @@ export type PoolShapeReadiness =
  */
 export type TenantAttributeReadiness =
   | { readonly state: "ready" }
-  | { readonly state: "missing" | "unsafe" | "unknown"; readonly reason: string };
+  | { readonly state: "missing" | "unsafe" | "unknown"; readonly reason: ShownText };

@@ -45,7 +45,15 @@ only translation each string needs. Text that reaches a screen indirectly — a 
 default prop, a hook's notification, a language's name, a page's `metadata` — is in the catalog
 too, and `__tests__/screen-text-indirect.test.ts` holds it at 0: it follows every name in a text
 position to the literals it can hold, and reports words for a person anywhere in the screens' code
-outside the catalog.
+outside the catalog. An API answer a screen shows is the catalog's too (TASK-206, N-102): a route answers its key
+and values (`platform/errors/shown-text.ts`, `{ key, params }`; a value may itself be one) and the
+screen renders it — a command-bar result, why a hold waits, a readiness check, a job's kind and
+its recorded failure (a code), an operator refusal's reason (a token its message's `select`
+words). Rule C of the same guard holds `app/api` at 0: words for a person written there, other
+than SQL, headers, logs and alerts, a JSON schema's `description` and what is marked `@modelText`
+(the model's, never a screen's), and every key a `shown(…)` names must be one English has.
+`__tests__/catalog-punctuation.test.ts` renders every message in every branch and fails on a
+doubled full stop (N-105).
 
 ## 3. Sequencing
 

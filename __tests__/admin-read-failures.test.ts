@@ -7,6 +7,10 @@
  * (helpers/fake-data.ts) so each lookup can be made to fail — a real database does not fail on
  * demand. The lookups' SQL is proved in __tests__/db/admin-tenant-data.db.test.ts and
  * __tests__/db/admin-catalog.db.test.ts.
+ *
+ * hostile:role n/a: who may call each action: admin-ai-command-bar, admin-authorization-matrix
+ * hostile:self n/a: the self-target cases are the handlers' own, in admin-ai-handlers
+ * hostile:id-spelling n/a: a role id that is not an id is this file's first case
  */
 jest.mock("@/platform/data", () => require("./helpers/fake-data").fakeDataModule());
 jest.mock("@/platform/auth/middleware", () =>
@@ -138,12 +142,12 @@ describe("handleChangeUserRole", () => {
     expect(res).toMatchObject({
       success: false,
       code: "admin.target_not_found",
-      params: { target: "current role" },
+      params: { target: "current_role" },
     });
     expect(updates()).toEqual([]);
   });
 
-  it("returns a failed update as a failure, recorded as failed", async () => {
+  it("[hostile:store-down] returns a failed update as a failure, recorded as failed", async () => {
     const base = answerer();
     fakeData().answer = (sql, values) => {
       if (sql.startsWith("update users")) throw new Error("write refused");

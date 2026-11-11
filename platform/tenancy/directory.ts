@@ -82,15 +82,14 @@ export interface TenantDirectory {
   rename(tenantId: string, name: string): Promise<TenantRecord | null>;
 }
 
-/** What a conflict says, by its code: fixed text, never a store's (R-77). */
-export const TENANT_CONFLICT_TEXT: Readonly<
+/** What a conflict says, by its code: a reason the catalog words, never a store's text (R-77, TASK-206). */
+export const TENANT_CONFLICT_REASON: Readonly<
   Record<TenantDirectoryConflictError["code"], string>
 > = {
-  "tenant.exists": "Tenant id exists",
-  "tenant.slug_taken": "Tenant slug is taken",
-  "tenant.domain_taken": "Host is mapped",
+  "tenant.exists": "exists",
+  "tenant.slug_taken": "slug_taken",
+  "tenant.domain_taken": "domain_taken",
 };
-
 export class TenantDirectoryConflictError extends Error {
   readonly code: "tenant.exists" | "tenant.slug_taken" | "tenant.domain_taken";
   constructor(code: TenantDirectoryConflictError["code"], message: string) {
@@ -98,6 +97,32 @@ export class TenantDirectoryConflictError extends Error {
     this.name = "TenantDirectoryConflictError";
     this.code = code;
   }
+}
+
+const CONFLICT_CODES = new Set([
+  "tenant.exists",
+  "tenant.slug_taken",
+  "tenant.domain_taken",
+]);
+
+/**
+ * Whether `err` is a directory conflict — by its name and code, not `instanceof` (TASK-206): in a
+ * production build the directory boot installed (instrumentation's bundle) and the route that
+ * catches its error load this module separately, so the class differs and an address already
+ * mapped answered 500 instead of tenant.conflict.
+ */
+export function isTenantDirectoryConflict(
+  err: unknown
+): err is TenantDirectoryConflictError {
+  if (err instanceof TenantDirectoryConflictError) return true;
+  const e = err as { name?: unknown; code?: unknown } | null;
+  return (
+    !!e &&
+    typeof e === "object" &&
+    e.name === "TenantDirectoryConflictError" &&
+    typeof e.code === "string" &&
+    CONFLICT_CODES.has(e.code)
+  );
 }
 
 // ── Validation shared by every implementation ─────────────────────────

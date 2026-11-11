@@ -100,7 +100,7 @@ import {
   getCognitoSettings,
   getSupabaseUrl,
   getRateLimitStoreSetting,
-  getTenantDirectoryStoreSetting,
+  getTenantDirectoryStore,
 } from "@/platform/providers/environment-contract";
 import {
   PostgresGuestUsageStore,
@@ -555,9 +555,11 @@ function initEffectLedger(type: EffectLedgerType): void {
 /**
  * ADR-053 D2/D7: where tenants and their domains are kept. Every request reads it (host →
  * tenant, tenant → state), so reads are cached per instance (CachedTenantDirectory, 30 s): a
- * suspension reaches every instance within that time.
+ * suspension reaches every instance within that time. Postgres whenever there is a database
+ * (getTenantDirectoryStore, TASK-206 N-103): the tenant lifecycle's SQL and the directory are then
+ * one store.
  */
-function initTenantDirectory(type: string | undefined): void {
+export function initTenantDirectory(type: "postgres" | "memory"): void {
   if (type === "postgres") {
     requireDatabase("TENANT_DIRECTORY_STORE", type, "an in-memory tenant directory");
     setTenantDirectory(new CachedTenantDirectory(new PostgresTenantDirectory()));
@@ -678,7 +680,7 @@ function initCoreSlots(selections: CoreProviderSelections): void {
   initRateLimiter(selections.rateLimiter);
   initEffectLedger(selections.effectLedger);
   initJobStore(selections.jobStore);
-  initTenantDirectory(getTenantDirectoryStoreSetting());
+  initTenantDirectory(getTenantDirectoryStore());
   initEmbeddingProvider(selections.embeddingProvider);
 }
 

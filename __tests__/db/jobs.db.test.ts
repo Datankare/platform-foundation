@@ -273,7 +273,7 @@ dbDescribe("PostgresJobStore", () => {
     ).toBe(1);
     const dead = await store.getJob(id);
     expect(dead).toMatchObject({ status: "dead", attempts: 2 });
-    expect(dead?.lastError).toBe("A database statement failed (SQLSTATE 23505).");
+    expect(dead?.lastError).toBe("sqlstate:23505");
     expect(await store.replay(id)).toBe("replayed");
     expect(await store.replay(id)).toBe("not_dead");
     expect(await store.getJob(id)).toMatchObject({
@@ -813,7 +813,7 @@ dbDescribe("the job queue under the R4–R6 review's hostile cases", () => {
     const state = (await store.listSchedules()).find((x) => x.kind === kind);
     expect(state).toMatchObject({
       lastStatus: "dead",
-      lastError: "The job failed with an unexpected Error.",
+      lastError: "unexpected:Error",
       reported: 2,
       failing: 1,
     });

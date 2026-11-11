@@ -135,6 +135,11 @@ export function renderMessage(
       ? new Intl.ListFormat(loc, { style: "long", type: "conjunction" }).format(value)
       : (value as string | number);
   }
+  // An optional select argument left out is its `other` branch (TASK-206: request.invalid_value's
+  // `expected`), never a failure that would show the message's source.
+  for (const m of source.matchAll(/\{\s*(\w+)\s*,\s*select\s*,/g)) {
+    if (!(m[1] in prepared)) prepared[m[1]] = "other";
+  }
   try {
     return String(new IntlMessageFormat(source, loc).format(prepared));
   } catch {

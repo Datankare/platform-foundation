@@ -29,11 +29,22 @@
  *      is not words. Text reaching a screen through a component's prop or a hook's state is caught
  *      here, where rule A cannot follow it.
  *
+ *   C. API answers (TASK-206, N-102). Rule B's scan over app/api, the routes: an answer a screen
+ *      shows is the catalog's key and values (platform/errors/shown-text.ts) or a coded error,
+ *      never English written there. Besides rule B's exclusions, code a route needs is not words:
+ *      SQL, an HTTP header's name, a server-sent event's frame, a log's `context`, an alert
+ *      (raiseAlert, captureError); and text for the model is not a screen's: a JSON schema's
+ *      `description` (an object with `type`, `properties` or `input_schema`) and what a function
+ *      or constant marked `@modelText` in its doc comment returns. A template's words are its
+ *      fixed parts, each on its own (`op_${a}_${b}` is an id). And every literal key a
+ *      `shown(…)` names, in app/api, platform/ and components/, is one English has.
+ *
  * ALLOWED holds "<file>:<text>" with why a reported string is not screen text: none.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import * as ts from "typescript";
+import { renderMessage } from "@/platform/errors/messages";
 
 const ROOT = join(__dirname, "..");
 const LABEL_ATTRS = new Set(["placeholder", "aria-label", "title", "alt", "label"]);
@@ -106,6 +117,38 @@ function diskSources(): Sources {
       ...walk(join(ROOT, "platform"), /\.tsx$/),
     ],
   };
+}
+
+/** app/api's files (rule C). */
+function apiSources(): Sources {
+  const walk = (dir: string): string[] =>
+    existsSync(dir)
+      ? readdirSync(dir).flatMap((n) => {
+          const p = join(dir, n);
+          if (statSync(p).isDirectory()) return n === "__tests__" ? [] : walk(p);
+          return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : [];
+        })
+      : [];
+  return {
+    read: (f) =>
+      existsSync(f) && statSync(f).isFile() ? readFileSync(f, "utf8") : undefined,
+    list: () => walk(join(ROOT, "app", "api")),
+  };
+}
+
+/** Every literal key a `shown(…)` names (rule C), with where it is. */
+export function shownKeys(
+  files: readonly string[],
+  read: (f: string) => string
+): string[] {
+  const out: string[] = [];
+  for (const f of files) {
+    for (const m of read(f).matchAll(
+      /\bshown(?:Text)?\(\s*"((?:screens|errors)\.[\w.]+)"/g
+    ))
+      out.push(`${relative(ROOT, f)}:${m[1]}`);
+  }
+  return out;
 }
 
 function parser(src: Sources) {
@@ -471,10 +514,67 @@ const TECH_ATTRS =
   /^(?:className|class|id|key|ref|role|type|name|value|defaultValue|href|src|htmlFor|method|action|target|rel|autoComplete|inputMode|accept|encType|lang|dir|style|data-[\w-]+|aria-(?!label$)[\w-]+|variant|size|mode|testId|pattern|form|sizes|media|as|crossOrigin|referrerPolicy|integrity|nonce|charSet|httpEquiv|content|property)$/;
 const TECH_PROPS =
   /^(?:className|class|id|key|testId|href|url|path|route|method|headers|Content-Type|Authorization|fontFamily|fontSize|fontWeight|padding|margin|width|height|background|backgroundColor|border\w*|cursor|display|gap|lineHeight|textAlign|transition|boxShadow|outline|zIndex|flex\w*|maxWidth|minHeight|whiteSpace|wordBreak|overflow\w*)$/;
+/** Rule C: an alert to the operators or the error reporter, never an answer. */
+const API_CALL = /(?:^|\.)(?:raiseAlert|captureError|captureMessage)$/;
 const LOG_CALL =
   /^(?:logger|console|log)\.\w+$|^(?:t|tx|msg|renderMessage|apiError|internalError|require|fetch|apiFetch|guestFetch|jest|expect)$|\.(?:getItem|setItem|removeItem|includes|startsWith|endsWith|test|match|split|join|replace|replaceAll|querySelector|querySelectorAll|getElementById|addEventListener|removeEventListener|get|has|delete|indexOf|lastIndexOf|localeCompare|padStart|padEnd|toLocaleString|toLocaleDateString|toLocaleTimeString|formatToParts|push|postMessage|dispatchEvent|setAttribute|getAttribute|createElement|open)$/;
 
-export function screenCodeSites(src: Sources, root: string): string[] {
+/** Rule C's code shapes: SQL, an HTTP header's name, a server-sent event's frame. */
+export function isApiCode(text: string): boolean {
+  const t = text.trim();
+  if (/^\(?\s*(?:select|insert|update|delete|with|case\s+when)\b/i.test(t)) return true;
+  if (
+    !/[A-Z][a-z]/.test(t) &&
+    /\$\d|::[a-z]|\b[a-z]{1,3}\.[a-z_]+\b|\bcount\(\*\)|\|\|/.test(t)
+  )
+    return true;
+  if (/^[A-Z][a-z]+(?:-[A-Z][a-z]+)+$/.test(t)) return true; // Cache-Control
+  if (/^data: /.test(t)) return true; // an event-stream frame
+  return false;
+}
+
+/** Whether a node sits in a declaration whose doc comment says `@modelText`. */
+function isModelText(n: ts.Node, sf: ts.SourceFile): boolean {
+  for (let p: ts.Node | undefined = n; p; p = p.parent) {
+    if (
+      ts.isFunctionDeclaration(p) ||
+      ts.isVariableStatement(p) ||
+      ts.isMethodDeclaration(p)
+    ) {
+      const docs = ts
+        .getJSDocTags(p)
+        .concat(
+          ts.isVariableStatement(p)
+            ? p.declarationList.declarations.flatMap((d) => [...ts.getJSDocTags(d)])
+            : []
+        );
+      if (docs.some((d) => d.tagName.text === "modelText")) return true;
+      if (/@modelText\b/.test(sf.text.slice(p.getFullStart(), p.getStart(sf))))
+        return true;
+    }
+  }
+  return false;
+}
+
+/** A JSON schema's object (a tool's or a property's): its `description` is the model's. */
+function isSchemaObject(o: ts.Node, sf: ts.SourceFile): boolean {
+  return (
+    ts.isObjectLiteralExpression(o) &&
+    o.properties.some(
+      (p) =>
+        ts.isPropertyAssignment(p) &&
+        /^(?:type|properties|input_schema|inputSchema)$/.test(
+          p.name.getText(sf).replace(/^["']|["']$/g, "")
+        )
+    )
+  );
+}
+
+export function screenCodeSites(
+  src: Sources,
+  root: string,
+  options: { readonly api?: boolean } = {}
+): string[] {
   const parse = parser(src);
   const out: string[] = [];
   for (const file of src.list()) {
@@ -505,6 +605,20 @@ export function screenCodeSites(src: Sources, root: string): string[] {
       if (ts.isCallExpression(n)) {
         const callee = n.expression.getText(sf);
         if (LOG_CALL.test(callee) || helpers.has(callee) || /Error$/.test(callee)) return;
+        if (options.api && API_CALL.test(callee)) return;
+      }
+      if (options.api) {
+        if (
+          ts.isPropertyAssignment(n) &&
+          (n.name.getText(sf) === "context" ||
+            (n.name.getText(sf) === "description" && isSchemaObject(n.parent, sf)))
+        )
+          return;
+        if (
+          (ts.isFunctionDeclaration(n) || ts.isVariableStatement(n)) &&
+          isModelText(n, sf)
+        )
+          return;
       }
       if (ts.isNewExpression(n) && /Error$/.test(n.expression.getText(sf))) return;
       if (ts.isJsxAttribute(n) && TECH_ATTRS.test(n.name.getText(sf))) return;
@@ -538,8 +652,16 @@ export function screenCodeSites(src: Sources, root: string): string[] {
         text !== undefined &&
         !(ts.isStringLiteral(n) && ts.isExpressionStatement(n.parent))
       ) {
-        // A directive ("use client") is a statement of a string, never shown.
-        if (isPhrase(text) && !(`${relative(root, file)}:${text}` in ALLOWED))
+        // A directive ("use client") is a statement of a string, never shown. Rule C: a template's
+        // fixed parts are judged each on its own, and code a route needs is not words.
+        const words = options.api
+          ? ts.isTemplateExpression(n)
+            ? [n.head.text, ...n.templateSpans.map((x) => x.literal.text)].some(
+                (part) => isPhrase(part) && !isApiCode(part)
+              ) && !isApiCode(text)
+            : isPhrase(text) && !isApiCode(text)
+          : isPhrase(text);
+        if (words && !(`${relative(root, file)}:${text}` in ALLOWED))
           out.push(
             `${relative(root, file)}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1} ${JSON.stringify(text)}`
           );
@@ -571,6 +693,57 @@ describe("screen text reached indirectly comes from the catalog (TASK-205)", () 
 
   it("rule B: no words for a person in the screens' code outside the catalog", () => {
     expect(screenCodeSites(diskSources(), ROOT)).toEqual([]);
+  });
+
+  it("rule C: no words for a person in app/api's answers outside the catalog (TASK-206)", () => {
+    expect(screenCodeSites(apiSources(), ROOT, { api: true })).toEqual([]);
+  });
+
+  it("rule C: every key a shown(…) names is one English has", () => {
+    const files = ["app", "platform", "components", "lib", "hooks"].flatMap((d) => {
+      const walk = (dir: string): string[] =>
+        existsSync(dir)
+          ? readdirSync(dir).flatMap((n) => {
+              const p = join(dir, n);
+              if (statSync(p).isDirectory())
+                return n === "node_modules" || n === "__tests__" ? [] : walk(p);
+              return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : [];
+            })
+          : [];
+      return walk(join(ROOT, d));
+    });
+    const keys = shownKeys(files, (f) => readFileSync(f, "utf8"));
+    expect(keys.length).toBeGreaterThan(40);
+    expect(
+      keys.filter((k) => renderMessage(k.split(":")[1]) === k.split(":")[1])
+    ).toEqual([]);
+  });
+
+  it("[self-test] rule C: answers' English is found; SQL, headers, logs, schemas and model text are not", () => {
+    const found = screenCodeSites(
+      virtual({
+        "app/api/x/route.ts": [
+          'const q = "select id, name from roles where id = $1::uuid";',
+          'const order = "s.created_at desc, s.id";',
+          'res.headers.set("Cache-Control", "no-store");',
+          'return { success: true, result: `Role "${name}" deleted` };',
+          'return { error: "The change could not be written." };',
+          'internalError(e, { request, context: "Sign in failed" });',
+          'raiseAlert({ name: "x", message: "An erasure request was refused." });',
+          'const tool = { name: "x", description: "Update a config entry.", input_schema: { type: "object" } };',
+          "/** @modelText the model's context */",
+          "function ctx() { return `Current roles: ${a}`; }",
+          "const id = `op_${t}_${i}`;",
+          'const frame = "data: [DONE]\\n\\n";',
+        ].join("\n"),
+      }),
+      "/v",
+      { api: true }
+    );
+    expect(found.map((f) => f.replace(/^(\S+) /, "$1|"))).toEqual([
+      'app/api/x/route.ts:4|"Role \\" \\" deleted"',
+      'app/api/x/route.ts:5|"The change could not be written."',
+    ]);
   });
 
   it("[self-test] rule A follows tables, aliases, callbacks, defaults, functions and imports", () => {

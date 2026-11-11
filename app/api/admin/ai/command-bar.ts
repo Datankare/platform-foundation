@@ -286,7 +286,8 @@ export async function commandBarDualControlledActions(): Promise<DualControlledA
     const base = [ADMIN_TOOL_PERMISSIONS[tool], ADMIN_ACCESS];
     if (tool === "change_user_role") {
       return roles.map((r) => ({
-        action: `change_user_role (to ${r.name})`,
+        // An id, one per role it changes to (TASK-206: no words written here).
+        action: `change_user_role:${r.name}`,
         permissions: [...new Set([...base, ...r.permissions])],
         across: "tenant",
       }));
@@ -362,7 +363,8 @@ export function runtimeToolFor(
         r.code !== "internal.error"
       )
         return { reason: r.code, code: r.code, params: r.params };
-      return r?.error ?? "The action reported failure";
+      // A code, never English (TASK-206, N-102): it is the run's recorded note.
+      return r?.error && isErrorCode(r.error) ? r.error : "admin.action_failed";
     },
   };
 }
@@ -467,11 +469,13 @@ export function actionInputSchema(tool: AdminToolId): InputSchemaNode {
  * every key a handler reads, and allows one outside its schema only when it is listed here.
  */
 export const SERVER_SET_INPUTS: Readonly<
-  Partial<Record<AdminToolId, Readonly<Record<string, string>>>>
+  Partial<Record<AdminToolId, Readonly<Record<string, true>>>>
 > = {
   change_user_role: {
-    [HELD_CURRENT_ROLE]:
-      "the role a held change was requested against, recorded by runCommandBarAction when it holds the change (heldRoleSnapshot); its approval applies the change only while the account still has it",
+    // The role a held change was requested against, recorded by runCommandBarAction when it
+    // holds the change (heldRoleSnapshot); its approval applies the change only while the
+    // account still has it.
+    [HELD_CURRENT_ROLE]: true,
   },
 };
 
@@ -760,7 +764,7 @@ export const COMMAND_BAR_HOLDS: HoldAuthority = {
       // approval stands, for when they may again.
       return {
         kind: "failed",
-        error: "The requester no longer holds the permission this action needs",
+        error: "approvals.requester_lacks_permission",
         code: "approvals.requester_lacks_permission",
         params: {
           permission: ADMIN_TOOL_PERMISSIONS[label],
@@ -788,7 +792,13 @@ export const COMMAND_BAR_HOLDS: HoldAuthority = {
       // here it took effect.
       return result?.success
         ? { kind: "applied" }
-        : { kind: "failed", error: result?.error ?? "The action reported failure" };
+        : {
+            kind: "failed",
+            error:
+              result?.error && isErrorCode(result.error)
+                ? result.error
+                : "admin.action_failed",
+          };
     } catch (err) {
       return resumeFailure(err);
     }

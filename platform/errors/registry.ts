@@ -563,6 +563,12 @@ export const PLATFORM_ERROR_CODES = {
     params: [
       { name: "field", kind: "id" },
       { name: "allowed", kind: "list" },
+      // TASK-206 (N-102): what a described value must be, worded by the catalog (allowed then
+      // holds the same id): user_id, account_id, entitlement_group_id, positive_seconds,
+      // features_or_remove, text_or_query, one_value, text_max, role_max, category,
+      // past_birth_date, six_digit_code.
+      { name: "expected", kind: "id", optional: true },
+      { name: "max", kind: "number", optional: true },
     ],
     action: "Send one of the allowed values.",
   },
@@ -601,7 +607,16 @@ export const PLATFORM_ERROR_CODES = {
   },
   "tenant.conflict": {
     status: 409,
-    params: [{ name: "reason", kind: "id" }],
+    // `reason` is a token the catalog words (TASK-206): exists, slug_taken, domain_taken,
+    // created_domain_taken (host), state (status, expected), already_deleted, deletion_pending,
+    // request_state (status), request_expired, not_active, purged, email_shared,
+    // email_unverified, account_changed, role_changed, and the erasure attestation's.
+    params: [
+      { name: "reason", kind: "id" },
+      { name: "host", kind: "id", optional: true },
+      { name: "status", kind: "id", optional: true },
+      { name: "expected", kind: "id", optional: true },
+    ],
     action:
       "Show the reason (the slug or address is taken, or the tenant is not in the state this needs); refresh and choose again.",
   },
@@ -618,7 +633,15 @@ export const PLATFORM_ERROR_CODES = {
   },
   "tenant.invalid": {
     status: 400,
-    params: [{ name: "reason", kind: "id" }],
+    // `reason` is a token the catalog words (TASK-206): slug, name, host (host), reason_text,
+    // email, operator_unverified, store (store), note_length, note_text, attestation_reason
+    // (allowed).
+    params: [
+      { name: "reason", kind: "id" },
+      { name: "host", kind: "id", optional: true },
+      { name: "store", kind: "id", optional: true },
+      { name: "allowed", kind: "id", optional: true },
+    ],
     action: "Show the reason (what the form or request needs) and ask again.",
   },
   "tenant.not_found": {

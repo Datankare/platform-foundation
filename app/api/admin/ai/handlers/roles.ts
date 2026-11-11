@@ -12,6 +12,7 @@
  * checks them again, so a concurrent change cannot slip between the check and the write.
  */
 
+import { shown } from "@/platform/errors/shown-text";
 import { withTenantTx, type Tx } from "@/platform/data";
 import {
   clearPermissionsCache,
@@ -109,12 +110,13 @@ export function createdRolePermissions(
   ];
 }
 
-/** The note a result carries when a role lacks a feature permission (A7), or "". */
-function featureGapNote(held: readonly string[]): string {
+/** What a result says of the feature permissions a role lacks (A7): none, or which. */
+function featureGap(held: readonly string[]): {
+  gap: string;
+  missing: readonly string[];
+} {
   const missing = missingFeaturePermissions(held);
-  return missing.length
-    ? ` Note: the role lacks ${missing.join(", ")} — its holders cannot use those features.`
-    : "";
+  return { gap: missing.length ? "some" : "none", missing };
 }
 
 function decideCreateRole(
@@ -331,7 +333,11 @@ export async function handleCreateRole(
           }
           return {
             success: true,
-            result: `Role "${display_name}" created with ${held.length} permissions.${featureGapNote(held)}`,
+            result: shown("screens.admin_console.results.role_created", {
+              name: display_name,
+              count: held.length,
+              ...featureGap(held),
+            }),
           };
         })
       )
@@ -389,7 +395,12 @@ export async function handleDeleteRole(
             role.id,
           ]);
           await tx.query("delete from roles where id = $1::uuid", [role.id]);
-          return { success: true, result: `Role "${role_name}" deleted` };
+          return {
+            success: true,
+            result: shown("screens.admin_console.results.role_deleted", {
+              name: role_name,
+            }),
+          };
         })
       )
   );
@@ -406,7 +417,7 @@ export async function handleDuplicateRole(
     duplicateRefused(admin, source, new_name);
   const sourceRole = await catalogTx((tx) => findRole(tx, { name: String(source_role) }));
   if (!sourceRole) {
-    return coded("admin.target_not_found", { target: "source role" });
+    return coded("admin.target_not_found", { target: "source_role" });
   }
   const refused = check(sourceRole);
   if (refused) return refused;
@@ -423,7 +434,7 @@ export async function handleDuplicateRole(
           // The source is locked, so the permissions copied are the ones just checked.
           const source = await findRole(tx, { id: sourceRole.id }, { forUpdate: true });
           if (!source) {
-            return coded("admin.target_not_found", { target: "source role" });
+            return coded("admin.target_not_found", { target: "source_role" });
           }
           const now = check(source);
           if (now) return now;
@@ -449,7 +460,11 @@ export async function handleDuplicateRole(
           );
           return {
             success: true,
-            result: `Role "${new_display_name}" created from "${source_role}" with ${copied.rowCount} permissions`,
+            result: shown("screens.admin_console.results.role_duplicated", {
+              name: new_display_name,
+              source: source_role,
+              count: copied.rowCount ?? 0,
+            }),
           };
         })
       )
@@ -526,7 +541,12 @@ export async function handleAssignPermissions(
           const after = await findRole(tx, { id: role.id });
           return {
             success: true,
-            result: `Role "${role_name}": +${addedCount}, -${removedCount} permissions.${featureGapNote(after?.permissions ?? [])}`,
+            result: shown("screens.admin_console.results.role_permissions_changed", {
+              name: role_name,
+              added: addedCount,
+              removed: removedCount,
+              ...featureGap(after?.permissions ?? []),
+            }),
           };
         })
       )
@@ -574,7 +594,7 @@ async function loadAssignment(
   if (target.roleId && !currentRole) {
     return {
       ok: false,
-      result: coded("admin.target_not_found", { target: "current role" }),
+      result: coded("admin.target_not_found", { target: "current_role" }),
     };
   }
   return { ok: true, target, role, currentRole };
@@ -685,7 +705,7 @@ export async function handleChangeUserRole(
                   ? "user"
                   : now.what === "role"
                     ? "role"
-                    : "current role",
+                    : "current_role",
             });
           }
           // Never the identifier typed (TASK-193, audit A-2: an address in the step outlived the
@@ -694,7 +714,9 @@ export async function handleChangeUserRole(
           // execute route for the screen only); the step keeps the id in its input.
           return {
             success: true,
-            result: `Role changed to "${now.to.name}"`,
+            result: shown("screens.admin_console.results.role_changed", {
+              role: now.to.name,
+            }),
           };
         })
       );

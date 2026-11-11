@@ -51,7 +51,7 @@ async function provision(domains: string[] = []) {
   const r = await asOp(() =>
     provisionTenant(op1, { slug: slug(), name: "Lifecycle Co", domains })
   );
-  if (!r.ok) throw new Error(r.message);
+  if (!r.ok) throw new Error(r.reason);
   made.push(r.value.id);
   return r.value;
 }
@@ -402,7 +402,7 @@ dbDescribe("tenant lifecycle: one account, one outcome (ADR-053 D7)", () => {
     ).resolves.toMatchObject({
       ok: false,
       code: "tenant.state_conflict",
-      message: expect.stringMatching(/More than one account/),
+      reason: "email_shared",
     });
     expect(await roleName(a)).not.toBe("admin");
     expect(await roleName(b)).not.toBe("admin");
@@ -470,7 +470,7 @@ dbDescribe("tenant lifecycle: one account, one outcome (ADR-053 D7)", () => {
       asOp(() => makeTenantAdmin(op1, t.id, "unverified@example.com"))
     ).resolves.toMatchObject({
       code: "tenant.state_conflict",
-      message: expect.stringMatching(/not verified/),
+      reason: "email_unverified",
     });
     expect(await roleName(unverified)).not.toBe("admin");
   });
@@ -523,7 +523,7 @@ dbDescribe("tenant lifecycle: one account, one outcome (ADR-053 D7)", () => {
       await expect(restoring).resolves.toMatchObject({
         ok: false,
         code: "tenant.state_conflict",
-        message: expect.stringMatching(/purged/),
+        reason: "purged",
       });
     } finally {
       await purger.end();

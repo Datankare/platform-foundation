@@ -412,6 +412,30 @@ test("4. the tenancy operator routes on a single-tenant deployment (N-39)", asyn
     }
   );
   expect(mapped.status).toBe(201);
+  // TASK-206 (N-103): an address just added is removed — it was 404 while the directory was kept
+  // in memory and the removal read the database. A second one is mapped first: the operators'
+  // own tenant keeps at least one address (tenant.own_tenant).
+  const mappedHost = String(
+    (mapped.body.result as { host?: string } | undefined)?.host ?? ""
+  );
+  expect(mappedHost).toMatch(/^e2e-/);
+  const kept = await apiFetch(
+    request,
+    ADMIN_A,
+    "POST",
+    `/api/operator/tenants/${TENANT}/domains`,
+    {
+      host: `e2e-kept-${Date.now().toString(36)}.example.test`,
+    }
+  );
+  expect(kept.status).toBe(201);
+  const removed = await apiFetch(
+    request,
+    ADMIN_A,
+    "DELETE",
+    `/api/operator/tenants/${TENANT}/domains?host=${encodeURIComponent(mappedHost)}`
+  );
+  expect([removed.status, removed.body.result]).toEqual([200, true]);
   const unmapped = await apiFetch(
     request,
     ADMIN_A,
@@ -529,6 +553,37 @@ test("4. the tenancy operator routes on a single-tenant deployment (N-39)", asyn
     const r = await apiFetch(request, ADMIN_B, method, path, data);
     expect([what, r.status, codeOf(r)]).toEqual([what, status, code]);
   }
+
+  // TASK-206 (N-103): the tenant provisioned above is deleted, asked by one operator and approved
+  // by the other — the deletion read the database, where the in-memory directory's tenant was not.
+  const asked = await apiFetch(
+    request,
+    ADMIN_A,
+    "POST",
+    `/api/operator/tenants/${other}/deletion`,
+    {
+      reason: "e2e",
+    }
+  );
+  expect([asked.status, asked.body.result]).toEqual([
+    202,
+    expect.objectContaining({ status: "pending" }),
+  ]);
+  const requestId = String((asked.body.result as { id?: string } | undefined)?.id ?? "");
+  const decided = await apiFetch(
+    request,
+    ADMIN_B,
+    "POST",
+    `/api/operator/deletions/${requestId}`,
+    {
+      decision: "approve",
+      note: "e2e",
+    }
+  );
+  expect([decided.status, decided.body.result]).toEqual([
+    200,
+    expect.objectContaining({ status: "executed" }),
+  ]);
 });
 
 test("5. the remaining reads and governed writes, and last the kill switch (N-38, N-39)", async ({
@@ -549,7 +604,10 @@ test("5. the remaining reads and governed writes, and last the kill switch (N-38
     message: "what can you do?",
   });
   expect(assistant.status).toBe(200);
-  expect(typeof assistant.body.response).toBe("string");
+  // The reply is the catalog's key (TASK-206, N-102).
+  expect(assistant.body.response).toMatchObject({
+    key: expect.stringMatching(/^screens\.admin_console\.config_ai\./),
+  });
 
   const policy = await apiFetch(request, ADMIN_A, "GET", "/api/admin/password-policy");
   expect(policy.status).toBe(200);

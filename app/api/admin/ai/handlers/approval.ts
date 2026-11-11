@@ -6,6 +6,7 @@
  * ApprovalRule shape and delegates the versioning + audit to the store.
  */
 
+import { shown } from "@/platform/errors/shown-text";
 import {
   approvalPolicyProblem,
   approvalRulesProblem,
@@ -15,7 +16,6 @@ import {
 import type { ActorType, ApprovalRule } from "@/platform/agents";
 import type { EffectType, RiskLevel } from "@/platform/kernel";
 import { logger } from "@/lib/logger";
-import { renderMessage } from "@/platform/errors/messages";
 import { coded, runAudited, type ActionResult } from "./shared";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -88,7 +88,7 @@ export async function handleSetApprovalPolicy(
           // Round 13, I-A: the rules change no current hold — every hold is restricted while the
           // gating threshold is, and a restricted action is always a person's to approve.
           // Its words are the catalog's (round 14, item 11).
-          result: renderMessage("screens.admin_console.results.approval_policy_updated", {
+          result: shown("screens.admin_console.results.approval_policy_updated", {
             version: policy.version,
             rules: rules.length,
           }),

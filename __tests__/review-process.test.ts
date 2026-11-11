@@ -56,9 +56,12 @@ describe("CLAUDE.md", () => {
       /\*\*(?:Errors and text|Data, errors, text):\*\*[\s\S]*?(?=\n- \*\*)/.exec(
         text
       )?.[0] ?? "";
+    // TASK-206: R-75 and R-77 are at 0 (TASK-205); the rule names the baseline that holds them and
+    // that an API answer's words are the catalog's too.
     expect(rule).toMatch(/screen-literal-baseline\.json/);
-    expect(rule).toMatch(/\bR-75\b/);
-    expect(rule).toMatch(/\bR-77\b/);
+    expect(rule).toMatch(/\bat 0\b/);
+    expect(rule).toMatch(/API answer/);
+    expect(rule).not.toMatch(/\bskips yet\b/);
   });
 
   it.each([

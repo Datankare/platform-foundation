@@ -26,7 +26,8 @@ export const GET = tenantRoute(async function GET(
   const { id } = await params;
   try {
     const tenant = await getTenantDirectory().getTenant(id);
-    if (!tenant) return operatorError("tenant.not_found", "No such tenant.", request);
+    if (!tenant)
+      return operatorError("tenant.not_found", { reason: "no_tenant" }, request);
   } catch (error) {
     return internalError(error, { request, context: "Tenant export failed" });
   }

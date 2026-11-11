@@ -36,6 +36,7 @@ import {
   type TestTenant,
 } from "../helpers/db";
 import { insertUser, newRun, seededRoleId } from "../helpers/db-admin";
+import { renderShown, type ShownText } from "@/platform/errors/shown-text";
 
 const RUN = newRun();
 let a: TestTenant;
@@ -293,10 +294,14 @@ dbDescribe("TASK-189 search: the match count (round 1)", () => {
     expect(total).toBeGreaterThan(20);
     expect(res.table?.rows).toHaveLength(20);
     expect(res.table?.matched).toBe(total);
-    expect(res.result).toBe(`Showing 20 of ${total} matching rows of permissions.`);
+    expect(renderShown(res.result as ShownText)).toBe(
+      `Showing 20 of ${total} matching rows of permissions.`
+    );
     const mine = await a.run(() => handleSearch({ table: "users", text: RUN }, admin));
     expect(mine.table?.matched).toBe(mine.table?.rows.length);
-    expect(mine.result).toBe(`${mine.table?.rows.length} rows of users.`);
+    expect(renderShown(mine.result as ShownText)).toBe(
+      `${mine.table?.rows.length} rows of users.`
+    );
   });
 });
 

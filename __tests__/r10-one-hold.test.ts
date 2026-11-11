@@ -129,6 +129,7 @@ import { ADMIN_TOOL_PERMISSIONS } from "@/app/api/admin/ai/tool-permissions";
 import * as handlers from "@/app/api/admin/ai/handlers";
 import { writeGovernedConfig } from "@/platform/admin/governed-config";
 import { ALWAYS_DUAL_CONTROLLED } from "@/platform/admin/config-handlers";
+import { renderShown, type ShownText } from "@/platform/errors/shown-text";
 
 const ROOT = join(__dirname, "..");
 const second = identityFor("super_admin", { name: "r10_second_super_admin" });
@@ -194,7 +195,9 @@ describe("r10 H1: who may clear a write to a safety-tier dual-controlled key —
     });
     // Held — truthfully — and by the key's own hold: an update_config proposal, not an action.
     expect(held).toMatchObject({ success: false, held: true });
-    expect(held.result).toMatch(/agent\.trusted_agents is under dual control/);
+    expect(renderShown(held.result as ShownText)).toMatch(
+      /agent\.trusted_agents is under dual control/
+    );
     const all = await proposals.query({});
     expect(all.map((p) => [p.label, p.status])).toEqual([["update_config", "proposed"]]);
     expect(all[0].payload).toMatchObject({ key: "agent.trusted_agents" });

@@ -122,7 +122,7 @@ describe("finding 3 — a timed-out handler never runs beside its own retry", ()
     expect((await store.listJobs({ kind: k }))[0]).toMatchObject({
       status: "queued",
       attempts: 1,
-      lastError: "The job did not finish within its time (1000 ms).",
+      lastError: "timeout:1000",
     });
 
     clock += 2000;

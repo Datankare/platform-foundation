@@ -143,3 +143,16 @@ describe("social jobs", () => {
     expect(exec.mock.calls.map((c) => c[3])).toEqual([ids[1]]);
   });
 });
+
+// TASK-206 (N-102): the Jobs console words each kind from the catalog (screens.jobs.kinds).
+describe("the social jobs on the Jobs console (TASK-206)", () => {
+  it("each social job kind has its description in the catalog", () => {
+    const { SOCIAL_JOBS } = jest.requireActual("@/platform/social/jobs");
+    const { jobDescription } = jest.requireActual("@/platform/jobs/operator");
+    expect(
+      SOCIAL_JOBS.map((d: { kind: string }) => d.kind).filter(
+        (k: string) => jobDescription(k) === null
+      )
+    ).toEqual([]);
+  });
+});

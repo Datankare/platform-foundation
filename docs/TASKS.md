@@ -7,6 +7,124 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-206 — Residuals 55f: API answers in the catalog, one tenant directory, a job run's whole record, one full stop
+
+| Field        | Detail                                                                                           |
+| ------------ | ------------------------------------------------------------------------------------------------ |
+| **ID**       | TASK-206                                                                                         |
+| **Type**     | Defect (English written by the server on the admin console; operator writes lost between stores) |
+| **Severity** | High (N-103 Important; N-102, N-104 Low; N-105, N-106 Nit)                                       |
+| **Phase**    | Phase 5                                                                                          |
+| **Target**   | v6.0.0 (RC)                                                                                      |
+| **Status**   | Fixed on develop (sub-batch 55f of the residuals batch)                                          |
+| **Logged**   | 2026-11-08 (register N-102 to N-106, found by sub-batches 55d and 55e)                           |
+
+- **N-103 — one tenant directory.** A dedicated deployment (`TENANCY_MODE=single`) left
+  `TENANT_DIRECTORY_STORE` unset and ran on the in-memory directory, while the tenant lifecycle is
+  SQL on the owner connection (ADR-053 D7). An operator's new tenant, rename or address lived only
+  in the process that made it; removing an address just added read `tenant_domains` and answered
+  404, and a deletion read `tenants` and did not find the tenant (TASK-204's e2e journey found it).
+  The directory is now the database's whenever there is one: unset means `postgres` with a
+  `DATABASE_URL` (`getTenantDirectoryStore`, used by boot and readiness), and `memory` beside a
+  database is refused by the environment contract in every mode, local and CI runs too (ADR-053
+  A12; ENV_REFERENCE, TENANCY_OPERATIONS §2, `.env.example`). Journey:
+  `__tests__/db/tenant-directory-single.db.test.ts` (boot's choice, then provision, add an
+  address, remove it, rename, delete with a second operator, each read back from the database) and
+  `e2e/admin-routes.spec.ts` (the address just mapped is removed; the tenant provisioned is deleted
+  by two operators).
+- **N-104 — a job run's whole record.** A manual run wrote `released`, `hung` and `stoppedBy` on
+  its outcome record and the schema dropped them, logging "Audit details carried keys its
+  action's schema does not allow". The caller is right (the record says what happened): the
+  schema now allows them (`platform/auth/audit-details.ts`), and the route test runs the real
+  writer on the record the run writes and asserts nothing is dropped or logged.
+- **N-102 — API answers a screen shows come from the catalog.** A route's answer that a screen
+  shows as words is a catalog key and values (`platform/errors/shown-text.ts`: `shown`,
+  `renderShown`; a value may itself be one), rendered by the screen: every command-bar result
+  (`app/api/admin/ai/handlers/*`: "Role changed to …", "Password policy updated", the search
+  summaries, held changes), why a hold waits (`PendingApproval.reason`, a run's recorded note by
+  its code's sentence or the store's own notes), the operator readiness checks and the identity
+  provider's reasons, a job kind's description and its recorded failure (now a code:
+  `reported`, `timeout:<ms>`, `sqlstate:<code>`…; a record from before is shown as recorded), an
+  erased account's name in a search's table, the config agent's reply. Coded refusals' params
+  carry ids, never words: `request.invalid_value` gained optional `expected` and `max` (a
+  described value, worded by a `select`), `admin.target_not_found`'s `target` is an id, and an
+  operator failure's reason is a token (`tenant.conflict` and `tenant.invalid` word it). Error
+  codes are unchanged. `/api/health`'s `detail` is a code (ADR-056). Rule C of
+  `__tests__/screen-text-indirect.test.ts` holds `app/api` at 0 (68 sites in PF and 69 in
+  Playform on the base) and checks every key a `shown(…)` names; ADR-051 records it.
+- **N-105 — one full stop.** `tenant.conflict` read "That could not be done: {reason}." with a
+  sentence for the reason: "…awaiting approval..". Its reason is a token now, worded by the
+  message; `__tests__/catalog-punctuation.test.ts` renders every message of every catalog in every
+  branch and fails on a doubled full stop, and renders every reason the operator routes answer.
+- **N-106 — the merged rules read once.** CLAUDE.md (both): the R-75/R-77 exceptions were stale
+  (both at 0 since TASK-205) and now say API answers are the catalog's too; a line over 100
+  characters wrapped. REVIEW.md (both): an over-long line wrapped, and its pointer to a CLAUDE.md
+  section that does not exist names the real one ("Before handing a change to the owner").
+- **Found by the walk: an address already mapped answered 500.** The operator routes recognised a
+  directory conflict by `instanceof`; in a production build the directory boot installs
+  (instrumentation's bundle) and the route that catches its error load `directory.ts` separately,
+  so the class differs and the conflict fell through to `internal.error` (on the base chain too).
+  `isTenantDirectoryConflict` recognises it by its name and code
+  (`platform/tenancy/__tests__/directory-conflict.test.ts`, a second module instance standing for
+  the other bundle); the walk's second address answers 409 `tenant.conflict`.
+- **Gitleaks.** gitleaks 8.28.0 (CI's pin) reports nothing in Playform's history: the fixture at
+  `__tests__/agent-credential-routes.test.ts:54` (05eae13) is cleared by the content-and-path
+  allowlist already in `.gitleaks.toml` (2bff5c5); with that allowlist removed it is reported, so
+  the allowlist is what clears it. No change.
+
+Walked: the admin console (Results, Approvals, Tenants and readiness, Jobs) on production builds
+of the base and of this change, at 1280 px and 390 px.
+
+**Design check**
+
+- **Reach:** the command bar's execute route and its screen; the approvals listing and its panel;
+  the operator readiness route and the Tenants screen; the Jobs console route and screen; every
+  operator tenant route (their refusals' params); the routes that refuse with
+  `request.invalid_value` or `admin.target_not_found` (params); `/api/health`'s `detail`; boot's
+  directory and the environment contract; the audit schema of a manual job run.
+- **Races:** none new. The directory change moves a dedicated deployment's reads onto the same
+  tables its lifecycle already wrote under the tenant's lock; the cache (30 s) is cleared by each
+  write as before.
+- **Dependencies down:** the database down: the Postgres directory fails closed as in a shared
+  deployment (a request's tenant cannot be read: 503); a dedicated deployment with no database at
+  all keeps the in-memory directory. The catalog missing a key: the screen shows the key (the guard
+  fails first).
+- **Erasure leftovers:** none new: what is stored is codes in place of sentences (a job's last
+  error, a command-bar change's comment is the catalog's rendering).
+- **Screens × responses:** every changed answer has its screen moved with it: ExecutionResultsPanel
+  (results, cells), HeldActionsPanel (reason), TenancyPanels (readiness), JobsPanels (description,
+  failures); a refusal is still the registry's message. Fixtures regenerated by their handlers.
+- **Journeys touched:** the admin console (walked), the operator tenant journey (e2e: address
+  removed, tenant deleted), the dedicated deployment's boot.
+- **Weakens a tenant's protection?** No. A dedicated deployment's directory becomes the database's
+  (the shared deployment's already was); refusals keep their codes and statuses.
+
+**Threat model**
+
+- **Boundary:** text from the server to an administrator's or operator's screen; where a dedicated
+  deployment keeps its tenants. Actors that exist: the deployment's administrators and operators,
+  its users (whose input a reason could echo), the owner who configures the deployment.
+- **Bypasses:** English reaching a screen through a field the guard cannot see (a platform module
+  building an answer outside `app/api`): the fields screens render are typed `ShownText`, so the
+  compiler refuses a string there; a reason echoing a typed host stays a bounded value
+  (`echoed`), placed by the catalog.
+- **Forgeries:** none new: a token or key comes from server code; a client cannot set one.
+- **Legitimate flows:** every result, hold, check and job still shown, in the same words or the
+  catalog's; an operator's provisioning, address and deletion steps now each see the last.
+- **Agreed before code:** the owner's brief for sub-batch 55f (2026-11-08).
+
+**Self-review**
+
+- **Consumers checked:** `ActionResult.result` (handlers, execute route, command bar, page,
+  panel, the users-search handoff), `PendingApproval.reason` (panel, operator holds),
+  `ReadinessCheck.detail` and the provider readiness types (both Cognito implementations, the
+  mock), `describeUnapprovable`, `describeJobError` (runner, stores, console), `OperatorResult`
+  (`message` → `reason`: tenancy, erasure attestation, the purge duty, operator-http, the export
+  route), `TENANT_CONFLICT_REASON`, `request.invalid_value` (every caller passing a described
+  value), `SERVER_SET_INPUTS`, `TABLE_NAMES`, the health route; tests moved with each.
+- **Hostile re-read:** a key that does not exist (guard), a doubled stop in any branch (test), a
+  megabyte host echoed (bounded, tested), `memory` beside a database in CI (refused, tested).
+
 ### TASK-204 — Residuals 55d: CI, process, tests, journeys and AI — every gate able to fail, every admin route walked
 
 | Field        | Detail                                                                                                                               |

@@ -20,6 +20,7 @@ jest.mock("@/app/api/admin/ai/handlers/shared", () => ({
 
 import { handleSetApprovalPolicy } from "@/app/api/admin/ai/handlers/approval";
 import { renderMessage } from "@/platform/errors/messages";
+import { renderShown, type ShownText } from "@/platform/errors/shown-text";
 
 const KEY = "screens.admin_console.results.approval_policy_updated";
 const rule = { max_risk: "ordinary", required_approver: "agent" };
@@ -32,9 +33,13 @@ describe("set_approval_policy reply (round 14, item 11)", () => {
     setRules.mockResolvedValueOnce({ version: 7, default: "user", rules: [] });
     const res = await handleSetApprovalPolicy({ rules: Array(n).fill(rule) }, "admin-1");
     expect(res.success).toBe(true);
-    expect(res.result).toBe(renderMessage(KEY, { version: 7, rules: n }));
-    expect(res.result).toContain(`version 7, ${counted}`);
-    expect(res.result).toMatch(/approved by a person whatever these rules say/);
+    expect(renderShown(res.result as ShownText)).toBe(
+      renderMessage(KEY, { version: 7, rules: n })
+    );
+    expect(renderShown(res.result as ShownText)).toContain(`version 7, ${counted}`);
+    expect(renderShown(res.result as ShownText)).toMatch(
+      /approved by a person whatever these rules say/
+    );
   });
 
   it("the handler holds no English sentence of its own", () => {

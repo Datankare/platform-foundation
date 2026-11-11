@@ -154,6 +154,11 @@ export const PLATFORM_AUDIT_DETAIL_KINDS: Readonly<Record<string, DetailKind>> =
   succeeded: "number",
   retried: "number",
   dead: "number",
+  // A manual run's report (TASK-206, N-104): claimed and handed back unrun, still running past
+  // their time, and why the run stopped (idle, budget, draining).
+  released: "number",
+  hung: "number",
+  stoppedBy: "code",
   slug: "code",
   hosts: "list",
   host: "code",
@@ -352,6 +357,9 @@ export const PLATFORM_AUDIT_DETAILS_SCHEMA: DetailsSchema = {
     "succeeded",
     "retried",
     "dead",
+    "released",
+    "hung",
+    "stoppedBy",
   ],
   "admin_action:job_replayed": ["jobId", "kind", "tenantId"],
   "admin_action:job_discarded": ["jobId", "kind", "tenantId"],

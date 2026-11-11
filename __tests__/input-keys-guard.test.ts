@@ -98,7 +98,7 @@ function mismatches(
   fns: Functions,
   starts: readonly string[],
   schema: InputSchemaNode,
-  serverSet: Readonly<Record<string, string>> = {}
+  serverSet: Readonly<Record<string, unknown>> = {}
 ): string[] {
   const named = Object.keys(schema.properties ?? {});
   const out: string[] = [];

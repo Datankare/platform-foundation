@@ -40,6 +40,7 @@ import {
   type DualControlledAction,
 } from "@/platform/admin/dual-control-readiness";
 import type { StaffAccount } from "@/platform/admin/eligible-approvers";
+import { renderShown, shown } from "@/platform/errors/shown-text";
 
 const staff = (id: string, permissions: string[], tenantId = "t1"): StaffAccount => ({
   userId: id,
@@ -79,8 +80,8 @@ describe("unapprovable: two eligible accounts, or the action is named (N-24)", (
       },
       { action: "erasure attestation", permissions: ["platform_operate"], eligible: 1 },
     ]);
-    expect(describeUnapprovable(missing, true)).toMatch(
-      /No second approver for: purge_user_data \(its approver needs admin_purge_user_data, can_access_admin; one account holds them: the requester could not be approved\); erasure attestation/
+    expect(renderShown(describeUnapprovable(missing, true))).toMatch(
+      /No second approver for: purge_user_data \(its approver needs admin_purge_user_data and can_access_admin; one account holds them: the requester could not be approved\) and erasure attestation/
     );
   });
 
@@ -99,7 +100,9 @@ describe("unapprovable: two eligible accounts, or the action is named (N-24)", (
     expect(unapprovable([PURGE, ATTEST], [staff("a", SUPER), staff("b", SUPER)])).toEqual(
       []
     );
-    expect(describeUnapprovable([], true)).toMatch(/Every dual-controlled action/);
+    expect(renderShown(describeUnapprovable([], true))).toMatch(
+      /Every dual-controlled action/
+    );
   });
 
   it("a tenant's action is weighed within each tenant with staff; an operator's across tenants", () => {
@@ -151,14 +154,15 @@ describe("operator readiness: erasure, client secret, dual control (N-22, N-52, 
     mockProvider.current = {
       checkErasureAccess: async () => ({
         state: "missing",
-        reason: "COGNITO_ADMIN_ACCESS_KEY_ID is not set",
+        reason: shown("screens.readiness.erasure_no_key"),
       }),
     };
     const c = await byName();
-    expect(c.erasure).toEqual({
+    expect({ ...c.erasure, detail: renderShown(c.erasure.detail) }).toEqual({
       name: "erasure",
       state: "not_ready",
-      detail: "Erasure cannot delete identities: COGNITO_ADMIN_ACCESS_KEY_ID is not set.",
+      detail:
+        "Erasure cannot delete identities: COGNITO_ADMIN_ACCESS_KEY_ID is not set — no identity is ever erased (TENANCY_OPERATIONS §3.3: every Cognito deployment needs the key).",
     });
     expect(c.identity.state).toBe("not_needed");
   });

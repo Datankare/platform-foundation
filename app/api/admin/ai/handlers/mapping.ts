@@ -14,6 +14,7 @@
  * reports it held.
  */
 
+import { renderShown, shown, type ShownText } from "@/platform/errors/shown-text";
 import {
   CAPABILITY_FEATURES_KEY,
   readCapabilityFeatures,
@@ -70,29 +71,36 @@ export async function handleSetCapabilityMapping(
   }
   const idx = pairs.findIndex(([c]) => c === capability);
 
-  let summary: string;
+  let summary: ShownText;
   if (remove) {
     if (idx === -1)
-      return coded("admin.target_not_found", { target: "capability mapping" });
+      return coded("admin.target_not_found", { target: "capability_mapping" });
     pairs.splice(idx, 1);
-    summary = `Removed capability mapping "${capability}"`;
+    summary = shown("screens.admin_console.results.mapping_removed", { capability });
   } else {
     const features: string[] = Array.isArray(input.features) ? input.features : [];
     if (features.length === 0) {
       return coded("request.invalid_value", {
         field: "features",
-        allowed: ["a non-empty list of features (or remove: true)"],
+        allowed: ["features_or_remove"],
+        expected: "features_or_remove",
       });
     }
     if (idx === -1) pairs.push([capability, features]);
     else pairs[idx][1] = features;
-    summary = `Mapped "${capability}" to [${features.join(", ")}]`;
+    summary = shown("screens.admin_console.results.mapping_set", {
+      capability,
+      features: [...features],
+    });
   }
 
   const outcome = await writeGovernedConfig(admin, {
     key: CAPABILITY_FEATURES_KEY,
     value: pairs,
-    changeComment: `Command bar: ${summary}`,
+    // The record of the change, worded by the catalog when it is written (TASK-206, N-102).
+    changeComment: renderShown(
+      shown("screens.admin_console.results.command_bar_comment", { what: summary })
+    ),
   });
   return fromGovernedConfig(outcome, CAPABILITY_FEATURES_KEY, summary);
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import React from "react";
-import { renderMessage } from "@/platform/errors/messages";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+import { isShownText, renderShown, type ShownText } from "@/platform/errors/shown-text";
 import { isErrorCode, messageKey, type ErrorCode } from "@/platform/errors/registry";
 import { ExpandableText } from "@/components/admin/ExpandableText";
 import { personText } from "@/components/admin/people";
@@ -28,7 +29,8 @@ interface ExecutionResult {
   success: boolean;
   /** Held for an approval: not done, and not failed (review 9 H1). */
   held?: boolean;
-  result?: string;
+  /** The catalog's key and values (TASK-206, N-102). */
+  result?: ShownText;
   /** A search's rows (TASK-189): shown as a compact table under the result line. */
   table?: SearchResultTable;
   error?: string;
@@ -36,7 +38,7 @@ interface ExecutionResult {
    * A failure's code of the error-code contract, and its params (TASK-199): shown as its message.
    */
   code?: string;
-  params?: Readonly<Record<string, string | number>>;
+  params?: Readonly<Record<string, unknown>>;
   /**
    * A users search the Users screen applied to its own list (TASK-190 — one list, not two): the
    * row says the matches are in the list below, with no second table and no count of its own
@@ -56,15 +58,22 @@ interface ExecutionResult {
 
 /**
  * A failure as the admin reads it (TASK-199; rebase round 2, finding 2): its code's catalog
- * message with its params; a result from before codes, its text.
+ * message with its params; a refusal the page read (its `message`, the catalog's sentence
+ * apiError rendered), as read; else the catalog's "Not done" (TASK-206, N-102).
  */
-function failureText(r: ExecutionResult): string | undefined {
+function failureText(r: ExecutionResult): string {
   return r.code && isErrorCode(r.code)
     ? renderMessage(
         messageKey(r.code as ErrorCode),
-        r.params ? { ...r.params } : undefined
+        r.params ? ({ ...r.params } as MessageValues) : undefined
       )
-    : r.error;
+    : (r.error ?? renderMessage("screens.admin_console.results.failed"));
+}
+
+/** What a done or held action did, in the catalog's words (TASK-206, N-102). */
+function resultText(r: ExecutionResult): string {
+  if (isShownText(r.result)) return renderShown(r.result);
+  return renderMessage(`screens.admin_console.results.${r.held ? "held" : "done"}`);
 }
 
 const t = (key: string, values?: Record<string, string | number>) =>
@@ -109,7 +118,7 @@ export const isIdColumn = (column: string): boolean => column === "id";
 const isReferenceColumn = (column: string): boolean =>
   column !== "id" && column.endsWith("_id");
 
-type Cell = string | number | boolean | null;
+type Cell = string | number | boolean | null | ShownText;
 
 /**
  * A cell as text, and its tooltip. Yes/no only for a true boolean (a column such as
@@ -124,6 +133,11 @@ export function shownCell(
   value: Cell
 ): { text: string; title: string } {
   if (value === null) return { text: t("none"), title: t("none") };
+  // Words the server gives as the catalog's key (TASK-206, N-102: an erased account's name).
+  if (isShownText(value)) {
+    const text = renderShown(value);
+    return { text, title: text };
+  }
   if (typeof value === "boolean") {
     const text = value ? t("yes") : t("no");
     return { text, title: text };
@@ -317,7 +331,7 @@ export default function ExecutionResultsPanel({
                     })
                   ) : (
                     <>
-                      {r.success || r.held ? (r.result ?? r.error) : failureText(r)}
+                      {r.success || r.held ? resultText(r) : failureText(r)}
                       {r.account ? (
                         <span className="block text-xs text-gray-300" data-account="true">
                           {renderMessage("screens.admin_console.results.account", {

@@ -25,6 +25,24 @@ import { withTenantTx } from "@/platform/data";
 import { CONFIG_HOLD_TOOLS } from "@/platform/admin/hold-keys";
 import { namedAccounts, type NamedAccount } from "@/platform/admin/account-names";
 import { getEnhancedConfig, getPermissionTier } from "@/platform/auth/platform-config";
+import { shown, type ShownText } from "@/platform/errors/shown-text";
+import { isErrorCode, messageKey, type ErrorCode } from "@/platform/errors/registry";
+import {
+  ATOMIC_RECOVERED_NOTE,
+  INDETERMINATE_NOTE,
+} from "@/platform/agents/proposal-store";
+
+/**
+ * A run's recorded note as the screen shows it (TASK-206, N-102): a registry code by its sentence,
+ * the store's own notes by the catalog's words, anything else as recorded (an operator's note).
+ */
+export function runNote(note: string): ShownText | string {
+  if (isErrorCode(note))
+    return shown(messageKey(note as ErrorCode) as `errors.${string}`);
+  if (note === INDETERMINATE_NOTE) return shown("screens.held.note_indeterminate");
+  if (note === ATOMIC_RECOVERED_NOTE) return shown("screens.held.note_atomic_recovered");
+  return note;
+}
 
 export { proposalConfigKey } from "@/platform/admin/hold-authority";
 
@@ -131,8 +149,12 @@ export interface PendingApproval {
   readonly requiredPermission: ApprovalPermission;
   readonly effectiveRisk?: RiskLevel;
   readonly effects?: readonly EffectType[];
-  /** "Why held", in plain terms, for the surface. */
-  readonly reason: string;
+  /**
+   * "Why held", as the catalog's key and values (TASK-206, N-102): the screen words it — never
+   * English written here. A failed or undecided run's recorded note is its `detail`: a code's
+   * sentence or a run note the catalog has, else the note as recorded (a person's).
+   */
+  readonly reason: ShownText;
   /**
    * An approved run whose outcome is unknown (review 11 H-1): decided by "mark_executed" (after
    * verifying it took effect), "reapprove" or "withdraw" (after verifying it did not: run again,
@@ -480,17 +502,20 @@ export async function listPendingApprovals(
         ...(change ? { change } : {}),
         ...(comment ? { comment } : {}),
         reason:
-          p.status === "indeterminate"
-            ? `Approved and being applied when its run stopped answering: whether it took effect is unknown${
-                p.lastRunError ? ` (${p.lastRunError})` : ""
-              }. Verify it, then mark it executed — or, if it did not take effect, approve it again or withdraw it.`
-            : p.status === "approved"
-              ? `Approved, but it could not be applied${
-                  p.lastRunError ? ` (${p.lastRunError})` : ""
-                } — approve it again to retry, or reject it. It lapses once the approval period has passed.`
-              : `Held at effectiveRisk "${p.effectiveRisk}"${
-                  p.effects.length ? ` (effects: ${p.effects.join(", ")})` : ""
-                } — needs an independent approver.`,
+          p.status === "indeterminate" || p.status === "approved"
+            ? shown(
+                p.status === "indeterminate"
+                  ? "screens.held.reason_undecided"
+                  : "screens.held.reason_retry",
+                p.lastRunError
+                  ? { noted: "yes", detail: runNote(p.lastRunError) }
+                  : { noted: "no" }
+              )
+            : shown("screens.held.reason_held", {
+                risk: p.effectiveRisk,
+                effects: [...p.effects],
+                effected: p.effects.length ? "yes" : "no",
+              }),
         createdAt: p.createdAt,
       };
     })
@@ -522,9 +547,7 @@ export async function listPendingApprovals(
             }
           : {}),
         ...(comment ? { comment } : {}),
-        reason:
-          c.impactSummary?.trim() ||
-          `Safety-tier change to "${c.configKey}" awaiting a second approver.`,
+        reason: shown("screens.held.reason_two_person", { key: c.configKey }),
         createdAt: c.createdAt,
       };
     })

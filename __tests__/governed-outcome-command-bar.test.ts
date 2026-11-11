@@ -14,6 +14,7 @@
 import { fromGovernedConfig } from "@/app/api/admin/ai/handlers/shared";
 import { logger } from "@/lib/logger";
 import type { GovernedConfigOutcome } from "@/platform/admin/governed-config";
+import { shown } from "@/platform/errors/shown-text";
 
 const result = { toolId: "update_config", success: true, data: {}, durationMs: 0 };
 
@@ -23,7 +24,13 @@ it.each([
   ["admin.write_indeterminate", {}],
 ] as const)("answers a write that failed with %s by that code", (code, params) => {
   const outcome = { kind: "failed", result, code, params } as GovernedConfigOutcome;
-  expect(fromGovernedConfig(outcome, "agent.trusted_agents", "s")).toEqual({
+  expect(
+    fromGovernedConfig(
+      outcome,
+      "agent.trusted_agents",
+      shown("screens.admin_console.results.agent_registered", { agent: "s" })
+    )
+  ).toEqual({
     success: false,
     error: code,
     code,
@@ -39,7 +46,13 @@ it("answers a failure with no code admin.action_failed, its text logged", () => 
     kind: "failed",
     result: { ...result, success: false, error: "db said no" },
   } as GovernedConfigOutcome;
-  expect(fromGovernedConfig(outcome, "k", "s")).toMatchObject({
+  expect(
+    fromGovernedConfig(
+      outcome,
+      "k",
+      shown("screens.admin_console.results.agent_registered", { agent: "s" })
+    )
+  ).toMatchObject({
     code: "admin.action_failed",
   });
   expect(error).toHaveBeenCalledWith(
@@ -55,7 +68,13 @@ it("answers a refused value with its structured reason", () => {
     errors: ["Value 0 is below minimum 60"],
     params: { key: "k", reason: "below_min", min: 60 },
   } as GovernedConfigOutcome;
-  expect(fromGovernedConfig(outcome, "k", "s")).toMatchObject({
+  expect(
+    fromGovernedConfig(
+      outcome,
+      "k",
+      shown("screens.admin_console.results.agent_registered", { agent: "s" })
+    )
+  ).toMatchObject({
     code: "admin.config_invalid_value",
     params: { key: "k", reason: "below_min", min: 60 },
   });

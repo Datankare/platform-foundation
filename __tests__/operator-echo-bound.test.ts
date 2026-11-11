@@ -26,8 +26,9 @@ const OPERATOR = { userId: "00000000-0000-4000-9000-0000000000e1" };
 const TENANT = "00000000-0000-4000-8000-0000000000aa";
 const HUGE = `not a host ${"x".repeat(1_000_000)}`;
 
-const messageOf = (r: { ok: boolean; message?: string }) =>
-  r.ok ? "" : (r.message ?? "");
+/** What the refusal echoes (TASK-206: a value of its reason, the catalog words the rest). */
+const messageOf = (r: { ok: boolean; params?: Readonly<Record<string, string>> }) =>
+  r.ok ? "" : Object.values(r.params ?? {}).join(" ");
 
 describe("operator input echoed back is bounded (N-56)", () => {
   it("echoed: at most ECHO_MAX characters and an ellipsis; no control characters", () => {

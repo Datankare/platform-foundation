@@ -30,8 +30,8 @@ import { peekTenant } from "./context";
 import { TENANT_PURGE_AFTER_DAYS } from "./postgres-directory";
 import {
   CachedTenantDirectory,
-  TenantDirectoryConflictError,
-  TENANT_CONFLICT_TEXT,
+  TENANT_CONFLICT_REASON,
+  isTenantDirectoryConflict,
   getTenantDirectory,
   isTenantSlug,
   normaliseHost,
@@ -85,7 +85,12 @@ export type OperatorResult<T> =
   | {
       readonly ok: false;
       readonly code: OperatorFailure;
-      readonly message: string;
+      /**
+       * Why, as a token the catalog words (TASK-206, N-102/N-105): tenant.invalid's and
+       * tenant.conflict's `reason` param, and the audit record's reason — never English.
+       */
+      readonly reason: string;
+      readonly params?: Readonly<Record<string, string>>;
       /** For tenant.role_refused: the role rule's coded refusal. */
       readonly refusal?: RoleRefusal;
       /** For approvals.no_eligible_approver: the action and what its approver must hold. */
@@ -118,7 +123,7 @@ export async function secondOperatorRefusal<T>(
       ? {
           ok: false,
           code: "approvals.no_eligible_approver",
-          message: refusal.message,
+          reason: "no_eligible_approver",
           needs: { action, permissions: refusal.params.permissions },
         }
       : null;
@@ -126,7 +131,7 @@ export async function secondOperatorRefusal<T>(
     return {
       ok: false,
       code: "roles.unavailable",
-      message: "Who could approve this could not be read, so nothing was asked.",
+      reason: "roles_unavailable",
     };
   }
 }
@@ -146,10 +151,15 @@ export function echoed(input: unknown): string {
 }
 
 const ok = <T>(value: T): OperatorResult<T> => ({ ok: true, value });
-const fail = <T>(code: OperatorFailure, message: string): OperatorResult<T> => ({
+const fail = <T>(
+  code: OperatorFailure,
+  reason: string,
+  params?: Readonly<Record<string, string>>
+): OperatorResult<T> => ({
   ok: false,
   code,
-  message,
+  reason,
+  ...(params ? { params } : {}),
 });
 
 /** Record, then act; an unwritable record stops the action (audit X-8). */
@@ -173,17 +183,14 @@ async function recorded<T>(
         const result = await act();
         return result.ok
           ? { success: true as const, result }
-          : { success: false as const, error: result.message, result };
+          : { success: false as const, error: result.reason, result };
       },
       options
     );
     return out.result;
   } catch (err) {
     if (err instanceof AuditWriteError) {
-      return fail(
-        "audit.unavailable",
-        "The audit log is unavailable, so nothing was changed."
-      );
+      return fail("audit.unavailable", "audit_unavailable");
     }
     throw err;
   }
@@ -319,16 +326,13 @@ export async function provisionTenant(
 ): Promise<OperatorResult<TenantRecord & { readonly domains: readonly string[] }>> {
   const name = validateTenantName(input.name);
   if (!isTenantSlug(input.slug)) {
-    return fail(
-      "tenant.invalid",
-      "The slug must be 1–40 lower-case letters, digits or hyphens."
-    );
+    return fail("tenant.invalid", "slug");
   }
-  if (!name) return fail("tenant.invalid", "The name must be 2–100 characters.");
+  if (!name) return fail("tenant.invalid", "name");
   const hosts: string[] = [];
   for (const raw of input.domains ?? []) {
     const host = normaliseHost(raw);
-    if (!host) return fail("tenant.invalid", `"${echoed(raw)}" is not a host name.`);
+    if (!host) return fail("tenant.invalid", "host", { host: echoed(raw) });
     if (!hosts.includes(host)) hosts.push(host);
   }
   const id = randomUUID();
@@ -342,8 +346,8 @@ export async function provisionTenant(
       try {
         tenant = await directory.createTenant({ id, slug: input.slug, name });
       } catch (err) {
-        if (err instanceof TenantDirectoryConflictError)
-          return fail(err.code, TENANT_CONFLICT_TEXT[err.code]);
+        if (isTenantDirectoryConflict(err))
+          return fail(err.code, TENANT_CONFLICT_REASON[err.code]);
         throw err;
       }
       for (const host of hosts) {
@@ -351,11 +355,8 @@ export async function provisionTenant(
           await directory.addDomain(tenant.id, host);
         } catch (err) {
           // The tenant exists; report the address that could not be added, keep the rest.
-          if (err instanceof TenantDirectoryConflictError) {
-            return fail(
-              err.code,
-              `Tenant created, but ${host} already serves another tenant.`
-            );
+          if (isTenantDirectoryConflict(err)) {
+            return fail(err.code, "created_domain_taken", { host });
           }
           throw err;
         }
@@ -371,15 +372,15 @@ export async function addTenantDomain(
   rawHost: string
 ): Promise<OperatorResult<TenantDomainRecord>> {
   const host = normaliseHost(rawHost);
-  if (!host) return fail("tenant.invalid", `"${echoed(rawHost)}" is not a host name.`);
+  if (!host) return fail("tenant.invalid", "host", { host: echoed(rawHost) });
   const tenant = await tenantById(tenantId);
-  if (!tenant) return fail("tenant.not_found", "No such tenant.");
+  if (!tenant) return fail("tenant.not_found", "no_tenant");
   return recorded(operator, "tenant_domain_added", { tenantId, host }, async () => {
     try {
       return ok(await getTenantDirectory().addDomain(tenantId, host));
     } catch (err) {
-      if (err instanceof TenantDirectoryConflictError)
-        return fail(err.code, TENANT_CONFLICT_TEXT[err.code]);
+      if (isTenantDirectoryConflict(err))
+        return fail(err.code, TENANT_CONFLICT_REASON[err.code]);
       throw err;
     }
   });
@@ -397,8 +398,8 @@ export async function removeTenantDomain(
   rawHost: string
 ): Promise<OperatorResult<true>> {
   const host = normaliseHost(rawHost);
-  if (!host) return fail("tenant.invalid", `"${echoed(rawHost)}" is not a host name.`);
-  if (!isTenantId(tenantId)) return fail("tenant.not_found", "No such tenant.");
+  if (!host) return fail("tenant.invalid", "host", { host: echoed(rawHost) });
+  if (!isTenantId(tenantId)) return fail("tenant.not_found", "no_tenant");
   const own = ownTenant(tenantId);
   return recorded(operator, "tenant_domain_removed", { tenantId, host }, async () => {
     const result = await withOwnerTx("tenant-lifecycle", async (tx) => {
@@ -409,13 +410,10 @@ export async function removeTenantDomain(
         [tenantId, host]
       );
       if (!rows[0]?.mapped) {
-        return fail<true>("tenant.not_found", `${host} does not serve that tenant.`);
+        return fail<true>("tenant.not_found", "host_unmapped", { host });
       }
       if (own && rows[0].n <= 1) {
-        return fail<true>(
-          "tenant.own_tenant",
-          "You cannot remove the last address of the tenant you are operating from."
-        );
+        return fail<true>("tenant.own_tenant", "own_last_address");
       }
       await tx.query(
         "delete from tenant_domains where tenant_id = $1::uuid and host = $2",
@@ -434,10 +432,10 @@ export async function renameTenant(
   rawName: string
 ): Promise<OperatorResult<TenantRecord>> {
   const name = validateTenantName(rawName);
-  if (!name) return fail("tenant.invalid", "The name must be 2–100 characters.");
+  if (!name) return fail("tenant.invalid", "name");
   return recorded(operator, "tenant_renamed", { tenantId, name }, async () => {
     const t = await getTenantDirectory().rename(tenantId, name);
-    return t ? ok(t) : fail("tenant.not_found", "No such tenant.");
+    return t ? ok(t) : fail("tenant.not_found", "no_tenant");
   });
 }
 
@@ -455,12 +453,9 @@ export async function suspendTenant(
   reason: string
 ): Promise<OperatorResult<TenantRecord>> {
   const why = reasonOf(reason);
-  if (!why) return fail("tenant.invalid", "Give a reason (3–500 characters).");
+  if (!why) return fail("tenant.invalid", "reason_text");
   if (ownTenant(tenantId)) {
-    return fail(
-      "tenant.own_tenant",
-      "You cannot suspend the tenant you are operating from."
-    );
+    return fail("tenant.own_tenant", "own_suspend");
   }
   return recorded(operator, "tenant_suspended", { tenantId, reason: why }, async () => {
     const t = await getTenantDirectory().setStatus({
@@ -480,7 +475,7 @@ export async function resumeTenant(
   reason: string
 ): Promise<OperatorResult<TenantRecord>> {
   const why = reasonOf(reason);
-  if (!why) return fail("tenant.invalid", "Give a reason (3–500 characters).");
+  if (!why) return fail("tenant.invalid", "reason_text");
   return recorded(operator, "tenant_resumed", { tenantId, reason: why }, async () => {
     const t = await getTenantDirectory().setStatus({
       tenantId,
@@ -499,8 +494,8 @@ async function stateConflict<T>(
 ): Promise<OperatorResult<T>> {
   const t = await tenantById(tenantId);
   return t
-    ? fail("tenant.state_conflict", `The tenant is ${t.status}, not ${expected}.`)
-    : fail("tenant.not_found", "No such tenant.");
+    ? fail("tenant.state_conflict", "state", { status: t.status, expected })
+    : fail("tenant.not_found", "no_tenant");
 }
 
 // ── Deletion: two operators ───────────────────────────────────────────
@@ -545,13 +540,10 @@ export async function requestTenantDeletion(
   reason: string
 ): Promise<OperatorResult<DeletionRequest>> {
   const why = reasonOf(reason);
-  if (!why) return fail("tenant.invalid", "Give a reason (3–500 characters).");
-  if (!isTenantId(tenantId)) return fail("tenant.not_found", "No such tenant.");
+  if (!why) return fail("tenant.invalid", "reason_text");
+  if (!isTenantId(tenantId)) return fail("tenant.not_found", "no_tenant");
   if (ownTenant(tenantId)) {
-    return fail(
-      "tenant.own_tenant",
-      "You cannot delete the tenant you are operating from."
-    );
+    return fail("tenant.own_tenant", "own_delete");
   }
   // A request no other operator could approve is refused, never left to expire (N-24).
   const noOne = await secondOperatorRefusal<DeletionRequest>("tenant deletion", operator);
@@ -562,12 +554,9 @@ export async function requestTenantDeletion(
         "select status from tenants where id = $1::uuid for update",
         [tenantId]
       );
-      if (!t.rows[0]) return fail<DeletionRequest>("tenant.not_found", "No such tenant.");
+      if (!t.rows[0]) return fail<DeletionRequest>("tenant.not_found", "no_tenant");
       if (t.rows[0].status === "deleted") {
-        return fail<DeletionRequest>(
-          "tenant.state_conflict",
-          "The tenant is already deleted."
-        );
+        return fail<DeletionRequest>("tenant.state_conflict", "already_deleted");
       }
       // An expired open request no longer counts.
       await tx.query(
@@ -584,10 +573,7 @@ export async function requestTenantDeletion(
       );
       return rows[0]
         ? ok(request(rows[0]))
-        : fail<DeletionRequest>(
-            "tenant.state_conflict",
-            "A deletion is already awaiting approval."
-          );
+        : fail<DeletionRequest>("tenant.state_conflict", "deletion_pending");
     })
   );
 }
@@ -605,7 +591,7 @@ export async function decideTenantDeletion(
   approve: boolean,
   note: string
 ): Promise<OperatorResult<DeletionRequest>> {
-  if (!isTenantId(requestId)) return fail("tenant.request_not_found", "No such request.");
+  if (!isTenantId(requestId)) return fail("tenant.request_not_found", "no_request");
   return recorded(
     operator,
     approve ? "tenant_deletion_approved" : "tenant_deletion_rejected",
@@ -618,35 +604,24 @@ export async function decideTenantDeletion(
           [requestId]
         );
         const r = rows[0];
-        if (!r)
-          return fail<DeletionRequest>("tenant.request_not_found", "No such request.");
+        if (!r) return fail<DeletionRequest>("tenant.request_not_found", "no_request");
         if (r.status !== "pending") {
-          return fail<DeletionRequest>(
-            "tenant.state_conflict",
-            `The request is ${r.status}.`
-          );
+          return fail<DeletionRequest>("tenant.state_conflict", "request_state", {
+            status: r.status,
+          });
         }
         if (r.expires_at <= new Date()) {
           await tx.query(
             "update tenant_lifecycle_requests set status = 'expired', decided_at = now() where id = $1::uuid",
             [requestId]
           );
-          return fail<DeletionRequest>(
-            "tenant.state_conflict",
-            "The request has expired."
-          );
+          return fail<DeletionRequest>("tenant.state_conflict", "request_expired");
         }
         if (approve && sameId(r.requested_by, operator.userId)) {
-          return fail<DeletionRequest>(
-            "tenant.self_approval",
-            "A different operator must approve a deletion you requested."
-          );
+          return fail<DeletionRequest>("tenant.self_approval", "self_approval");
         }
         if (approve && ownTenant(r.tenant_id)) {
-          return fail<DeletionRequest>(
-            "tenant.own_tenant",
-            "You cannot delete the tenant you are operating from."
-          );
+          return fail<DeletionRequest>("tenant.own_tenant", "own_delete");
         }
         if (approve) {
           // First, so a tenant not in a deletable state leaves the request as it was.
@@ -659,10 +634,7 @@ export async function decideTenantDeletion(
             [r.tenant_id, operator.userId, r.reason, TENANT_PURGE_AFTER_DAYS]
           );
           if (deleted.rowCount !== 1) {
-            return fail<DeletionRequest>(
-              "tenant.state_conflict",
-              "The tenant is no longer active or suspended."
-            );
+            return fail<DeletionRequest>("tenant.state_conflict", "not_active");
           }
         }
         const decided = await tx.query<RequestRow>(
@@ -696,15 +668,15 @@ export async function restoreTenant(
   reason: string
 ): Promise<OperatorResult<TenantRecord>> {
   const why = reasonOf(reason);
-  if (!why) return fail("tenant.invalid", "Give a reason (3–500 characters).");
-  if (!isTenantId(tenantId)) return fail("tenant.not_found", "No such tenant.");
+  if (!why) return fail("tenant.invalid", "reason_text");
+  if (!isTenantId(tenantId)) return fail("tenant.not_found", "no_tenant");
   const before = await withOwnerTx("tenant-lifecycle", (tx) =>
     tx.query<{ purged_at: Date | null }>(
       "select purged_at from tenants where id = $1::uuid",
       [tenantId]
     )
   );
-  if (!before.rows[0]) return fail("tenant.not_found", "No such tenant.");
+  if (!before.rows[0]) return fail("tenant.not_found", "no_tenant");
   if (before.rows[0].purged_at) return purgedAlready();
   return recorded(operator, "tenant_restored", { tenantId, reason: why }, async () => {
     const { rows } = await withOwnerTx("tenant-lifecycle", (tx) =>
@@ -733,10 +705,7 @@ export async function restoreTenant(
 }
 
 function purgedAlready<T>(): OperatorResult<T> {
-  return fail(
-    "tenant.state_conflict",
-    "The tenant's data has been purged; it cannot be restored."
-  );
+  return fail("tenant.state_conflict", "purged");
 }
 
 /**
@@ -835,7 +804,7 @@ export async function exportTenantData(
   write: (chunk: string) => Promise<void>
 ): Promise<OperatorResult<number>> {
   const t = await tenantById(tenantId);
-  if (!t) return fail("tenant.not_found", "No such tenant.");
+  if (!t) return fail("tenant.not_found", "no_tenant");
   return recorded(operator, "tenant_exported", { tenantId }, async () =>
     ok(await writeTenantExport(tenantId, write))
   );
@@ -873,16 +842,13 @@ export async function makeTenantAdmin(
 ): Promise<OperatorResult<{ readonly userId: string }>> {
   const address = typeof email === "string" ? email.trim().toLowerCase() : "";
   if (!/^[^\s@]+@[^\s@]+$/.test(address) || address.length > 320) {
-    return fail("tenant.invalid", "Give the user's email address.");
+    return fail("tenant.invalid", "email");
   }
-  if (!isTenantId(tenantId)) return fail("tenant.not_found", "No such tenant.");
+  if (!isTenantId(tenantId)) return fail("tenant.not_found", "no_tenant");
   const actor = operator.admin;
   if (!actor) {
     // Fail closed: the rules cannot be applied to an operator not verified here.
-    return fail(
-      "tenant.invalid",
-      "The operator could not be verified for a role change."
-    );
+    return fail("tenant.invalid", "operator_unverified");
   }
   // The record names the account, never the address typed (TASK-193, audit A-3): it is written
   // in the operator's tenant, which the account's erasure reaches by its id, and an address typed
@@ -912,45 +878,30 @@ export async function makeTenantAdmin(
           [tenantId, address]
         );
         if (rows.length === 0) {
-          return fail<{ userId: string }>(
-            "tenant.user_not_found",
-            "No user with that email in this tenant; they must sign up at one of its addresses first."
-          );
+          return fail<{ userId: string }>("tenant.user_not_found", "no_user");
         }
         if (rows.length > 1) {
-          return fail<{ userId: string }>(
-            "tenant.state_conflict",
-            "More than one account in this tenant has that email; none was made administrator."
-          );
+          return fail<{ userId: string }>("tenant.state_conflict", "email_shared");
         }
         if (!rows[0].email_verified) {
-          return fail<{ userId: string }>(
-            "tenant.state_conflict",
-            "That account has not verified its email; it was not made administrator."
-          );
+          return fail<{ userId: string }>("tenant.state_conflict", "email_unverified");
         }
         // Only the account recorded (TASK-193, audit A-3): one that replaced it since is not
         // the account the record names.
         if (!sameId(rows[0].id, recordedId)) {
-          return fail<{ userId: string }>(
-            "tenant.state_conflict",
-            "The account with that email changed while this ran; it was not made administrator."
-          );
+          return fail<{ userId: string }>("tenant.state_conflict", "account_changed");
         }
         const assigned = await assignUserRole(tx, actor, rows[0].id, { name: "admin" });
         if (assigned.kind === "refused") {
           return {
             ok: false as const,
             code: "tenant.role_refused" as const,
-            message: "A role rule refused making this account administrator.",
+            reason: "role_refused",
             refusal: assigned.refusal,
           };
         }
         if (assigned.kind === "not_found" || assigned.kind === "stale") {
-          return fail<{ userId: string }>(
-            "tenant.state_conflict",
-            "The account or the administrator role changed; it was not made administrator."
-          );
+          return fail<{ userId: string }>("tenant.state_conflict", "role_changed");
         }
         promotedSub = assigned.target.cognitoSub;
         return ok({ userId: assigned.target.id });

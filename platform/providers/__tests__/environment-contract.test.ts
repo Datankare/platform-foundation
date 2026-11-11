@@ -6,6 +6,7 @@ import {
   EnvironmentContractError,
   assertEnvironmentContract,
   checkEnvironmentContract,
+  getTenantDirectoryStore,
   getAuthProviderSetting,
   getCognitoAdminCredentials,
   getCognitoSettings,
@@ -846,6 +847,42 @@ describe("tenancy is declared (ADR-053 D1)", () => {
     expect(
       checkEnvironmentContract(valid({ ...SHARED, TENANT_DIRECTORY_STORE: "redis" }))
     ).toEqual([expect.stringMatching(/^TENANT_DIRECTORY_STORE has the wrong shape/)]);
+  });
+
+  // TASK-206 (N-103): a dedicated deployment on the in-memory directory kept an operator's new
+  // tenant, rename or address in one process while the lifecycle's SQL read the database.
+  it("keeps the directory in the database whenever there is one", () => {
+    const single = valid({ TENANCY_MODE: "single", TENANT_DIRECTORY_STORE: undefined });
+    expect(single.DATABASE_URL).toBeDefined();
+    expect(getTenantDirectoryStore(single)).toBe("postgres");
+    expect(getTenantDirectoryStore({ ...single, DATABASE_URL: undefined })).toBe(
+      "memory"
+    );
+    expect(getTenantDirectoryStore({ ...single, TENANT_DIRECTORY_STORE: "memory" })).toBe(
+      "memory"
+    );
+    expect(checkEnvironmentContract(single)).toEqual([]);
+    expect(
+      checkEnvironmentContract({ ...single, TENANT_DIRECTORY_STORE: "memory" })
+    ).toEqual([
+      expect.stringMatching(/^TENANT_DIRECTORY_STORE=memory with DATABASE_URL/),
+    ]);
+    // A local or CI run too: the e2e database found it there (TASK-204's admin-routes journey).
+    expect(
+      checkEnvironmentContract({
+        ...single,
+        TENANT_DIRECTORY_STORE: "memory",
+        DEPLOYMENT_HOST: "ci",
+      })
+    ).toContainEqual(
+      expect.stringMatching(/^TENANT_DIRECTORY_STORE=memory with DATABASE_URL/)
+    );
+    // Shared mode keeps its own one refusal.
+    expect(
+      checkEnvironmentContract(valid({ ...SHARED, TENANT_DIRECTORY_STORE: "memory" }))
+    ).toEqual([
+      expect.stringMatching(/^TENANT_DIRECTORY_STORE=memory with TENANCY_MODE=shared/),
+    ]);
   });
 
   it("admin credentials come as a pair", () => {

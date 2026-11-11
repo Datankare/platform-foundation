@@ -49,10 +49,13 @@ import { tenantRoute } from "@/platform/tenancy/route";
 /** Per-probe bound for this route (the registry's default). */
 const HEALTH_TIMEOUT_MS = 5_000;
 
-/** Withheld-detail notice, so a caller knows detail exists and where it went. */
-const DETAIL_NOTICE =
-  "Probe detail is withheld from unauthenticated callers (OWASP A05) and sent to the " +
-  "configured error reporter. Correlate using requestId.";
+/**
+ * Withheld-detail notice, so a caller knows detail exists and where it went: probe detail is
+ * withheld from unauthenticated callers (OWASP A05) and sent to the configured error reporter;
+ * correlate using requestId. A code, as every answer's words are (TASK-206: no English written in
+ * app/api); ADR-056's Health paragraph lists the codes.
+ */
+const DETAIL_NOTICE = "probe_detail_withheld";
 
 export const GET = tenantRoute(async function GET() {
   const requestId = generateRequestId();
@@ -76,7 +79,8 @@ export const GET = tenantRoute(async function GET() {
         requestId,
         probeCount: 0,
         checks: [],
-        detail: "Observability is not initialized; no probe could be run.",
+        // Observability is not initialized: no probe could be run (a code, TASK-206).
+        detail: "observability_uninitialised",
       },
       { status: 503, headers: { "cache-control": "no-store" } }
     );

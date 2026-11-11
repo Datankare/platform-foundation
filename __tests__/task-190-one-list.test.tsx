@@ -50,6 +50,7 @@ import {
 import { DETAILS_ROLES, mayShowDetails } from "@/components/admin/ShowDetailsToggle";
 import { fullTimestamp } from "@/components/admin/admin-format";
 import { renderMessage } from "@/platform/errors/messages";
+import { shown } from "@/platform/errors/shown-text";
 
 const u = (key: string, values?: Record<string, string | number>) =>
   renderMessage(`screens.admin_console.users.${key}`, values);
@@ -343,7 +344,11 @@ describe("the results row of a users search on the Users screen: one line, no ta
   const usersSearch = {
     tool: "search",
     success: true,
-    result: "1 row of users.",
+    result: shown("screens.admin_console.search.summary_all", {
+      shown: 1,
+      matched: 1,
+      table: "users",
+    }),
     table: {
       table: "users",
       columns: ["id", "email", "role", "created_at"],
@@ -454,7 +459,11 @@ describe("the results row of a users search on the Users screen: one line, no ta
     const audit = {
       tool: "search",
       success: true,
-      result: "1 row of audit_log.",
+      result: shown("screens.admin_console.search.summary_all", {
+        shown: 1,
+        matched: 1,
+        table: "audit_log",
+      }),
       table: {
         table: "audit_log",
         columns: ["id", "action", "actor_id", "target_id", "created_at"],
@@ -563,7 +572,16 @@ describe("applyUsersSearch: the hand-off", () => {
 
   it("round 1 (1): changed filters dismiss the listed row, and the kept-filters note", () => {
     const listed = { tool: "search", success: true, listed: true };
-    const other = { tool: "create_role", success: true, result: "Role created" };
+    const other = {
+      tool: "create_role",
+      success: true,
+      result: shown("screens.admin_console.results.role_created", {
+        name: "Editor",
+        count: 2,
+        gap: "none",
+        missing: [],
+      }),
+    };
     expect(afterFiltersChanged([listed])).toBeNull();
     expect(afterFiltersChanged([other, listed])).toEqual([other]);
     expect(
@@ -676,7 +694,11 @@ describe("the console, end to end: 'show moderators' on Users filters the one li
             {
               tool: "search",
               success: true,
-              result: "1 row of users.",
+              result: shown("screens.admin_console.search.summary_all", {
+                shown: 1,
+                matched: 1,
+                table: "users",
+              }),
               table: {
                 table: "users",
                 columns: ["id", "email", "role"],

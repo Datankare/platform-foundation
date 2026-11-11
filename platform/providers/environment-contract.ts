@@ -240,7 +240,7 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     aliases: [],
     shape: /^(postgres|memory)$/,
     shapeHint:
-      "one of: postgres, memory — where tenants and their domains are kept (memory is refused in production — ADR-053)",
+      "one of: postgres, memory — where tenants and their domains are kept; unset, postgres when DATABASE_URL is set (memory beside a database is refused — ADR-053)",
   },
   {
     name: "COGNITO_ADMIN_ACCESS_KEY_ID",
@@ -741,11 +741,28 @@ export function databaseConnectionViolations(
   return violations;
 }
 
-/** Where the tenant directory is kept; undefined when unset (memory outside production). */
+/** TENANT_DIRECTORY_STORE as set; undefined when unset (getTenantDirectoryStore decides then). */
 export function getTenantDirectoryStoreSetting(
   env: EnvSource = process.env
 ): string | undefined {
   return resolveSetting("TENANT_DIRECTORY_STORE", env);
+}
+
+/**
+ * Where the tenant directory is kept (TASK-206, N-103): as set; unset, Postgres whenever the
+ * deployment has a database, memory only when it has none. The tenant lifecycle (an address
+ * removed under the tenant's lock, a deletion, a purge, the overview) is SQL on the owner
+ * connection (ADR-053 D7), so with a database the directory must be the same tables: a dedicated
+ * deployment on the in-memory directory kept an operator's new tenant, rename or address in one
+ * process while removing that address, or deleting the tenant, read `tenant_domains` and answered
+ * 404. The contract refuses `memory` beside a DATABASE_URL.
+ */
+export function getTenantDirectoryStore(
+  env: EnvSource = process.env
+): "postgres" | "memory" {
+  const set = getTenantDirectoryStoreSetting(env);
+  if (set === "postgres" || set === "memory") return set;
+  return getDatabaseSettings(env).url !== undefined ? "postgres" : "memory";
 }
 
 export interface CognitoAdminCredentials {
@@ -1111,7 +1128,15 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
 
   const directoryStore = getTenantDirectoryStoreSetting(env);
   // An unknown value is already refused by its shape; only the two real choices are judged here.
-  if (tenancyMode === "shared" && !harnessAllowed) {
+  // In any mode, local and CI runs too (TASK-206, N-103): the tenant lifecycle reads and writes the
+  // database, so a directory kept in memory beside one would answer differently from it.
+  const sharedJudged = tenancyMode === "shared" && !harnessAllowed; // refused below, once
+  if (directoryStore === "memory" && db.url !== undefined && !sharedJudged) {
+    violations.push(
+      "TENANT_DIRECTORY_STORE=memory with DATABASE_URL — the operator console's tenant changes would stay in one process while its removals and deletions read the database; set postgres or leave it unset"
+    );
+  }
+  if (sharedJudged) {
     if (directoryStore === undefined) {
       violations.push(
         "TENANT_DIRECTORY_STORE is required by TENANCY_MODE=shared: postgres"

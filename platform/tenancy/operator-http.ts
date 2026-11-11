@@ -23,7 +23,8 @@ export function operatorOf(admin: VerifiedAdmin): Operator {
 /** The coded error for an operator failure. */
 export function operatorError(
   code: OperatorFailure,
-  message: string,
+  /** The failure's reason token and values (TASK-206, N-102): worded by the catalog. */
+  reason: { readonly reason: string; readonly params?: Readonly<Record<string, string>> },
   request: NextRequest,
   /** For tenant.role_refused: the role rule that refused (its own code, ADR-051). */
   refusal?: RoleRefusal,
@@ -43,10 +44,16 @@ export function operatorError(
     case "tenant.slug_taken":
     case "tenant.domain_taken":
     case "tenant.state_conflict":
-      return apiError("tenant.conflict", { params: { reason: message }, request });
+      return apiError("tenant.conflict", {
+        params: { ...(reason.params ?? {}), reason: reason.reason },
+        request,
+      });
     case "tenant.invalid":
       // With what was wrong (S2 round 2): a reason outside the list, a note too long, a slug.
-      return apiError("tenant.invalid", { params: { reason: message }, request });
+      return apiError("tenant.invalid", {
+        params: { ...(reason.params ?? {}), reason: reason.reason },
+        request,
+      });
     case "tenant.own_tenant":
       return apiError("tenant.own_tenant", { request });
     case "tenant.self_approval":
@@ -73,11 +80,5 @@ export function operatorResponse<T>(
   okStatus = 200
 ): NextResponse {
   if (result.ok) return NextResponse.json({ result: result.value }, { status: okStatus });
-  return operatorError(
-    result.code,
-    result.message,
-    request,
-    result.refusal,
-    result.needs
-  );
+  return operatorError(result.code, result, request, result.refusal, result.needs);
 }

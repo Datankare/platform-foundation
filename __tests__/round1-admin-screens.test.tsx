@@ -13,12 +13,17 @@ import { render, screen } from "@testing-library/react";
 import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
 import { RolesDataView } from "@/components/admin/AdminDataViews";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
+import { renderShown, shown } from "@/platform/errors/shown-text";
 
 const base = {
   source: "runtime" as const,
   requester: "admin-1234567890",
   requiredPermission: "admin_purge_user_data",
-  reason: "Held — needs an independent approver.",
+  reason: shown("screens.held.reason_held", {
+    risk: "restricted",
+    effects: [],
+    effected: "no",
+  }),
   createdAt: "2026-01-02T00:00:00.000Z",
 };
 
@@ -73,7 +78,7 @@ describe("the approvals list shows each held action's summary (A1)", () => {
       <HeldActionsPanel data={{ approvals: [{ ...base, id: "p4", label: "x" }] }} />
     );
     expect(document.querySelectorAll("[data-summary]")).toHaveLength(0);
-    expect(screen.getByText(base.reason)).toBeDefined();
+    expect(screen.getByText(renderShown(base.reason))).toBeDefined();
   });
 });
 

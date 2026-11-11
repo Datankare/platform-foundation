@@ -197,7 +197,7 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
       const v = request.nextUrl.searchParams.get(field);
       if (v && !USER_ID.test(v)) {
         return apiError("request.invalid_value", {
-          params: { field, allowed: ["a user id"] },
+          params: { field, allowed: ["user_id"], expected: "user_id" },
           request,
         });
       }
@@ -244,7 +244,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   }
   if (typeof targetUserId !== "string" || !USER_ID.test(targetUserId)) {
     return apiError("request.invalid_value", {
-      params: { field: "targetUserId", allowed: ["a user id"] },
+      params: { field: "targetUserId", allowed: ["user_id"], expected: "user_id" },
       request,
     });
   }
@@ -283,7 +283,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
           });
           return {
             success: false,
-            error: result.error ?? "submit failed",
+            error: result.error ?? "admin.action_failed",
             response: errorFromResult(result, {
               request,
               context: "Review queue submit failed",

@@ -610,7 +610,7 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
     const withdrawn = await getProposalStore().withdraw(
       id,
       decidedBy,
-      note?.trim() || "rejected after its run failed"
+      note?.trim() || "rejected_after_run_failed"
     );
     if (!withdrawn) {
       return {

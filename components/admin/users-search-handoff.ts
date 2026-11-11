@@ -7,6 +7,7 @@
  * @module components/admin
  */
 
+import type { ShownText } from "@/platform/errors/shown-text";
 import type { AdminSection } from "@/components/admin/AdminShell";
 import { listFilters, type UserListFilters } from "@/components/admin/UsersPanel";
 import type { SearchResultTable } from "@/components/admin/ExecutionResultsPanel";
@@ -16,7 +17,8 @@ export interface ExecutedResult {
   tool: string;
   success: boolean;
   held?: boolean;
-  result?: string;
+  /** The catalog's key and values (TASK-206, N-102). */
+  result?: ShownText;
   table?: SearchResultTable;
   error?: string;
   /** A users search applied to the Users screen's list: no second table. */

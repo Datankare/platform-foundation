@@ -146,7 +146,9 @@ carry names and statuses only. `/api/health` keeps its shape and status codes, n
 on each check and `ready` and `boot`; an unhealthy optional probe makes it degraded (200) rather
 than unhealthy. `scripts/deploy-smoke.mjs` checks liveness, then readiness (and the commit).
 Consumer seam: Playform keeps its own `instrumentation.ts`, which must record the boot steps and
-register the probes the same way to report readiness.
+register the probes the same way to report readiness. Its `detail` is a code (TASK-206): `probe_detail_withheld` (probe detail is withheld from
+unauthenticated callers, OWASP A05, and sent to the error reporter; correlate by `requestId`) and
+`observability_uninitialised` (no probe could run).
 
 **TASK-197 (audit D-2).** The paid dependencies are probed too, with the deployed credentials:
 `ai-provider`, `google-translate`, `google-tts`, `rate-limit-store` and `certificates` — optional

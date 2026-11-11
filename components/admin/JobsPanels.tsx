@@ -14,12 +14,26 @@
  * and a discard asks to be confirmed. Every word comes from the catalog (screens.jobs, ADR-051).
  */
 
+import { isShownText, renderShown, type ShownText } from "@/platform/errors/shown-text";
 import React, { useCallback, useId, useState } from "react";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.jobs.${key}`, values);
+
+/**
+ * A job's recorded failure in the catalog's words (TASK-206, N-102): the runner records a code
+ * (platform/jobs/errors.ts describeJobError), `kind` or `kind:detail`. One the catalog does not
+ * know — a record from before the codes — is shown as recorded.
+ */
+export function jobErrorText(recorded: string): string {
+  const m = /^([a-z_]+)(?::(.+))?$/.exec(recorded);
+  if (!m) return recorded;
+  const key = `screens.jobs.errors.${m[1]}`;
+  const text = renderMessage(key, { detail: m[2] ?? "", noted: m[2] ? "yes" : "no" });
+  return text === key ? recorded : text;
+}
 
 const card = "bg-[#111827] rounded-xl border border-gray-800 p-5";
 const th =
@@ -92,7 +106,7 @@ interface ScheduleState {
 
 export interface ScheduleRow {
   kind: string;
-  description: string;
+  description: ShownText | null;
   owner: string;
   scope: "platform" | "each-tenant";
   runsForSuspended?: boolean;
@@ -214,7 +228,9 @@ function ScheduleRowView({
     <tr>
       <td className={td}>
         <span className="font-mono text-blue-300">{row.kind}</span>
-        <p className="text-xs text-gray-400 mt-1">{row.description}</p>
+        {isShownText(row.description) ? (
+          <p className="text-xs text-gray-400 mt-1">{renderShown(row.description)}</p>
+        ) : null}
         <p className="text-xs text-gray-400 mt-1">
           {t(
             row.scope === "platform"
@@ -288,7 +304,7 @@ function ScheduleRowView({
           {row.scope === "each-tenant" && s?.failing
             ? ` (${t("outcome_tenants", { failing: s.failing, reported: s.reported ?? s.failing })})`
             : ""}
-          {s?.lastError ? ` — ${s.lastError}` : ""}
+          {s?.lastError ? ` — ${jobErrorText(s.lastError)}` : ""}
         </p>
       </td>
       <td className={td}>
@@ -485,7 +501,7 @@ export function OperatorJobsView({ data: initial }: { data: JobsData | undefined
                     {t("attempts", { attempts: job.attempts, max: job.maxAttempts })}
                   </td>
                   <td className={`${td} text-red-300`}>
-                    {job.lastError ?? t("no_error")}
+                    {job.lastError ? jobErrorText(job.lastError) : t("no_error")}
                   </td>
                   <td className={td}>
                     <div className="flex flex-wrap gap-1">
@@ -553,7 +569,9 @@ export function TenantJobsList({ jobs }: { jobs: JobRow[] | null | undefined }) 
                 <td className={td}>
                   <span className="font-mono text-blue-300">{job.kind}</span>
                   {job.lastError && (
-                    <p className="text-xs text-red-300 mt-1">{job.lastError}</p>
+                    <p className="text-xs text-red-300 mt-1">
+                      {jobErrorText(job.lastError)}
+                    </p>
                   )}
                 </td>
                 <td className={td}>{statusLabel(job.status)}</td>

@@ -14,6 +14,7 @@ import { logger } from "@/lib/logger";
 import { withOwnerTx, type Tx } from "@/platform/data";
 import type { RoleRefusal, VerifiedAdmin } from "@/platform/auth/role-governance";
 import type { ErrorCode, ParamsOf } from "@/platform/errors/registry";
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { audited, AuditWriteError, type AuditEntry } from "@/platform/auth/audit";
 import {
   describeFailure,
@@ -21,7 +22,7 @@ import {
 } from "@/platform/admin/governed-config";
 
 /** One value of a search result's table: text, a number, yes/no, or none. */
-export type SearchCell = string | number | boolean | null;
+export type SearchCell = string | number | boolean | null | ShownText;
 
 /**
  * A search's rows as a table (TASK-189): the table read, its allowlisted columns, and each row's
@@ -50,7 +51,11 @@ export type ActionResult = {
    */
   held?: boolean;
   proposalId?: string;
-  result?: string;
+  /**
+   * What the action did or what waits, as the screen's words (TASK-206, N-102): a catalog key and
+   * its values, rendered by the command bar — never English written here.
+   */
+  result?: ShownText;
   /** A search's rows, for the command bar to show as a table (TASK-189); `result` says how many. */
   table?: SearchTable;
   error?: string;
@@ -181,7 +186,7 @@ export async function failedAsResult(
 export function fromGovernedConfig(
   outcome: GovernedConfigOutcome,
   key: string,
-  summary: string
+  summary: ShownText
 ): ActionResult {
   switch (outcome.kind) {
     case "applied":
@@ -194,8 +199,10 @@ export function fromGovernedConfig(
       return {
         success: false,
         held: true,
-        result: `${summary} — held for approval (${key} is under dual control) before it takes effect`,
-        error: "Held for approval; it has not taken effect",
+        result: shown("screens.admin_console.results.held_dual_control", {
+          what: summary,
+          key,
+        }),
         ...(proposalId ? { proposalId } : {}),
       };
     }

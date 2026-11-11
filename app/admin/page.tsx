@@ -1,5 +1,6 @@
 "use client";
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import AdminShell, {
@@ -110,7 +111,8 @@ interface ExecutionResult {
   tool: string;
   success: boolean;
   held?: boolean;
-  result?: string;
+  /** The catalog's key and values (TASK-206, N-102), rendered by ExecutionResultsPanel. */
+  result?: ShownText;
   /** A search's rows (TASK-189), shown as a table by ExecutionResultsPanel. */
   table?: SearchResultTable;
   error?: string;
@@ -206,9 +208,8 @@ async function decideFromPlan(decision: {
   return {
     tool: decision.tool,
     success: res.ok,
-    result: res.ok
-      ? renderMessage("screens.admin_console.results.decision_recorded")
-      : undefined,
+    result: res.ok ? shown("screens.admin_console.results.decision_recorded") : undefined,
+    // Refused: the catalog's sentence the route's coded answer carries (apiError).
     error: refused?.message,
   };
 }

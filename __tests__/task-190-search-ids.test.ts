@@ -42,6 +42,7 @@ import {
 import { ID_DETAIL_ROLES, maySeeIds } from "@/app/api/admin/ai/search-filters";
 import { SEARCHABLE_TABLES } from "@/app/api/admin/ai/tool-permissions";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
+import { renderShown } from "@/platform/errors/shown-text";
 
 const admin = (roleName: string): VerifiedAdmin => ({
   userId: "00000000-0000-4000-8000-0000000000ad",
@@ -181,8 +182,8 @@ describe("S-L1: the execute response carries `id` only for admin and super_admin
     ];
     const fitted = fitSearchRows(rows, ["id", "description"], 300);
     expect(fitted.omitted).toEqual([A1]);
-    expect(searchSummary("roles", 2, fitted, 300)).toContain(A1);
-    const hidden = searchSummary("roles", 2, fitted, 300, false);
+    expect(renderShown(searchSummary("roles", 2, fitted, 300))).toContain(A1);
+    const hidden = renderShown(searchSummary("roles", 2, fitted, 300, false));
     expect(hidden).not.toContain(A1);
     expect(hidden).toMatch(/1 row/);
   });

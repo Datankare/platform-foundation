@@ -66,8 +66,9 @@ const fail = <T>(
     | "tenant.invalid"
     | "tenant.state_conflict"
     | "tenant.self_approval",
-  message: string
-): OperatorResult<T> => ({ ok: false, code, message });
+  reason: string,
+  params?: Readonly<Record<string, string>>
+): OperatorResult<T> => ({ ok: false, code, reason, ...(params ? { params } : {}) });
 
 /** Audit first, then act (as platform/tenancy/admin.ts's operator acts). */
 async function recorded<T>(
@@ -85,7 +86,7 @@ async function recorded<T>(
         const result = await act();
         return result.ok
           ? { success: true as const, result }
-          : { success: false as const, error: result.message, result };
+          : { success: false as const, error: result.reason, result };
       },
       options
     );
@@ -95,7 +96,7 @@ async function recorded<T>(
       return {
         ok: false,
         code: "audit.unavailable",
-        message: "The audit log is unavailable, so nothing was changed.",
+        reason: "audit_unavailable",
       };
     }
     throw err;
@@ -107,14 +108,13 @@ function checked(
   note: string
 ): string | OperatorResult<never> {
   if (!UUID.test(target.tenantId) || !UUID.test(target.userId)) {
-    return fail("tenant.not_found", "No such erasure.");
+    return fail("tenant.not_found", "no_erasure");
   }
   const store = target.store ?? "identity-provider";
   if (!listExternalErasures().some((e) => e.name === store)) {
-    return fail("tenant.invalid", `No external store named ${echoed(store)}.`);
+    return fail("tenant.invalid", "store", { store: echoed(store) });
   }
-  if (note.length > 500)
-    return fail("tenant.invalid", "The note is at most 500 characters.");
+  if (note.length > 500) return fail("tenant.invalid", "note_length");
   return store;
 }
 
@@ -149,13 +149,11 @@ export async function requestErasureAttestation(
   const store = checked(target, note);
   if (typeof store !== "string") return store;
   if (!(ATTESTATION_REASONS as readonly string[]).includes(reason)) {
-    return fail(
-      "tenant.invalid",
-      `The reason is one of: ${ATTESTATION_REASONS.join(", ")}.`
-    );
+    return fail("tenant.invalid", "attestation_reason", {
+      allowed: ATTESTATION_REASONS.join(", "),
+    });
   }
-  if (note.trim().length < 3)
-    return fail("tenant.invalid", "Give a note (3–500 characters).");
+  if (note.trim().length < 3) return fail("tenant.invalid", "note_text");
   // A request no other operator could approve is refused, never left to expire (N-24, N-85).
   const noOne = await secondOperatorRefusal<RecordedExternalErasure>(
     "erasure attestation",
@@ -176,11 +174,11 @@ export async function requestErasureAttestation(
       withOwnerTx("operator", async (tx) => {
         const step = await stepOf(tx, target, store);
         if (step === undefined)
-          return fail<RecordedExternalErasure>("tenant.not_found", "No such erasure.");
+          return fail<RecordedExternalErasure>("tenant.not_found", "no_erasure");
         if (!step || step.doneAt || !step.poolUnverified) {
           return fail<RecordedExternalErasure>(
             "tenant.state_conflict",
-            "Only a step the system could not verify (pending, pool unverified) can be attested."
+            "step_verifiable"
           );
         }
         if (
@@ -189,7 +187,7 @@ export async function requestErasureAttestation(
         ) {
           return fail<RecordedExternalErasure>(
             "tenant.state_conflict",
-            "An attestation is already awaiting a second operator."
+            "attestation_pending"
           );
         }
         const { rows } = await tx.query<StepRow>(
@@ -238,18 +236,15 @@ export async function decideErasureAttestation(
       withOwnerTx("operator", async (tx) => {
         const step = await stepOf(tx, target, store);
         if (step === undefined)
-          return fail<RecordedExternalErasure>("tenant.not_found", "No such erasure.");
+          return fail<RecordedExternalErasure>("tenant.not_found", "no_erasure");
         const asked = step?.attestationRequest;
         if (!step || step.doneAt || !asked) {
-          return fail<RecordedExternalErasure>(
-            "tenant.state_conflict",
-            "No attestation is awaiting a decision."
-          );
+          return fail<RecordedExternalErasure>("tenant.state_conflict", "no_attestation");
         }
         if (Date.parse(asked.expiresAt) <= Date.now()) {
           return fail<RecordedExternalErasure>(
             "tenant.state_conflict",
-            "The attestation request has expired; ask again."
+            "attestation_expired"
           );
         }
         // Still what was asked about (S2 round 2): pending AND unverifiable. A step the job has
@@ -258,14 +253,11 @@ export async function decideErasureAttestation(
         if (approve && !step.poolUnverified) {
           return fail<RecordedExternalErasure>(
             "tenant.state_conflict",
-            "The step is no longer unverifiable; ask again if it becomes so."
+            "step_now_verifiable"
           );
         }
         if (approve && sameId(asked.by, operator.userId)) {
-          return fail<RecordedExternalErasure>(
-            "tenant.self_approval",
-            "A different operator must approve an attestation you asked for."
-          );
+          return fail<RecordedExternalErasure>("tenant.self_approval", "self_approval");
         }
         const { rows } = await tx.query<StepRow>(
           approve

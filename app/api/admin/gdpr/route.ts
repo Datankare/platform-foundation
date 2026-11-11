@@ -159,7 +159,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   }
   if (!USER_ID.test(body.userId)) {
     return apiError("request.invalid_value", {
-      params: { field: "userId", allowed: ["a user id"] },
+      params: { field: "userId", allowed: ["user_id"], expected: "user_id" },
       request,
     });
   }
@@ -329,7 +329,7 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   const userId = (request.nextUrl.searchParams.get("userId") ?? "").toLowerCase();
   if (!USER_ID.test(userId)) {
     return apiError("request.invalid_value", {
-      params: { field: "userId", allowed: ["a user id"] },
+      params: { field: "userId", allowed: ["user_id"], expected: "user_id" },
       request,
     });
   }

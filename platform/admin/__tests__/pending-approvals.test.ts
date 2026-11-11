@@ -12,6 +12,7 @@ import { getProposalStore } from "@/platform/agents/proposal-store";
 import { listApprovals } from "@/platform/admin/config-approval";
 import { getPermissionTier } from "@/platform/auth/platform-config";
 import { listPendingApprovals } from "../pending-approvals";
+import { renderShown } from "@/platform/errors/shown-text";
 
 const mockStore = getProposalStore as jest.Mock;
 const mockList = listApprovals as jest.Mock;
@@ -87,7 +88,7 @@ describe("listPendingApprovals — ADR-040 040a", () => {
     expect(out[1].source).toBe("config-approval");
     expect(out[1].label).toBe("moderation.blocklist_only_surfaces");
     expect(out[1].requester).toBe("admin-2");
-    expect(out[1].reason).toMatch(/blocklist/i);
+    expect(renderShown(out[1].reason)).toMatch(/blocklist/i);
   });
 
   it("derives config_manage_standard for standard-tier keys", async () => {
@@ -157,7 +158,7 @@ describe("listPendingApprovals — ADR-040 040a", () => {
     mockStore.mockReturnValue(storeWith([proposal({ status: "approved" })]));
     mockList.mockResolvedValue([]);
     const [only] = await listPendingApprovals();
-    expect(only.reason).toMatch(/could not be applied/);
+    expect(renderShown(only.reason)).toMatch(/could not be applied/);
   });
 
   // TASK-193 (audit B-4): a hold never decided lapses after config.approval_expiry_days (7 by

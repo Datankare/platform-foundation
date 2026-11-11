@@ -6,6 +6,7 @@
  * the owner connection — the group and its permissions in one transaction.
  */
 
+import { shown } from "@/platform/errors/shown-text";
 import {
   checkPermissionGrant,
   type VerifiedAdmin,
@@ -118,7 +119,12 @@ export async function handleCreateEntitlementGroup(
               [rows[0].id, granted]
             );
           }
-          return { success: true, result: `Entitlement "${display_name}" created` };
+          return {
+            success: true,
+            result: shown("screens.admin_console.results.entitlement_created", {
+              name: display_name,
+            }),
+          };
         })
       )
   );
@@ -169,12 +175,13 @@ export async function handleSetEntitlementGroupActive(
       ? coded("request.invalid_value", { field: "is_active", allowed: ["true", "false"] })
       : coded("request.invalid_value", {
           field: "group_id",
-          allowed: ["an entitlement group id"],
+          allowed: ["entitlement_group_id"],
+          expected: "entitlement_group_id",
         });
   }
   if (!mayChangePlatformCatalog(admin)) return operatorOnly();
   const group = await catalogTx((tx) => groupWithPermissions(tx, groupId, false));
-  if (!group) return coded("admin.target_not_found", { target: "entitlement group" });
+  if (!group) return coded("admin.target_not_found", { target: "entitlement_group" });
   const refused = checkPermissionGrant(admin, group.permissions);
   if (refused) return refusal(refused);
 
@@ -194,7 +201,7 @@ export async function handleSetEntitlementGroupActive(
         catalogTx(async (tx) => {
           const now = await groupWithPermissions(tx, group.id, true);
           if (!now)
-            return coded("admin.target_not_found", { target: "entitlement group" });
+            return coded("admin.target_not_found", { target: "entitlement_group" });
           const refusedNow = checkPermissionGrant(admin, now.permissions);
           if (refusedNow) return refusal(refusedNow);
           await tx.query(
@@ -203,7 +210,10 @@ export async function handleSetEntitlementGroupActive(
           );
           return {
             success: true,
-            result: `Entitlement "${now.code}" turned ${isActive ? "on" : "off"}`,
+            result: shown("screens.admin_console.results.entitlement_turned", {
+              code: now.code,
+              state: isActive ? "on" : "off",
+            }),
           };
         })
       )

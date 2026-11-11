@@ -152,8 +152,9 @@ describe("GET /api/health — OWASP A05, detail suppression", () => {
       report("unhealthy", [{ name: "supabase", status: "unhealthy", checkedAt: "t" }])
     );
     const body = await (await GET()).json();
-    expect(body.detail).toMatch(/error reporter/i);
-    expect(body.detail).toMatch(/requestId/);
+    // A code (TASK-206): the detail is withheld and went to the error reporter, by requestId.
+    expect(body.detail).toBe("probe_detail_withheld");
+    expect(body.requestId).toEqual(expect.any(String));
   });
 
   it("omits the notice entirely when everything is healthy", async () => {

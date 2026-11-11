@@ -330,11 +330,10 @@ describe("the core duties", () => {
     (purgeDueTenants as jest.Mock).mockResolvedValue({
       ok: false,
       code: "audit.unavailable",
-      message: "The audit log is unavailable, so nothing was changed.",
+      reason: "audit_unavailable",
     });
-    await expect(duty("tenancy.purge-due")()).rejects.toThrow(
-      "The audit log is unavailable, so nothing was changed."
-    );
+    // Its reason token (TASK-206): recorded as reported:audit_unavailable, worded by the console.
+    await expect(duty("tenancy.purge-due")()).rejects.toThrow("audit_unavailable");
   });
 
   it("prunes the job history by the governed retention, clamped", async () => {
@@ -364,5 +363,56 @@ describe("the core duties", () => {
     } finally {
       resetJobStore();
     }
+  });
+});
+
+// TASK-206 (N-102): the Jobs console showed each kind's description and its last error as the
+// server wrote them. A kind is worded by the catalog (screens.jobs.kinds), a failure is recorded
+// as a code the console words (screens.jobs.errors).
+describe("the Jobs console's words come from the catalog (TASK-206)", () => {
+  it("every core job kind has its description in the catalog (the social module's: social-jobs)", () => {
+    const { CORE_JOBS } = jest.requireActual("@/platform/jobs/duties");
+    const { jobDescription } = jest.requireActual("@/platform/jobs/operator");
+    const missing = [...CORE_JOBS]
+      .map((d: { kind: string }) => d.kind)
+      .filter((k: string) => jobDescription(k) === null);
+    expect(missing).toEqual([]);
+  });
+
+  it("a failure is recorded as a code, and the console words each one", () => {
+    const { describeJobError, JobFailure, JobTimeoutError } = jest.requireActual(
+      "@/platform/jobs/errors"
+    );
+    const { DataUnavailableError } = jest.requireActual("@/platform/data");
+    const { jobErrorText } = jest.requireActual("@/components/admin/JobsPanels");
+    const sql = Object.assign(new Error("relation x"), { code: "42P01" });
+    const recorded = [
+      describeJobError(new JobFailure("no_tenant")),
+      describeJobError(new JobFailure("Some sentence a handler wrote.")),
+      describeJobError(new JobTimeoutError(5000)),
+      describeJobError(new DataUnavailableError("down")),
+      describeJobError(sql),
+      describeJobError(new TypeError("x")),
+      describeJobError(null),
+      describeJobError(7),
+    ];
+    expect(recorded).toEqual([
+      "reported:no_tenant",
+      "reported",
+      "timeout:5000",
+      "database_unavailable",
+      "sqlstate:42P01",
+      "unexpected:TypeError",
+      "threw:null",
+      "threw:number",
+    ]);
+    for (const r of recorded) {
+      const text = jobErrorText(r);
+      expect([r, text === r, /screens\.jobs/.test(text)]).toEqual([r, false, false]);
+    }
+    // A record from before the codes is shown as recorded.
+    expect(jobErrorText("The database was unavailable.")).toBe(
+      "The database was unavailable."
+    );
   });
 });

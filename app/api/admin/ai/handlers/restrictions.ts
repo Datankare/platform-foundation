@@ -10,6 +10,7 @@
  * only this tenant's row.
  */
 
+import { shown } from "@/platform/errors/shown-text";
 import { withTenantTx } from "@/platform/data";
 import {
   coded,
@@ -28,7 +29,11 @@ const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** A refusal for a missing or malformed user id or feature, or null. */
 function inputProblem(userId: unknown, feature: unknown): ActionResult | null {
   if (typeof userId !== "string" || !USER_ID.test(userId)) {
-    return coded("request.invalid_value", { field: "user_id", allowed: ["a user id"] });
+    return coded("request.invalid_value", {
+      field: "user_id",
+      allowed: ["user_id"],
+      expected: "user_id",
+    });
   }
   if (typeof feature !== "string" || !feature) {
     return coded("request.missing_fields", { fields: ["feature"] });
@@ -98,7 +103,10 @@ export async function handleBlockUserFeature(
             [userId, feature, input.reason ?? null, actorId]
           )
         );
-        return { success: true, result: `Blocked "${feature}"` };
+        return {
+          success: true,
+          result: shown("screens.admin_console.results.feature_blocked", { feature }),
+        };
       })
   );
 }
@@ -134,7 +142,10 @@ export async function handleUnblockUserFeature(
             [userId, feature]
           )
         );
-        return { success: true, result: `Unblocked "${feature}"` };
+        return {
+          success: true,
+          result: shown("screens.admin_console.results.feature_unblocked", { feature }),
+        };
       })
   );
 }

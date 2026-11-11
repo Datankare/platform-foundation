@@ -119,15 +119,30 @@ const CONTROL = /\p{Cc}/u;
 /** A validated value; null for none (an empty text). */
 export type FilterValue = string | number;
 
+/** The described values request.invalid_value words by its `expected` (messages/en.json). */
+const EXPECTED = new Set(["text_max", "role_max", "category", "account_id"]);
+
 export type FilterCheck =
   | { readonly ok: true; readonly value: FilterValue | null }
-  | { readonly ok: false; readonly field: string; readonly allowed: readonly string[] };
+  | {
+      readonly ok: false;
+      readonly field: string;
+      readonly allowed: readonly string[];
+      /** What a described value must be (TASK-206): request.invalid_value's `expected`. */
+      readonly expected?: string;
+      readonly max?: number;
+    };
 
-/** A refused value: `allowed` is the registry's list (request.invalid_value — round 5, item 4). */
-const refused = (field: string, allowed: string): FilterCheck => ({
+/**
+ * A refused value: `allowed` is the registry's list (request.invalid_value — round 5, item 4); a
+ * described one (`expected`) is worded by the catalog, never here (TASK-206, N-102).
+ */
+const refused = (field: string, allowed: string, max?: number): FilterCheck => ({
   ok: false,
   field,
   allowed: [allowed],
+  ...(EXPECTED.has(allowed) ? { expected: allowed } : {}),
+  ...(max !== undefined ? { max } : {}),
 });
 
 /**
@@ -139,24 +154,24 @@ export function checkSearchFilter(name: SearchFilter, raw: unknown): FilterCheck
   if (raw === undefined || raw === null) return { ok: true, value: null };
   switch (name) {
     case "text": {
-      const allowed = `a text of up to ${SEARCH_TEXT_MAX} characters`;
-      if (typeof raw !== "string") return refused(name, allowed);
+      if (typeof raw !== "string") return refused(name, "text_max", SEARCH_TEXT_MAX);
       // Counted as likeTerm reads it (control characters dropped, trimmed); longer is refused.
       const clean = raw.replace(/\p{Cc}/gu, "").trim();
-      if ([...clean].length > SEARCH_TEXT_MAX) return refused(name, allowed);
+      if ([...clean].length > SEARCH_TEXT_MAX)
+        return refused(name, "text_max", SEARCH_TEXT_MAX);
       return { ok: true, value: clean === "" ? null : clean };
     }
     case "role": {
-      const allowed = `a role's name or display name, up to ${SEARCH_ROLE_MAX} characters`;
-      if (typeof raw !== "string" || CONTROL.test(raw)) return refused(name, allowed);
+      if (typeof raw !== "string" || CONTROL.test(raw))
+        return refused(name, "role_max", SEARCH_ROLE_MAX);
       const value = raw.trim();
       if (value === "" || [...value].length > SEARCH_ROLE_MAX)
-        return refused(name, allowed);
+        return refused(name, "role_max", SEARCH_ROLE_MAX);
       return { ok: true, value };
     }
     case "category":
       if (typeof raw !== "string" || !CODE.test(raw)) {
-        return refused(name, "a category of letters, digits, _ . or - (up to 64)");
+        return refused(name, "category");
       }
       return { ok: true, value: raw };
     case "status":
@@ -177,8 +192,7 @@ export function checkSearchFilter(name: SearchFilter, raw: unknown): FilterCheck
       return { ok: true, value: raw };
     case "actor_id":
     case "target_id":
-      if (typeof raw !== "string" || !UUID.test(raw))
-        return refused(name, "an account id");
+      if (typeof raw !== "string" || !UUID.test(raw)) return refused(name, "account_id");
       return { ok: true, value: raw.toLowerCase() };
     case "signed_in_within_days":
     case "created_within_days":
@@ -204,6 +218,8 @@ export type ParsedFilters =
       readonly ok: false;
       readonly field: string;
       readonly allowed: readonly string[];
+      readonly expected?: string;
+      readonly max?: number;
       /** The key is no filter of the table at all (round 12, nit 3): request.unknown_input. */
       readonly unknownKey?: true;
     };
@@ -241,7 +257,8 @@ export function parseSearchFilterInput(
     return {
       ok: false,
       field: "query",
-      allowed: ["give one of text or query, not both"],
+      allowed: ["text_or_query"],
+      expected: "text_or_query",
     };
   }
   if (filters.text === undefined && hasQuery) {
@@ -250,7 +267,9 @@ export function parseSearchFilterInput(
       return {
         ok: false,
         field: "query",
-        allowed: [`a text of up to ${SEARCH_TEXT_MAX} characters`],
+        allowed: ["text_max"],
+        expected: "text_max",
+        max: SEARCH_TEXT_MAX,
       };
     }
     if (checked.value !== null) filters.text = checked.value;
@@ -274,7 +293,7 @@ export function parseUserListFilters(params: URLSearchParams): ParsedFilters {
     if (all.length === 0) continue;
     // One value per filter: a repeated parameter is refused, never one picked silently.
     if (all.length > 1) {
-      return { ok: false, field: name, allowed: ["one value"] };
+      return { ok: false, field: name, allowed: ["one_value"], expected: "one_value" };
     }
     const raw = all[0]!;
     if (raw === "") continue;

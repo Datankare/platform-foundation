@@ -10,6 +10,8 @@
  * Hostile cases: every role without platform_operate (a tenant admin included), a suspended
  * operator, an unknown kind, two settings in one request, a non-integer interval, a missing
  * reason, replaying a dead job twice, a malformed or unknown job id, an action outside the two.
+ *
+ * hostile:self n/a: a job is no account; no route here acts on its caller
  */
 
 jest.mock("@/lib/logger", () => ({
@@ -138,7 +140,7 @@ const NOT_OPERATORS = [
 
 describe("only operators reach the Jobs console", () => {
   it.each(NOT_OPERATORS)(
-    "refuses %s on every route and changes nothing",
+    "[hostile:role] refuses %s on every route and changes nothing",
     async (caller) => {
       const id = await deadJob();
       const answers = await Promise.all([
@@ -395,7 +397,44 @@ describe("POST /api/operator/jobs/schedules/[kind]/run", () => {
     );
   });
 
-  it("runs nothing when the record cannot be written (503)", async () => {
+  // N-104 (TASK-206): the second record's report keys were not in the action's schema, so each
+  // manual run logged "Audit details carried keys its action's schema does not allow" and dropped
+  // them. The record the run writes passes the real schema whole, and the real writer logs nothing.
+  it("records the run's whole report: no key is dropped and nothing is logged", async () => {
+    const { sanitizeAuditDetails } = jest.requireActual("@/platform/auth/audit-details");
+    const { logger } = jest.requireMock("@/lib/logger");
+    const res = await runNowRoute(
+      req("/api/operator/jobs/schedules/test.sched/run", "POST"),
+      kindParams("test.sched")
+    );
+    expect(res.status).toBe(200);
+    const written = mockAuditLog.mock.calls.at(-1)[0];
+    expect(written.details).toEqual(
+      expect.objectContaining({ released: 0, hung: 0, stoppedBy: "idle" })
+    );
+    const { details, dropped } = sanitizeAuditDetails(written.action, written.details);
+    expect(dropped).toEqual([]);
+    expect(details).toEqual(written.details);
+    // The real writer, as the route calls it, on a database that takes the row.
+    const data = jest.requireActual("@/platform/data");
+    const tx = jest.spyOn(data, "withTenantTx").mockImplementation(async (fn: unknown) =>
+      (fn as (t: { query: () => Promise<unknown> }) => Promise<unknown>)({
+        query: async () => ({ rows: [] }),
+      })
+    );
+    try {
+      logger.error.mockClear();
+      await jest.requireActual("@/platform/auth/audit").writeAuditLog(written);
+      expect(logger.error).not.toHaveBeenCalledWith(
+        expect.stringContaining("schema does not allow"),
+        expect.anything()
+      );
+    } finally {
+      tx.mockRestore();
+    }
+  });
+
+  it("[hostile:store-down] runs nothing when the record cannot be written (503)", async () => {
     mockAudited.mockRejectedValue(new AuditWriteError("admin_action", "down"));
     const res = await runNowRoute(
       req("/api/operator/jobs/schedules/test.sched/run", "POST"),
@@ -406,7 +445,7 @@ describe("POST /api/operator/jobs/schedules/[kind]/run", () => {
     expect(await store.listJobs({ kind: "test.sched" })).toEqual([]);
   });
 
-  it("does not know an unknown kind (404)", async () => {
+  it("[hostile:id-spelling] does not know an unknown kind (404)", async () => {
     const res = await runNowRoute(
       req("/api/operator/jobs/schedules/test.nobody/run", "POST"),
       kindParams("test.nobody")

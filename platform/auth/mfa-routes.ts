@@ -235,7 +235,7 @@ export async function mfaVerify(
   const code = (read.body as { code?: unknown }).code;
   if (typeof code !== "string" || !TOTP.test(code)) {
     return apiError("request.invalid_value", {
-      params: { field: "code", allowed: ["a 6-digit code"] },
+      params: { field: "code", allowed: ["six_digit_code"], expected: "six_digit_code" },
       request,
     });
   }

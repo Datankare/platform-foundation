@@ -191,7 +191,12 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   const parsed = parseUserListFilters(params);
   if (!parsed.ok) {
     return apiError("request.invalid_value", {
-      params: { field: parsed.field, allowed: [...parsed.allowed] },
+      params: {
+        field: parsed.field,
+        allowed: [...parsed.allowed],
+        ...(parsed.expected ? { expected: parsed.expected } : {}),
+        ...(parsed.max !== undefined ? { max: parsed.max } : {}),
+      },
       request,
     });
   }
@@ -414,7 +419,7 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
         // (round 14, item 12).
         return {
           success: false,
-          error: "The change could not be written.",
+          error: "admin.action_failed",
           response: internalError(error, {
             request,
             context: "Admin users query failed",
@@ -424,7 +429,7 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
       if (outcome === "gone") {
         return {
           success: false,
-          error: "the user or role changed before the update",
+          error: "admin.target_not_found",
           response: apiError("admin.target_not_found", {
             params: { target: "user" },
             request,

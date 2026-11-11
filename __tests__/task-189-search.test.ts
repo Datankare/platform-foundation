@@ -33,6 +33,7 @@ import {
 import { SEARCHABLE_TABLES } from "@/app/api/admin/ai/tool-permissions";
 import { SHARED_TOOLS } from "@/app/api/admin/ai/tool-schemas";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
+import { renderShown, type ShownText, shown } from "@/platform/errors/shown-text";
 
 const TABLES = Object.keys(SEARCHABLE_TABLES) as SearchableTable[];
 
@@ -196,7 +197,14 @@ describe("TASK-189: each filter is a bound parameter", () => {
 
   it("no filter: every filter off", async () => {
     const { res, st } = await run({ table: "users" });
-    expect(res).toMatchObject({ success: true, result: "No rows of users match." });
+    expect(res).toMatchObject({
+      success: true,
+      result: shown("screens.admin_console.search.summary_none", {
+        shown: 0,
+        matched: 0,
+        table: "users",
+      }),
+    });
     expect(st[0].values).toEqual(["", null, null, null, null]);
   });
 
@@ -445,7 +453,11 @@ describe("TASK-189 round 1: what the step records", () => {
   it("the step keeps ids and counts; the admin's text only as its length", () => {
     const result = {
       success: true,
-      result: "Showing 2 of 3 matching rows of users.",
+      result: shown("screens.admin_console.search.summary_some", {
+        shown: 2,
+        matched: 3,
+        table: "users",
+      }),
       table: {
         table: "users",
         columns: [...SEARCH_COLUMNS.users],
@@ -467,7 +479,11 @@ describe("TASK-189 round 1: what the step records", () => {
     expect(text).not.toMatch(/a@x\.test|bee@x\.test|Alice|Beatrice|alice|Smith|"free"/);
     expect(step).toEqual({
       success: true,
-      result: "Showing 2 of 3 matching rows of users.",
+      result: shown("screens.admin_console.search.summary_some", {
+        shown: 2,
+        matched: 3,
+        table: "users",
+      }),
       filters: {
         table: "users",
         text: "[redacted: 14 chars]",
@@ -503,7 +519,9 @@ describe("TASK-189 round 1: what the step records", () => {
     if (outcome.kind !== "ran") return;
     // The admin's screen: the whole allowlisted table.
     expect(outcome.result.table?.rows[1]).toContain("bee@x.test");
-    expect(outcome.result.result).toBe("Showing 2 of 3 matching rows of users.");
+    expect(renderShown(outcome.result.result as ShownText)).toBe(
+      "Showing 2 of 3 matching rows of users."
+    );
     // The record: none of it.
     const stored = JSON.stringify(await store.getById(id));
     expect(stored).toContain(ROWS[1].id);
@@ -543,7 +561,14 @@ describe("TASK-189 round 2: the step records an allowlist, never a value it was 
   });
 
   it("a search that ran records only its validated filters, the free-text ones as their length", () => {
-    const ok = { success: true, result: "No rows of users match." };
+    const ok = {
+      success: true,
+      result: shown("screens.admin_console.search.summary_none", {
+        shown: 0,
+        matched: 0,
+        table: "users",
+      }),
+    };
     const step = searchStepRecord(ok, {
       table: "users",
       role: "Support Lead",
@@ -618,7 +643,7 @@ describe("TASK-189 round 2: the step records an allowlist, never a value it was 
     expect(res.success).toBe(false);
     expect(res).toMatchObject({
       code: "request.invalid_value",
-      params: { field: "query", allowed: ["give one of text or query, not both"] },
+      params: { field: "query", allowed: ["text_or_query"], expected: "text_or_query" },
     });
   });
 });
@@ -655,15 +680,21 @@ describe("TASK-189 round 1: the summary reports matches, not only what is shown"
 
   it("every match shown", async () => {
     fakeData().answer = () => [user(1, 2), user(2, 2)];
-    expect((await handleSearch({ table: "users" }, ALL)).result).toBe("2 rows of users.");
+    expect(
+      renderShown((await handleSearch({ table: "users" }, ALL)).result as ShownText)
+    ).toBe("2 rows of users.");
     fakeData().answer = () => [user(1, 1)];
-    expect((await handleSearch({ table: "users" }, ALL)).result).toBe("1 row of users.");
+    expect(
+      renderShown((await handleSearch({ table: "users" }, ALL)).result as ShownText)
+    ).toBe("1 row of users.");
   });
 
   it("capped at 20: Showing 20 of N", async () => {
     fakeData().answer = () => Array.from({ length: 20 }, (_, i) => user(i, 57));
     const res = await handleSearch({ table: "users" }, ALL);
-    expect(res.result).toBe("Showing 20 of 57 matching rows of users.");
+    expect(renderShown(res.result as ShownText)).toBe(
+      "Showing 20 of 57 matching rows of users."
+    );
     expect(res.table?.matched).toBe(57);
   });
 

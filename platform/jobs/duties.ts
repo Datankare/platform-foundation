@@ -263,7 +263,7 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
     },
     handler: async (ctx) => {
       const r = await purgeDueTenants({ agent: ctx.agent }, { signal: ctx.signal });
-      if (!r.ok) throw new JobFailure(r.message);
+      if (!r.ok) throw new JobFailure(r.reason);
       return {
         summary: {
           tenants: r.value.length,

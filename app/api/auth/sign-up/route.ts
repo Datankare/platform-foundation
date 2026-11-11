@@ -62,7 +62,11 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   const declared = parseDeclaredBirthDate(body.dateOfBirth);
   if (!declared) {
     return apiError("request.invalid_value", {
-      params: { field: "dateOfBirth", allowed: ["a past date of birth, YYYY-MM-DD"] },
+      params: {
+        field: "dateOfBirth",
+        allowed: ["past_birth_date"],
+        expected: "past_birth_date",
+      },
       request,
     });
   }

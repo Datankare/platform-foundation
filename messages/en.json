@@ -22,7 +22,7 @@
       "purge_incomplete": "{status, select, indeterminate {The erasure ran past its time limit and may still be finishing, so whether it completed is not known. Check the account in a minute; if it is still there, run the erasure again — every step is safe to repeat.} other {The erasure did not complete ({status}). Run it again: every step is safe to repeat.}}",
       "role_in_use": "{count, plural, one {# account still has} other {# accounts still have}} this role. Move them to another role first.",
       "self_target": "You cannot take this action on your own account.",
-      "target_not_found": "No {target} matches that request.",
+      "target_not_found": "{target, select, agent {No agent} capability_mapping {No capability mapping} current_role {No current role} entitlement {No entitlement} entitlement_group {No entitlement group} role {No role} source_role {No source role} user {No user} other {No {target}}} matches that request.",
       "write_indeterminate": "The connection was lost while saving: the change may or may not have been made. Check before you retry."
     },
     "ai": {
@@ -113,7 +113,7 @@
       "json_too_large": "The data is too large to store (at most {max, number} bytes).",
       "trajectory_full": "This run has recorded as much as one run may (at most {max, number} steps, 16 MiB in all). Start a new one; nothing was done.",
       "trajectory_chain_full": "This session or run has recorded as much as one may (at most {max, number} segments of up to 1,000 steps each). Start a new one; nothing was done.",
-      "invalid_value": "{field} must be one of: {allowed}.",
+      "invalid_value": "{expected, select, user_id {{field} must be a user id.} account_id {{field} must be an account id.} entitlement_group_id {{field} must be an entitlement group's id.} positive_seconds {{field} must be a positive number of seconds.} features_or_remove {{field} must be a non-empty list of features (or remove: true).} text_or_query {Give one of text or query, not both.} one_value {{field} takes one value.} text_max {{field} must be a text of up to {max, number} characters.} role_max {{field} must be a role's name or display name, up to {max, number} characters.} category {{field} must be a category of up to 64 letters, digits, underscores, full stops or hyphens.} past_birth_date {{field} must be a past date of birth, YYYY-MM-DD.} six_digit_code {{field} must be a 6-digit code.} other {{field} must be one of: {allowed}.}}",
       "unknown_input": "{field} is not an input of this action; allowed: {allowed}.",
       "unknown_input_none": "{field} is not an input of this action.",
       "missing_fields": "Required: {fields}.",
@@ -124,8 +124,8 @@
       "unavailable": "This service is unavailable right now. Try again shortly."
     },
     "tenant": {
-      "conflict": "That could not be done: {reason}.",
-      "invalid": "Some of the details are not valid: {reason}",
+      "conflict": "That could not be done: {reason, select, exists {a tenant with that id exists} slug_taken {that slug is taken} domain_taken {that address already serves a tenant} created_domain_taken {the tenant was created, but {host} already serves another tenant} state {the tenant is {status, select, active {active} suspended {suspended} deleted {deleted} pending {pending} approved {approved} rejected {rejected} withdrawn {withdrawn} executed {executed} expired {expired} other {{status}}}, not {expected, select, active {active} suspended {suspended} deleted {deleted} other {{expected}}}} already_deleted {the tenant is already deleted} deletion_pending {a deletion is already awaiting approval} request_state {the request is {status, select, active {active} suspended {suspended} deleted {deleted} pending {pending} approved {approved} rejected {rejected} withdrawn {withdrawn} executed {executed} expired {expired} other {{status}}}} request_expired {the request has expired} not_active {the tenant is no longer active or suspended} purged {the tenant's data has been purged, so it cannot be restored} email_shared {more than one account in this tenant has that email, so none was made administrator} email_unverified {that account has not verified its email, so it was not made administrator} account_changed {the account with that email changed while this ran, so it was not made administrator} role_changed {the account or the administrator role changed, so it was not made administrator} step_verifiable {only a step the system could not verify (pending, pool unverified) can be attested} attestation_pending {an attestation is already awaiting a second operator} no_attestation {no attestation is awaiting a decision} attestation_expired {the attestation request has expired; ask again} step_now_verifiable {the step is no longer unverifiable; ask again if it becomes so} other {it conflicts with what is recorded now}}.",
+      "invalid": "Some of the details are not valid: {reason, select, slug {the slug must be 1–40 lower-case letters, digits or hyphens} name {the name must be 2–100 characters} host {“{host}” is not a host name} reason_text {give a reason (3–500 characters)} email {give the user's email address} operator_unverified {the operator could not be verified for a role change} store {there is no external store named “{store}”} note_length {the note is at most 500 characters} note_text {give a note (3–500 characters)} attestation_reason {the reason is one of: {allowed}} other {check what was entered}}.",
       "mismatch": "This account belongs to a different organisation. Sign in on your organisation's address.",
       "missing": "Your account is not assigned to an organisation yet. Contact your administrator.",
       "not_active": "That tenant is deleted and awaiting purge. Restore it first.",
@@ -534,7 +534,13 @@
       "why_dual_control": "Under dual control: it runs only once an administrator other than the requester approves it.",
       "why_retry": "Approved, but it could not be applied: approve it again to retry, or reject it.",
       "why_undecided": "Approved, and its run stopped answering: whether it took effect is unknown. Verify it, then mark it executed, or approve it again or withdraw it.",
-      "details": "Details"
+      "details": "Details",
+      "reason_undecided": "Approved and being applied when its run stopped answering: whether it took effect is unknown{noted, select, yes { ({detail})} other {}}. Verify it, then mark it executed — or, if it did not take effect, approve it again or withdraw it.",
+      "reason_retry": "Approved, but it could not be applied{noted, select, yes { ({detail})} other {}} — approve it again to retry, or reject it. It lapses once the approval period has passed.",
+      "reason_held": "Held at {risk, select, ordinary {ordinary} consequential {consequential} restricted {restricted} other {unknown}} risk{effected, select, yes { (effects: {effects})} other {}} — needs an independent approver.",
+      "reason_two_person": "A safety-tier change to “{key}” awaiting a second approver.",
+      "note_indeterminate": "its run did not end within its lease; its outcome is unknown",
+      "note_atomic_recovered": "its atomic run did not end within its lease; its transaction rolled back with its effect, and the approval was kept"
     },
     "jobs": {
       "nav": "Jobs (operators)",
@@ -606,7 +612,30 @@
       "tenant_intro": "This tenant's most recent background jobs. Operators manage schedules and failed jobs.",
       "tenant_none": "No background jobs yet.",
       "tenant_unavailable": "The job history could not be read right now.",
-      "required": "Required: always on"
+      "required": "Required: always on",
+      "kinds": {
+        "moderation_escalation_reaper": "Applies the configured remedy to escalations left over their SLA without a decision (ADR-041).",
+        "moderation_release_claims": "Returns review items whose claim timed out to the queue.",
+        "moderation_expire_strikes": "Marks strikes past their expiry as expired.",
+        "accounts_expire_restrictions": "Steps restricted or suspended accounts whose end date has passed down to warned.",
+        "gdpr_retention_purge": "Completes the erasure (hard purge) of accounts whose GDPR retention period has passed.",
+        "agents_trajectory_retention": "Ends open agent trajectories with no activity for agent.trajectory.abandon_after_hours and no open hold, then deletes completed and failed ones older than agent.trajectory.retention_days.",
+        "data_retention": "Applies every table's retention rule that no other duty applies: audit and consent records lose their IP address and user agent, and interactions, AI metrics, content-safety decisions, resolved effects, idle guests and sessions, and past budget counters are deleted after their governed age (retention.*).",
+        "config_expire_approvals": "Marks pending configuration approvals past their expiry as expired, settles approvals whose outcome is being checked, and lists undecided runs for a person.",
+        "tenancy_purge_due": "Purges the data of deleted tenants whose purge time has passed.",
+        "jobs_prune": "Deletes succeeded jobs older than jobs.retention_days; dead jobs stay until an operator acts.",
+        "social_analyst": "Runs the analyst agent over the tenant's groups (group health reports).",
+        "social_curator": "Runs the curator agent over the tenant's groups (activity digests)."
+      },
+      "errors": {
+        "reported": "The job reported a failure{noted, select, yes { ({detail})} other {}}.",
+        "timeout": "The job did not finish within its time ({detail} ms).",
+        "database_unavailable": "The database was unavailable.",
+        "data_scope": "The job used the data layer outside its transaction (a programming error).",
+        "sqlstate": "A database statement failed (SQLSTATE {detail}).",
+        "unexpected": "The job failed with an unexpected {detail}.",
+        "threw": "The job failed: it threw a {detail} value."
+      }
     },
     "mfa": {
       "title": "Two-step verification is required",
@@ -750,7 +779,7 @@
         "empty_filtered": "No users match these filters."
       },
       "search": {
-        "not_shown": "{count, plural, one {# row} other {# rows}} left out{which}: the result is limited to {kib} KiB.",
+        "not_shown": "{summary} {count, plural, one {# row} other {# rows}} left out{which, select, named { ({rows}{more, select, yes {, …} other {}})} other {}}: the result is limited to {kib} KiB.",
         "table_label": "Search results from {table}",
         "none": "—",
         "yes": "Yes",
@@ -833,7 +862,27 @@
         "failed": "Not done",
         "dismiss": "Dismiss",
         "account": "Account: {account}",
-        "decision_recorded": "Decision recorded. The Approvals screen shows what became of the change."
+        "decision_recorded": "Decision recorded. The Approvals screen shows what became of the change.",
+        "role_created": "Role “{name}” created with {count, plural, one {# permission} other {# permissions}}.{gap, select, some { Note: the role lacks {missing} — its holders cannot use those features.} other {}}",
+        "role_deleted": "Role “{name}” deleted.",
+        "role_duplicated": "Role “{name}” created from “{source}” with {count, plural, one {# permission} other {# permissions}}.",
+        "role_permissions_changed": "Role “{name}”: {added, plural, one {# permission} other {# permissions}} added, {removed} removed.{gap, select, some { Note: the role lacks {missing} — its holders cannot use those features.} other {}}",
+        "role_changed": "Role changed to “{role}”.",
+        "entitlement_created": "Entitlement “{name}” created.",
+        "entitlement_turned": "Entitlement “{code}” turned {state, select, on {on} other {off}}.",
+        "feature_blocked": "Blocked “{feature}”.",
+        "feature_unblocked": "Unblocked “{feature}”.",
+        "account_purged": "Account data {mode, select, counted {counted} other {erased}}.",
+        "password_policy_updated": "Password policy updated.",
+        "held_dual_control": "{what} — held for approval ({key} is under dual control) before it takes effect.",
+        "held_second_admin": "Held for a second administrator’s approval; it has not run.",
+        "command_bar_comment": "Command bar: {what}",
+        "agent_registered": "Registered agent {agent}",
+        "agent_status": "{status, select, reactivated {Reactivated} other {Suspended}} agent {agent}",
+        "agent_scope": "{count, plural, =0 {Removed every capability from the scope of {agent}} other {Set the scope of {agent} to {scopes}}}",
+        "agent_ttl": "Set the token ceiling of {agent} to {seconds, plural, one {# second} other {# seconds}}",
+        "mapping_removed": "Removed capability mapping “{capability}”",
+        "mapping_set": "Mapped “{capability}” to {features}"
       },
       "panel_title": "Admin panel",
       "sign_out": "Sign out",
@@ -1150,6 +1199,14 @@
         "col_users": "Users",
         "col_status": "Status",
         "no_entitlement_groups": "No entitlement groups. Use the command bar to create one."
+      },
+      "config_ai": {
+        "search": "I can help you find configuration entries. Use the tool panel to search by keyword, category, or permission tier.",
+        "update": "I can help you update configuration. Use the tool panel to select a config key and proposed value. I'll validate and show you the impact before applying.",
+        "history": "I can show you the change history for any configuration key. Use the tool panel to query history.",
+        "impact": "I can show you how moderation outcomes changed after a config change. Use the impact report tool for any moderation config key.",
+        "approvals": "I can help you manage pending approvals. Use the approval tools to review, approve, or reject pending changes.",
+        "default": "I'm the config management agent. I can help you search, view, update, and audit platform configuration. What would you like to do?"
       }
     },
     "kill_switch": {
@@ -1282,6 +1339,63 @@
     },
     "stream": {
       "truncated": "The answer was cut off at its length limit: it is not complete. Ask for a shorter answer, or ask it to continue."
+    },
+    "readiness": {
+      "names": {
+        "mode": "Mode",
+        "database": "Database",
+        "owner_connection": "Owner connection",
+        "directory": "Directory",
+        "identity": "Identity",
+        "erasure": "Erasure",
+        "client_secret": "Client secret",
+        "dual_control": "Dual control"
+      },
+      "database_unset": "DATABASE_URL is not set.",
+      "database_role_missing": "The connection's role was not found.",
+      "database_bypasses_rls": "The request connection signs in as {role}, which bypasses row-level security; it must be app_tenant.",
+      "database_ready": "The request connection signs in as {role}, under row-level security.",
+      "database_unreachable": "The database could not be reached (the detail is in the log).",
+      "erasure_not_needed": "The identity provider keeps no identities the platform erases.",
+      "erasure_ready": "Erasure can find an identity by its subject and delete it.",
+      "erasure_not_ready": "Erasure cannot delete identities: {reason}.",
+      "secret_not_needed": "The identity provider has no app client secret to check.",
+      "secret_ready": "The app client's secret is the one the pool has.",
+      "secret_not_ready": "The app client's secret is not confirmed: {reason}.",
+      "mode_shared": "Shared: each request's tenant comes from the verified identity, or its address.",
+      "mode_single": "Single: this deployment serves tenant {tenant}.",
+      "owner_ready": "DATABASE_OWNER_URL is set for operator paths.",
+      "owner_unset": "DATABASE_OWNER_URL is not set: platform defaults and tenant lifecycle cannot run.",
+      "directory_ready": "Tenants are kept in Postgres.",
+      "directory_shared_memory": "A shared deployment needs TENANT_DIRECTORY_STORE=postgres.",
+      "directory_memory": "Tenants are kept per instance (memory): this deployment has no database, and a single deployment needs no more.",
+      "identity_single": "A single deployment's users all belong to its one tenant.",
+      "identity_no_key": "COGNITO_ADMIN_ACCESS_KEY_ID is not set: new users cannot be assigned a tenant.",
+      "identity_unreportable": "the identity provider cannot report on tenants",
+      "identity_ready": "Users' tenants are held by the identity provider, readable and not writable by users.",
+      "identity_not_ready": "Users' tenants are not held safely: {reason}.",
+      "no_admin_credentials": "administrative credentials are not configured",
+      "attribute_missing": "the pool has no {attribute} attribute",
+      "attribute_not_string": "{attribute} is not a String attribute",
+      "attribute_immutable": "{attribute} is immutable — the platform could never assign it after sign-up",
+      "attribute_writable": "{client} can write {attribute}; remove it from the client's writable attributes",
+      "attribute_unreadable": "the app client cannot read {attribute}; add it to the client's readable attributes",
+      "attribute_mapped": "the {provider} sign-in maps a claim into {attribute}; remove that attribute mapping",
+      "pool_undescribed": "the pool could not be described ({error})",
+      "erasure_no_key": "COGNITO_ADMIN_ACCESS_KEY_ID is not set — no identity is ever erased (TENANCY_OPERATIONS §3.3: every Cognito deployment needs the key)",
+      "erasure_denied": "the administrative key may not call cognito-idp:{action} on this pool — give it the policy {policy} (TENANCY_OPERATIONS §3.3)",
+      "no_answer": "{action} did not answer ({error})",
+      "another_pool": "DescribeUserPool answered another pool",
+      "probe_user_exists": "a pool user is named {user}; the delete was not tried",
+      "delete_answered_absent": "AdminDeleteUser answered for a user that cannot exist",
+      "client_unreadable_no_key": "the administrative key is not set, so the app client cannot be read",
+      "secret_not_held": "the app client has a secret and COGNITO_CLIENT_SECRET is not set — every sign-in is refused",
+      "secret_not_in_pool": "COGNITO_CLIENT_SECRET is set but the app client has no secret — every sign-in is refused",
+      "secret_differs": "COGNITO_CLIENT_SECRET is not the app client's secret — every sign-in is refused (rotate it in the deployment)",
+      "dual_ready": "Every dual-controlled action has a second account that may approve it.",
+      "dual_not_ready": "No second approver for: {actions}. Give a second person those permissions (TENANCY_OPERATIONS: the second super admin, the first safety approver).",
+      "dual_action": "{action}{where, select, tenant { in tenant {tenant}} other {}} (its approver needs {permissions}; {holders, select, none {no account holds them} other {one account holds them: the requester could not be approved}})",
+      "dual_unknown": "Who may approve could not be read ({error})."
     }
   }
 }

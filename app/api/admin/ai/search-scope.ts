@@ -39,25 +39,30 @@ export const SECTION_SEARCH_TABLES: Readonly<
  * The words that name each table in a request (lower case, matched as whole words). A request
  * that says one of them asks for that table, whichever screen it is on.
  */
-export const TABLE_NAMES: Readonly<Record<SearchableTableName, readonly string[]>> = {
+export const TABLE_NAMES: Readonly<
+  Record<SearchableTableName, readonly (string | readonly string[])[]>
+> = {
+  // A phrase is its words in order (TASK-206: words matched in the request, never shown).
   users: ["user", "users", "account", "accounts"],
   roles: ["role", "roles"],
   permissions: ["permission", "permissions"],
-  role_permissions: ["role permissions", "role_permissions"],
+  role_permissions: [["role", "permissions"], "role_permissions"],
   entitlement_groups: [
     "entitlement",
     "entitlements",
-    "entitlement group",
-    "entitlement groups",
+    ["entitlement", "group"],
+    ["entitlement", "groups"],
   ],
-  audit_log: ["audit", "audit log", "audit_log"],
+  audit_log: ["audit", ["audit", "log"], "audit_log"],
   platform_config: ["config", "configuration", "setting", "settings", "platform_config"],
 };
 
 /** Whether `prompt` names `table` (a whole word or phrase of TABLE_NAMES, any case). */
 export function namesTable(prompt: string, table: SearchableTableName): boolean {
   const text = ` ${prompt.toLowerCase().replace(/[^a-z0-9_]+/g, " ")} `;
-  return TABLE_NAMES[table].some((word) => text.includes(` ${word} `));
+  return TABLE_NAMES[table].some((word) =>
+    text.includes(` ${typeof word === "string" ? word : word.join(" ")} `)
+  );
 }
 
 interface PlannedAction {

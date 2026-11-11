@@ -15,6 +15,7 @@
  * these screens comes from the catalog (screens.tenancy, ADR-051): no literals.
  */
 
+import { isShownText, renderShown, type ShownText } from "@/platform/errors/shown-text";
 import React, { useCallback, useId, useState } from "react";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
@@ -30,6 +31,13 @@ import {
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.tenancy.${key}`, values);
+
+/** A readiness check's name in the catalog's words; one it does not have, as named. */
+function checkName(name: string): string {
+  const key = `screens.readiness.names.${name}`;
+  const label = renderMessage(key);
+  return label === key ? name : label;
+}
 
 const card = "bg-[#111827] rounded-xl border border-gray-800 p-5";
 const th =
@@ -335,7 +343,7 @@ interface TenantRow {
 interface Readiness {
   mode: string;
   ready: boolean;
-  checks: { name: string; state: string; detail: string }[];
+  checks: { name: string; state: string; detail: ShownText }[];
 }
 
 type Act = (label: string, url: string, init: RequestInit) => Promise<boolean>;
@@ -731,7 +739,8 @@ export function OperatorTenantsView({
             {readiness.checks.map((c) => (
               <li key={c.name}>
                 <span className={CHECK_TONE[c.state] ?? "text-red-400"}>
-                  <span aria-hidden="true">{CHECK_MARK[c.state] ?? "✗"}</span> {c.name}{" "}
+                  <span aria-hidden="true">{CHECK_MARK[c.state] ?? "✗"}</span>{" "}
+                  {checkName(c.name)}{" "}
                   <span className="sr-only">
                     (
                     {t(
@@ -740,7 +749,9 @@ export function OperatorTenantsView({
                     )
                   </span>
                 </span>{" "}
-                <span className="text-gray-400">{c.detail}</span>
+                <span className="text-gray-400">
+                  {isShownText(c.detail) ? renderShown(c.detail) : null}
+                </span>
               </li>
             ))}
           </ul>

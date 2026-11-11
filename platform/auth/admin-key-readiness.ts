@@ -12,6 +12,7 @@
  * @module platform/auth
  */
 
+import { shown } from "@/platform/errors/shown-text";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { ClientSecretReadiness } from "@/platform/auth/provider";
 
@@ -34,15 +35,13 @@ export function compareClientSecrets(
   if (pool && !held) {
     return {
       state: "mismatch",
-      reason:
-        "the app client has a secret and COGNITO_CLIENT_SECRET is not set — every sign-in is refused",
+      reason: shown("screens.readiness.secret_not_held"),
     };
   }
   if (!pool && held) {
     return {
       state: "mismatch",
-      reason:
-        "COGNITO_CLIENT_SECRET is set but the app client has no secret — every sign-in is refused",
+      reason: shown("screens.readiness.secret_not_in_pool"),
     };
   }
   const digest = (v: string) => createHash("sha256").update(v, "utf8").digest();
@@ -50,8 +49,7 @@ export function compareClientSecrets(
     ? { state: "ready" }
     : {
         state: "mismatch",
-        reason:
-          "COGNITO_CLIENT_SECRET is not the app client's secret — every sign-in is refused (rotate it in the deployment)",
+        reason: shown("screens.readiness.secret_differs"),
       };
 }
 

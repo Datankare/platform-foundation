@@ -386,9 +386,10 @@ describe("an audit search names its actors and targets (N-63)", () => {
       "target_id",
       "created_at",
     ]);
+    // The erased account's name is the catalog's key (TASK-206): the grid words it.
     expect(out.table?.rows[0].slice(2, 4)).toEqual([
       "member@example.test",
-      "an erased account",
+      { key: "screens.admin_console.people.erased" },
     ]);
   });
 

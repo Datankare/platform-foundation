@@ -22,6 +22,7 @@
  * Phase 4, Sprint 3a
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { holds } from "@/platform/auth/role-governance";
@@ -76,8 +77,8 @@ const MESSAGE_BODY_SCHEMA: InputSchemaNode = {
 };
 
 interface ConfigAIResponse {
-  /** Agent's natural language response */
-  response: string;
+  /** The agent's reply, as the catalog's key (TASK-206, N-102): a screen words it. */
+  response: ShownText;
   /** Tool results from this turn */
   toolResults: ConfigToolResult[];
   /** Whether a change is pending confirmation */
@@ -207,28 +208,29 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
  * For now, the config AI endpoint primarily serves as a tool execution
  * gateway via the /execute sub-route.
  */
-function buildAcknowledgment(message: string): string {
+function buildAcknowledgment(message: string): ShownText {
   const lower = message.toLowerCase();
+  const ack = (key: string) => shown(`screens.admin_console.config_ai.${key}`);
 
   if (lower.includes("search") || lower.includes("find") || lower.includes("show")) {
-    return "I can help you find configuration entries. Use the tool panel to search by keyword, category, or permission tier.";
+    return ack("search");
   }
   if (lower.includes("change") || lower.includes("update") || lower.includes("set")) {
-    return "I can help you update configuration. Use the tool panel to select a config key and proposed value. I'll validate and show you the impact before applying.";
+    return ack("update");
   }
   if (
     lower.includes("history") ||
     lower.includes("who changed") ||
     lower.includes("audit")
   ) {
-    return "I can show you the change history for any configuration key. Use the tool panel to query history.";
+    return ack("history");
   }
   if (lower.includes("impact") || lower.includes("what happened")) {
-    return "I can show you how moderation outcomes changed after a config change. Use the impact report tool for any moderation config key.";
+    return ack("impact");
   }
   if (lower.includes("approval") || lower.includes("pending")) {
-    return "I can help you manage pending approvals. Use the approval tools to review, approve, or reject pending changes.";
+    return ack("approvals");
   }
 
-  return "I'm the config management agent. I can help you search, view, update, and audit platform configuration. What would you like to do?";
+  return ack("default");
 }

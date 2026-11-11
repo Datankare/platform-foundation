@@ -176,9 +176,25 @@ describe("renderMessage / lookup", () => {
 
   it("returns the source text when formatting fails", () => {
     // Missing value for a plain argument makes intl-messageformat throw.
-    expect(renderMessage(messageKey("request.invalid_value"), {})).toBe(
-      "{field} must be one of: {allowed}."
+    expect(renderMessage(messageKey("request.missing_fields"), {})).toBe(
+      "Required: {fields}."
     );
+  });
+
+  it("an optional select argument left out is its other branch (TASK-206)", () => {
+    expect(
+      renderMessage(messageKey("request.invalid_value"), {
+        field: "mode",
+        allowed: ["a", "b"],
+      })
+    ).toBe("mode must be one of: a and b.");
+    expect(
+      renderMessage(messageKey("request.invalid_value"), {
+        field: "userId",
+        allowed: ["user_id"],
+        expected: "user_id",
+      })
+    ).toBe("userId must be a user id.");
   });
 
   it("lookup handles non-objects and non-strings", () => {

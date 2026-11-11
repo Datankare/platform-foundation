@@ -237,7 +237,7 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
         // (round 14, item 12).
         return {
           success: false,
-          error: "The change could not be written.",
+          error: "admin.action_failed",
           response: internalError(error, {
             request,
             context: "Admin entitlements query failed",
@@ -247,7 +247,7 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
       if (outcome === "gone") {
         return {
           success: false,
-          error: "the group was removed before the change",
+          error: "admin.target_not_found",
           response: apiError("admin.target_not_found", {
             params: { target: "entitlement" },
             request,

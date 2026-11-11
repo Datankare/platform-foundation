@@ -24,6 +24,7 @@
  * @module platform/tenancy
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { getAuthProvider } from "@/platform/auth/config";
 import { logCaught } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
@@ -37,7 +38,7 @@ import {
   getCognitoAdminCredentials,
   getDatabaseSettings,
   getTenancySettings,
-  getTenantDirectoryStoreSetting,
+  getTenantDirectoryStore,
 } from "@/platform/providers/environment-contract";
 
 export type CheckState = "ready" | "not_ready" | "not_needed" | "unknown";
@@ -53,7 +54,8 @@ export interface ReadinessCheck {
     | "client_secret"
     | "dual_control";
   readonly state: CheckState;
-  readonly detail: string;
+  /** What the check found, as the catalog's key and values (TASK-206, N-102). */
+  readonly detail: ShownText;
 }
 
 export interface TenancyReadiness {
@@ -65,7 +67,11 @@ export interface TenancyReadiness {
 
 async function databaseCheck(): Promise<ReadinessCheck> {
   if (!hasDatabase()) {
-    return { name: "database", state: "not_ready", detail: "DATABASE_URL is not set." };
+    return {
+      name: "database",
+      state: "not_ready",
+      detail: shown("screens.readiness.database_unset"),
+    };
   }
   try {
     const { rows } = await withPlatformTx((tx) =>
@@ -79,19 +85,19 @@ async function databaseCheck(): Promise<ReadinessCheck> {
       return {
         name: "database",
         state: "unknown",
-        detail: "The connection's role was not found.",
+        detail: shown("screens.readiness.database_role_missing"),
       };
     if (r.bypass || r.superuser) {
       return {
         name: "database",
         state: "not_ready",
-        detail: `The request connection signs in as ${r.role}, which bypasses row-level security; it must be app_tenant.`,
+        detail: shown("screens.readiness.database_bypasses_rls", { role: r.role }),
       };
     }
     return {
       name: "database",
       state: "ready",
-      detail: `The request connection signs in as ${r.role}, under row-level security.`,
+      detail: shown("screens.readiness.database_ready", { role: r.role }),
     };
   } catch (err) {
     logCaught(logger, "Readiness: the database could not be reached", err, {
@@ -100,7 +106,7 @@ async function databaseCheck(): Promise<ReadinessCheck> {
     return {
       name: "database",
       state: "not_ready",
-      detail: "The database could not be reached (the detail is in the log).",
+      detail: shown("screens.readiness.database_unreachable"),
     };
   }
 }
@@ -120,7 +126,7 @@ async function erasureCheck(provider: AuthProvider | undefined): Promise<Readine
     return {
       name: "erasure",
       state: "not_needed",
-      detail: "The identity provider keeps no identities the platform erases.",
+      detail: shown("screens.readiness.erasure_not_needed"),
     };
   }
   const r = await provider.checkErasureAccess();
@@ -128,13 +134,13 @@ async function erasureCheck(provider: AuthProvider | undefined): Promise<Readine
     return {
       name: "erasure",
       state: "ready",
-      detail: "Erasure can find an identity by its subject and delete it.",
+      detail: shown("screens.readiness.erasure_ready"),
     };
   }
   return {
     name: "erasure",
     state: r.state === "unknown" ? "unknown" : "not_ready",
-    detail: `Erasure cannot delete identities: ${r.reason}.`,
+    detail: shown("screens.readiness.erasure_not_ready", { reason: r.reason }),
   };
 }
 
@@ -146,7 +152,7 @@ async function clientSecretCheck(
     return {
       name: "client_secret",
       state: "not_needed",
-      detail: "The identity provider has no app client secret to check.",
+      detail: shown("screens.readiness.secret_not_needed"),
     };
   }
   const r = await provider.checkClientSecret();
@@ -154,13 +160,13 @@ async function clientSecretCheck(
     return {
       name: "client_secret",
       state: "ready",
-      detail: "The app client's secret is the one the pool has.",
+      detail: shown("screens.readiness.secret_ready"),
     };
   }
   return {
     name: "client_secret",
     state: r.state === "mismatch" ? "not_ready" : "unknown",
-    detail: `The app client's secret is not confirmed: ${r.reason}.`,
+    detail: shown("screens.readiness.secret_not_ready", { reason: r.reason }),
   };
 }
 
@@ -183,8 +189,8 @@ export async function checkTenancyReadiness(
     name: "mode",
     state: "ready",
     detail: shared
-      ? "Shared: each request's tenant comes from the verified identity, or its address."
-      : `Single: this deployment serves tenant ${settings.tenantId}.`,
+      ? shown("screens.readiness.mode_shared")
+      : shown("screens.readiness.mode_single", { tenant: settings.tenantId ?? "" }),
   });
 
   checks.push(await databaseCheck());
@@ -194,31 +200,34 @@ export async function checkTenancyReadiness(
       ? {
           name: "owner_connection",
           state: "ready",
-          detail: "DATABASE_OWNER_URL is set for operator paths.",
+          detail: shown("screens.readiness.owner_ready"),
         }
       : {
           name: "owner_connection",
           state: "not_ready",
-          detail:
-            "DATABASE_OWNER_URL is not set: platform defaults and tenant lifecycle cannot run.",
+          detail: shown("screens.readiness.owner_unset"),
         }
   );
 
-  const directory = getTenantDirectoryStoreSetting();
+  // As boot chose it (TASK-206, N-103): Postgres whenever there is a database.
+  const directory = getTenantDirectoryStore();
   checks.push(
     directory === "postgres"
-      ? { name: "directory", state: "ready", detail: "Tenants are kept in Postgres." }
+      ? {
+          name: "directory",
+          state: "ready",
+          detail: shown("screens.readiness.directory_ready"),
+        }
       : shared
         ? {
             name: "directory",
             state: "not_ready",
-            detail: "A shared deployment needs TENANT_DIRECTORY_STORE=postgres.",
+            detail: shown("screens.readiness.directory_shared_memory"),
           }
         : {
             name: "directory",
             state: "not_needed",
-            detail:
-              "Tenants are kept per instance (memory); a single deployment does not need more.",
+            detail: shown("screens.readiness.directory_memory"),
           }
   );
 
@@ -226,14 +235,13 @@ export async function checkTenancyReadiness(
     checks.push({
       name: "identity",
       state: "not_needed",
-      detail: "A single deployment's users all belong to its one tenant.",
+      detail: shown("screens.readiness.identity_single"),
     });
   } else if (!getCognitoAdminCredentials()) {
     checks.push({
       name: "identity",
       state: "not_ready",
-      detail:
-        "COGNITO_ADMIN_ACCESS_KEY_ID is not set: new users cannot be assigned a tenant.",
+      detail: shown("screens.readiness.identity_no_key"),
     });
   } else {
     const provider = providerOrNone();
@@ -241,7 +249,7 @@ export async function checkTenancyReadiness(
       ? await provider.checkTenantAttribute()
       : {
           state: "unknown" as const,
-          reason: "the identity provider cannot report on tenants",
+          reason: shown("screens.readiness.identity_unreportable"),
         };
     checks.push({
       name: "identity",
@@ -253,8 +261,8 @@ export async function checkTenancyReadiness(
             : "not_ready",
       detail:
         result.state === "ready"
-          ? "Users' tenants are held by the identity provider, readable and not writable by users."
-          : `Users' tenants are not held safely: ${result.reason}.`,
+          ? shown("screens.readiness.identity_ready")
+          : shown("screens.readiness.identity_not_ready", { reason: result.reason }),
     });
   }
 

@@ -29,6 +29,7 @@
  * @module platform/admin
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { getConfigOrThrow, getPermissionTier } from "@/platform/auth/platform-config";
 import { getTenancySettings } from "@/platform/providers/environment-contract";
 import { PROTECTED_ROLES } from "@/platform/auth/role-governance";
@@ -188,22 +189,30 @@ export function unapprovable(
 
 export interface DualControlReadiness {
   readonly state: "ready" | "not_ready" | "unknown";
-  readonly detail: string;
+  readonly detail: ShownText;
   readonly unapprovable: readonly UnapprovableAction[];
 }
 
-/** The readable sentence for the actions without an approver. */
+/**
+ * The actions without an approver, as the catalog's key and values (TASK-206, N-102): each
+ * action's own line, then what to do.
+ */
 export function describeUnapprovable(
   missing: readonly UnapprovableAction[],
   single: boolean
-): string {
-  if (missing.length === 0)
-    return "Every dual-controlled action has a second account that may approve it.";
-  const parts = missing.map(
-    (m) =>
-      `${m.action}${m.tenant && !single ? ` in tenant ${m.tenant}` : ""} (its approver needs ${m.permissions.join(", ")}; ${m.eligible === 0 ? "no account holds them" : "one account holds them: the requester could not be approved"})`
-  );
-  return `No second approver for: ${parts.join("; ")}. Give a second person those permissions (TENANCY_OPERATIONS: the second super admin, the first safety approver).`;
+): ShownText {
+  if (missing.length === 0) return shown("screens.readiness.dual_ready");
+  return shown("screens.readiness.dual_not_ready", {
+    actions: missing.map((m) =>
+      shown("screens.readiness.dual_action", {
+        action: m.action,
+        where: m.tenant && !single ? "tenant" : "here",
+        tenant: m.tenant ?? "",
+        permissions: [...m.permissions],
+        holders: m.eligible === 0 ? "none" : "requester",
+      })
+    ),
+  });
 }
 
 /**
@@ -235,7 +244,9 @@ export async function checkDualControlReadiness(
   } catch (err) {
     return {
       state: "unknown",
-      detail: `Who may approve could not be read (${err instanceof Error ? err.name : "error"}).`,
+      detail: shown("screens.readiness.dual_unknown", {
+        error: err instanceof Error ? err.name : "error",
+      }),
       unapprovable: [],
     };
   }

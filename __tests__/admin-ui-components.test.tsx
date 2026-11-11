@@ -202,13 +202,20 @@ describe("ExecutionResultsPanel", () => {
           {
             tool: "create_role",
             success: true,
-            result: 'Role "Moderator" created with 2 permissions',
+            result: shown("screens.admin_console.results.role_created", {
+              name: "Moderator",
+              count: 2,
+              gap: "none",
+              missing: [],
+            }),
           },
         ]}
         onDismiss={jest.fn()}
       />
     );
-    expect(screen.getByText('Role "Moderator" created with 2 permissions')).toBeDefined();
+    expect(
+      screen.getByText("Role “Moderator” created with 2 permissions.")
+    ).toBeDefined();
   });
 
   it("renders error results", () => {
@@ -254,7 +261,15 @@ describe("ExecutionResultsPanel", () => {
     const onDismiss = jest.fn();
     render(
       <ExecutionResultsPanel
-        results={[{ tool: "search", success: true, result: "found" }]}
+        results={[
+          {
+            tool: "search",
+            success: true,
+            result: shown("screens.admin_console.results.role_changed", {
+              role: "Moderator",
+            }),
+          },
+        ]}
         onDismiss={onDismiss}
       />
     );
@@ -355,6 +370,7 @@ import {
   EntitlementsDataView,
   PasswordPolicyDataView,
 } from "@/components/admin/AdminDataViews";
+import { shown } from "@/platform/errors/shown-text";
 
 describe("RolesDataView", () => {
   it("renders roles table with data", () => {

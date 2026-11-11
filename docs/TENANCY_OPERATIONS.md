@@ -124,6 +124,11 @@ The Supabase REST API and its keys are no longer used for data; `SUPABASE_URL` a
 Nothing else changes for its users or administrators: the administrators govern every setting,
 role and entitlement, as before. The Cognito tenant attribute is not used.
 
+Its tenants and addresses are kept in the database (`TENANT_DIRECTORY_STORE` unset means
+`postgres` whenever `DATABASE_URL` is set; `memory` beside a database is refused at boot — ADR-053
+A12), so what an operator changes on the Tenants page is what every instance, and every later
+step on that page, reads.
+
 ---
 
 ## 3. A shared deployment (`shared`)

@@ -21,6 +21,7 @@ import { writeGovernedConfig } from "@/platform/admin/governed-config";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
 import { coded, fromGovernedConfig, type ActionResult } from "./shared";
 import { sameId } from "@/platform/auth/same-id";
+import { renderShown, shown, type ShownText } from "@/platform/errors/shown-text";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -67,12 +68,15 @@ const UNREADABLE: ActionResult = coded("service.unavailable", { service: "agents
 async function writeRegistry(
   pairs: [string, TrustedAgentRecord][],
   admin: VerifiedAdmin,
-  summary: string
+  summary: ShownText
 ): Promise<ActionResult> {
   const outcome = await writeGovernedConfig(admin, {
     key: TRUSTED_AGENTS_KEY,
     value: pairs,
-    changeComment: `Command bar: ${summary}`,
+    // The record of the change, worded by the catalog when it is written (TASK-206, N-102).
+    changeComment: renderShown(
+      shown("screens.admin_console.results.command_bar_comment", { what: summary })
+    ),
   });
   return fromGovernedConfig(outcome, TRUSTED_AGENTS_KEY, summary);
 }
@@ -96,7 +100,11 @@ export async function handleRegisterAgent(
     maxTokenTtl: typeof input.max_token_ttl === "number" ? input.max_token_ttl : 300,
   };
   pairs.push([agentId, record]);
-  return writeRegistry(pairs, admin, `Registered agent ${agentId}`);
+  return writeRegistry(
+    pairs,
+    admin,
+    shown("screens.admin_console.results.agent_registered", { agent: agentId })
+  );
 }
 
 /** Suspend or reactivate an agent. */
@@ -114,7 +122,10 @@ export async function handleSuspendAgent(
   return writeRegistry(
     pairs,
     admin,
-    `${reactivate ? "Reactivated" : "Suspended"} agent ${agentId}`
+    shown("screens.admin_console.results.agent_status", {
+      agent: agentId,
+      status: reactivate ? "reactivated" : "suspended",
+    })
   );
 }
 
@@ -130,7 +141,15 @@ export async function handleSetAgentScope(
   const entry = pairs.find(([id]) => sameId(id, agentId));
   if (!entry) return coded("admin.target_not_found", { target: "agent" });
   entry[1].scopes = scopes;
-  return writeRegistry(pairs, admin, `Set scope of ${agentId} to [${scopes.join(", ")}]`);
+  return writeRegistry(
+    pairs,
+    admin,
+    shown("screens.admin_console.results.agent_scope", {
+      agent: agentId,
+      scopes: [...scopes],
+      count: scopes.length,
+    })
+  );
 }
 
 /** Set an agent's per-agent token-TTL ceiling (seconds). */
@@ -143,7 +162,8 @@ export async function handleSetAgentTtl(
   if (typeof ttl !== "number" || ttl <= 0) {
     return coded("request.invalid_value", {
       field: "max_token_ttl",
-      allowed: ["a positive number of seconds"],
+      allowed: ["positive_seconds"],
+      expected: "positive_seconds",
     });
   }
   const pairs = await readRegistry();
@@ -151,5 +171,9 @@ export async function handleSetAgentTtl(
   const entry = pairs.find(([id]) => sameId(id, agentId));
   if (!entry) return coded("admin.target_not_found", { target: "agent" });
   entry[1].maxTokenTtl = ttl;
-  return writeRegistry(pairs, admin, `Set token ceiling of ${agentId} to ${ttl}s`);
+  return writeRegistry(
+    pairs,
+    admin,
+    shown("screens.admin_console.results.agent_ttl", { agent: agentId, seconds: ttl })
+  );
 }

@@ -16,6 +16,7 @@ import ExecutionResultsPanel, {
 } from "@/components/admin/ExecutionResultsPanel";
 import { renderMessage } from "@/platform/errors/messages";
 import { messageKey } from "@/platform/errors/registry";
+import { shown } from "@/platform/errors/shown-text";
 
 const r = (key: string, values?: Record<string, string | number>) =>
   renderMessage(`screens.admin_console.results.${key}`, values);
@@ -30,7 +31,7 @@ describe("ExecutionResultsPanel: each kind of result", () => {
             tool: "purge_user_data",
             success: false,
             held: true,
-            result: "Held for a second admin",
+            result: shown("screens.admin_console.results.held_second_admin"),
           },
           {
             tool: "change_user_role",
@@ -48,7 +49,9 @@ describe("ExecutionResultsPanel: each kind of result", () => {
         ]}
       />
     );
-    expect(screen.getByText("Held for a second admin")).toBeDefined();
+    expect(
+      screen.getByText("Held for a second administrator’s approval; it has not run.")
+    ).toBeDefined();
     expect(screen.getByText(r("held"))).toBeDefined();
     expect(
       screen.getByText(
@@ -67,7 +70,7 @@ describe("ExecutionResultsPanel: each kind of result", () => {
       {
         tool: "purge_user_data",
         success: true,
-        result: "Done",
+        result: shown("screens.admin_console.results.password_policy_updated"),
         account: { id: "u-9", email: "leaver@example.test" },
       },
     ];

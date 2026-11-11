@@ -5,6 +5,7 @@
  * validated exactly as the password-policy admin route validates them.
  */
 
+import { shown } from "@/platform/errors/shown-text";
 import {
   applyPasswordPolicyChange,
   getGlobalPasswordPolicy,
@@ -62,7 +63,10 @@ export async function handleUpdatePasswordPolicy(
         });
         return coded("admin.action_failed");
       }
-      return { success: true, result: "Password policy updated" };
+      return {
+        success: true,
+        result: shown("screens.admin_console.results.password_policy_updated"),
+      };
     }
   );
 }

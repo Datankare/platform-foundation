@@ -92,6 +92,10 @@ async function contextRows<R extends Record<string, unknown>>(
   }
 }
 
+/**
+ * @modelText The panel's context for the model's system prompt — read by the model, never shown
+ * (TASK-206, rule C).
+ */
 async function getContextForPanel(panel: string, admin: VerifiedAdmin): Promise<string> {
   const permission = PANEL_CONTEXT_PERMISSIONS[panel];
   if (!permission || !holds(admin, permission)) return "";

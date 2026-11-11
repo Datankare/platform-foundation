@@ -42,6 +42,7 @@ import {
   type SettingEntry,
 } from "@/components/admin/PlatformConfigPanel";
 import { PANEL_UNAVAILABLE } from "@/components/admin/PanelUnavailable";
+import { shown } from "@/platform/errors/shown-text";
 
 function reply(name: RouteFixtureName) {
   const [status, body] = routeAnswer(name);
@@ -71,7 +72,11 @@ const base: PendingApproval = {
   label: "change_user_role",
   requester: "00000000-0000-4000-9000-000000000001",
   requiredPermission: "admin_manage_users",
-  reason: "held",
+  reason: shown("screens.held.reason_held", {
+    risk: "restricted",
+    effects: [],
+    effected: "no",
+  }),
   createdAt: "2026-01-01T00:00:00.000Z",
 };
 const target = { id: "u-1", email: "member@example.test" };
@@ -300,7 +305,10 @@ describe("Approvals: each kind of held change in words (N-61)", () => {
         label: "purge_user_data",
         undecided: true,
         state: "undecided",
-        reason: "run stopped (detail)",
+        reason: shown("screens.held.reason_undecided", {
+          noted: "yes",
+          detail: "run stopped",
+        }),
       },
     ];
     mockApiFetch.mockRejectedValueOnce(new Error("offline"));
@@ -314,7 +322,7 @@ describe("Approvals: each kind of held change in words (N-61)", () => {
     );
     // Unreachable: said at the row, nothing decided.
     expect(await screen.findByText(held("network_error"))).toBeTruthy();
-    expect(screen.getByText("run stopped (detail)")).toBeTruthy();
+    expect(screen.getByText(/\(run stopped\)/)).toBeTruthy();
     expect(screen.getByText(held("details"))).toBeTruthy();
   });
 });

@@ -14,6 +14,7 @@ import {
   type JobsData,
 } from "@/components/admin/JobsPanels";
 import { routeAnswer } from "@/__tests__/fixtures/route-responses";
+import { shown } from "@/platform/errors/shown-text";
 
 // axe-core is installed with @axe-core/playwright (the e2e audits); here it runs in jsdom.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -48,7 +49,7 @@ const DATA: JobsData = {
   schedules: [
     {
       kind: "moderation.escalation-reaper",
-      description: "Applies the remedy to escalations over their SLA.",
+      description: shown("screens.jobs.kinds.moderation_escalation_reaper"),
       owner: "core",
       scope: "each-tenant",
       enabled: true,
@@ -72,7 +73,7 @@ const DATA: JobsData = {
     },
     {
       kind: "social.curator",
-      description: "Runs the curator agent.",
+      description: shown("screens.jobs.kinds.social_curator"),
       owner: "social",
       scope: "each-tenant",
       enabled: false,

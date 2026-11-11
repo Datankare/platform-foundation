@@ -453,15 +453,40 @@ describe("OperatorTenantsView", () => {
         mode: "shared",
         ready: false,
         checks: [
-          { name: "request role", state: "ready", detail: "app_tenant" },
-          { name: "identity attribute", state: "not_ready", detail: "writable" },
-          { name: "owner connection", state: "unknown", detail: "timeout" },
+          {
+            name: "database",
+            state: "ready",
+            detail: {
+              key: "screens.readiness.database_ready",
+              params: { role: "app_tenant" },
+            },
+          },
+          {
+            name: "identity",
+            state: "not_ready",
+            detail: {
+              key: "screens.readiness.identity_not_ready",
+              params: {
+                reason: {
+                  key: "screens.readiness.attribute_writable",
+                  params: { client: "web", attribute: "custom:tenant_id" },
+                },
+              },
+            },
+          },
+          {
+            name: "owner_connection",
+            state: "unknown",
+            detail: { key: "screens.readiness.owner_unset" },
+          },
         ],
       },
     ]);
     view();
     fireEvent.click(button("Check"));
-    await screen.findByText("writable");
+    // Each check by the catalog's name, and its detail worded by the catalog (TASK-206).
+    await screen.findByText(/web can write custom:tenant_id/);
+    expect(screen.getByText(/under row-level security/)).toBeDefined();
     expect(screen.getByText("(ready)")).toBeDefined();
     expect(screen.getByText("(not ready)")).toBeDefined();
     expect(screen.getByText("(unknown)")).toBeDefined();

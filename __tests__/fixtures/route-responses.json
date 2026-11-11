@@ -5,7 +5,9 @@
       "schedules": [
         {
           "kind": "moderation.escalation-reaper",
-          "description": "Applies the configured remedy to escalations left over their SLA without a decision (ADR-041).",
+          "description": {
+            "key": "screens.jobs.kinds.moderation_escalation_reaper"
+          },
           "owner": "core",
           "scope": "each-tenant",
           "runsForSuspended": false,
@@ -23,7 +25,9 @@
         },
         {
           "kind": "moderation.release-claims",
-          "description": "Returns review items whose claim timed out to the queue.",
+          "description": {
+            "key": "screens.jobs.kinds.moderation_release_claims"
+          },
           "owner": "core",
           "scope": "each-tenant",
           "runsForSuspended": false,
@@ -41,7 +45,9 @@
         },
         {
           "kind": "moderation.expire-strikes",
-          "description": "Marks strikes past their expiry as expired.",
+          "description": {
+            "key": "screens.jobs.kinds.moderation_expire_strikes"
+          },
           "owner": "core",
           "scope": "each-tenant",
           "runsForSuspended": false,
@@ -59,7 +65,9 @@
         },
         {
           "kind": "accounts.expire-restrictions",
-          "description": "Steps restricted or suspended accounts whose end date has passed down to warned.",
+          "description": {
+            "key": "screens.jobs.kinds.accounts_expire_restrictions"
+          },
           "owner": "core",
           "scope": "each-tenant",
           "runsForSuspended": false,
@@ -77,7 +85,9 @@
         },
         {
           "kind": "gdpr.retention-purge",
-          "description": "Completes the erasure (hard purge) of accounts whose GDPR retention period has passed.",
+          "description": {
+            "key": "screens.jobs.kinds.gdpr_retention_purge"
+          },
           "owner": "core",
           "scope": "each-tenant",
           "runsForSuspended": true,
@@ -95,7 +105,9 @@
         },
         {
           "kind": "agents.trajectory-retention",
-          "description": "Ends open agent trajectories with no activity for agent.trajectory.abandon_after_hours and no open hold, then deletes completed and failed ones older than agent.trajectory.retention_days.",
+          "description": {
+            "key": "screens.jobs.kinds.agents_trajectory_retention"
+          },
           "owner": "core",
           "scope": "each-tenant",
           "runsForSuspended": true,
@@ -113,7 +125,9 @@
         },
         {
           "kind": "data.retention",
-          "description": "Applies every table's retention rule that no other duty applies: audit and consent records lose their IP address and user agent, and interactions, AI metrics, content-safety decisions, resolved effects, idle guests and sessions, and past budget counters are deleted after their governed age (retention.*).",
+          "description": {
+            "key": "screens.jobs.kinds.data_retention"
+          },
           "owner": "core",
           "scope": "each-tenant",
           "runsForSuspended": true,
@@ -131,7 +145,9 @@
         },
         {
           "kind": "config.expire-approvals",
-          "description": "Marks pending configuration approvals past their expiry as expired, settles approvals whose outcome is being checked, and lists undecided runs for a person.",
+          "description": {
+            "key": "screens.jobs.kinds.config_expire_approvals"
+          },
           "owner": "core",
           "scope": "platform",
           "runsForSuspended": false,
@@ -149,7 +165,9 @@
         },
         {
           "kind": "tenancy.purge-due",
-          "description": "Purges the data of deleted tenants whose purge time has passed.",
+          "description": {
+            "key": "screens.jobs.kinds.tenancy_purge_due"
+          },
           "owner": "core",
           "scope": "platform",
           "runsForSuspended": false,
@@ -167,7 +185,9 @@
         },
         {
           "kind": "jobs.prune",
-          "description": "Deletes succeeded jobs older than jobs.retention_days; dead jobs stay until an operator acts.",
+          "description": {
+            "key": "screens.jobs.kinds.jobs_prune"
+          },
           "owner": "core",
           "scope": "platform",
           "runsForSuspended": false,
@@ -185,7 +205,7 @@
         },
         {
           "kind": "test.sched",
-          "description": "A recurring test job.",
+          "description": null,
           "owner": "app",
           "scope": "platform",
           "runsForSuspended": false,
@@ -404,7 +424,14 @@
             "after": ["signups_enabled", "config.dual_control_keys", "default_language"]
           },
           "comment": "Hold language changes too",
-          "reason": "Held at effectiveRisk \"restricted\" (effects: stateWrite) — needs an independent approver.",
+          "reason": {
+            "key": "screens.held.reason_held",
+            "params": {
+              "risk": "restricted",
+              "effects": ["stateWrite"],
+              "effected": "yes"
+            }
+          },
           "createdAt": "2026-01-01T00:00:00.000Z",
           "requestedBy": {
             "kind": "account",
@@ -428,7 +455,12 @@
             "scope": "tenant"
           },
           "comment": "Fewer bans for first offences",
-          "reason": "Safety-tier change to \"moderation.strike_ban_threshold\" awaiting a second approver.",
+          "reason": {
+            "key": "screens.held.reason_two_person",
+            "params": {
+              "key": "moderation.strike_ban_threshold"
+            }
+          },
           "createdAt": "2026-01-01T00:00:00.000Z",
           "requestedBy": {
             "kind": "account",
@@ -464,8 +496,18 @@
           "tool": "register_agent",
           "success": false,
           "held": true,
-          "result": "Registered agent agent:e2e-helper — held for approval (agent.trusted_agents is under dual control) before it takes effect",
-          "error": "Held for approval; it has not taken effect"
+          "result": {
+            "key": "screens.admin_console.results.held_dual_control",
+            "params": {
+              "what": {
+                "key": "screens.admin_console.results.agent_registered",
+                "params": {
+                  "agent": "agent:e2e-helper"
+                }
+              },
+              "key": "agent.trusted_agents"
+            }
+          }
         }
       ]
     }
@@ -477,7 +519,12 @@
         {
           "tool": "register_agent",
           "success": true,
-          "result": "Registered agent agent:e2e-helper"
+          "result": {
+            "key": "screens.admin_console.results.agent_registered",
+            "params": {
+              "agent": "agent:e2e-helper"
+            }
+          }
         }
       ]
     }

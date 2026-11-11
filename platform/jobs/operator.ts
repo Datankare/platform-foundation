@@ -20,6 +20,8 @@
  * @module platform/jobs
  */
 
+import { renderMessage } from "@/platform/errors/messages";
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { randomUUID } from "node:crypto";
 import { audited, AuditWriteError, writeAuditLog } from "@/platform/auth/audit";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
@@ -52,9 +54,21 @@ export type JobsResult<T> =
 const ok = <T>(value: T): JobsResult<T> => ({ ok: true, value });
 const fail = <T>(code: JobsFailure): JobsResult<T> => ({ ok: false, code });
 
+/** A job kind's catalog key: screens.jobs.kinds.<kind, its dots and hyphens as underscores>. */
+export function jobDescriptionKey(kind: string): `screens.${string}` {
+  return `screens.jobs.kinds.${kind.replace(/[.-]/g, "_")}`;
+}
+
+/** What a kind does, as the catalog words it; null for a kind the catalog does not have. */
+export function jobDescription(kind: string): ShownText | null {
+  const key = jobDescriptionKey(kind);
+  return renderMessage(key) === key ? null : shown(key);
+}
+
 export interface ScheduleView {
   readonly kind: string;
-  readonly description: string;
+  /** What it does, as the catalog's key (TASK-206); null when the catalog has none. */
+  readonly description: ShownText | null;
   /** "core", a module id, or "app". */
   readonly owner: string;
   readonly scope: JobScope;
@@ -86,7 +100,9 @@ export async function describeSchedules(): Promise<ScheduleView[]> {
       const state = states.get(def.kind) ?? null;
       out.push({
         kind: def.kind,
-        description: def.description,
+        // The catalog's words for the kind (TASK-206, N-102); the definition's own text is the
+        // developer's (registerJob), never shown.
+        description: jobDescription(def.kind),
         owner: owners.get(def.kind) ?? "core",
         scope: def.schedule.scope,
         runsForSuspended: def.runsForSuspended,

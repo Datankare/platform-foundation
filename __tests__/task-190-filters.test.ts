@@ -12,6 +12,11 @@
  * the recorded step; the step's ignored keys as a count (residual b); the confirm panel showing a
  * refused value as invalid (residual a). The SQL is proved on Postgres in
  * __tests__/db/task-190-users-filters.db.test.ts.
+ *
+ * hostile:role n/a: the Users list's permission is tested in admin-authorization-matrix
+ * hostile:self n/a: a filter is no account; nothing here acts on its caller
+ * hostile:store-down n/a: the list's failed read is in admin-read-failures
+ * hostile:id-spelling n/a: an id filter's spelling is the filters' own check, by value
  */
 
 jest.mock("@/platform/data", () => require("./helpers/fake-data").fakeDataModule());
@@ -53,6 +58,7 @@ import { AUDIT_ACTIONS as SERVER_ACTIONS } from "@/platform/auth/audit";
 import { AUDIT_ACTIONS } from "@/platform/auth/audit-actions";
 import { SEARCHABLE_TABLES } from "@/app/api/admin/ai/tool-permissions";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
+import { shown } from "@/platform/errors/shown-text";
 
 const ALL: VerifiedAdmin = {
   userId: "00000000-0000-4000-8000-0000000000ad",
@@ -314,7 +320,14 @@ describe("TASK-190: the search hands its validated filters to the screen, not to
 
 describe("TASK-190 residual (b): the step records how many keys were ignored, never their names", () => {
   it("an identifier-shaped unknown key (jane_doe) is not recorded", () => {
-    const ok = { success: true, result: "No rows of users match." };
+    const ok = {
+      success: true,
+      result: shown("screens.admin_console.search.summary_none", {
+        shown: 0,
+        matched: 0,
+        table: "users",
+      }),
+    };
     const step = searchStepRecord(ok, {
       table: "users",
       jane_doe: "x",

@@ -26,6 +26,7 @@
  * an erased session ends.
  */
 
+import { renderShown } from "@/platform/errors/shown-text";
 import React, { useState } from "react";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
 import { apiFetch } from "@/platform/auth/api-fetch";
@@ -448,7 +449,7 @@ export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApprova
                           <summary className="cursor-pointer text-blue-300">
                             {t("details")}
                           </summary>
-                          <span className="break-words">{a.reason}</span>
+                          <span className="break-words">{renderShown(a.reason)}</span>
                         </details>
                       )}
                     </dd>

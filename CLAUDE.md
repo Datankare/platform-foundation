@@ -18,12 +18,12 @@ or Upstash for the shared cache; Jest with ts-jest; Semgrep, CodeQL and gitleaks
 ## Conventions
 
 - **Platform first:** a capability is built here as a generic abstraction; an app adds its own
-  implementation through the consumer seams ([SETUP_AND_INTEGRATION](docs/SETUP_AND_INTEGRATION.md) §6).
+  through the consumer seams ([SETUP_AND_INTEGRATION](docs/SETUP_AND_INTEGRATION.md) §6).
 - **Data:** only `platform/data` reaches Postgres; values are bound parameters, never SQL text;
   every route handler runs in its tenant scope (`tenantRoute`). The tests in ASSURANCE §2 hold this.
 - **Errors and text:** every refusal is a coded error ([API_ERRORS](docs/API_ERRORS.md), generated);
-  every screen word comes from `messages/` and a caught error's text is only logged — except the
-  sites in `screen-literal-baseline.json` (R-75) and the `platform/` dirs R-77's guard skips yet.
+  every screen word, an API answer's too (`shown-text.ts`), comes from `messages/`, held at 0
+  (`screen-literal-baseline.json`, screen-text-indirect); a caught error's text is only logged.
 - **Registers:** work and defects go in [TASKS](docs/TASKS.md), deferred security items in
   [SECURITY_DEBT](docs/SECURITY_DEBT.md), every new doc in the [docs index](docs/README.md).
 - **Width:** code is formatted by Prettier at its `printWidth` (`.prettierrc`); comments and

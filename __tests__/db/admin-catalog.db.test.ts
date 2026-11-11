@@ -89,6 +89,7 @@ import {
   type TestCatalog,
 } from "../helpers/db-admin";
 import type { TestIdentity } from "../helpers/test-identities";
+import { renderShown, type ShownText } from "@/platform/errors/shown-text";
 
 // hostile:self n/a: the catalog (roles, permissions, groups) is no account: a change to one's own role is the Users route's, in approver-rules
 // hostile:id-spelling n/a: catalog rows are named by code and id the routes look up; no account id is compared here
@@ -203,7 +204,7 @@ dbDescribe(`${SUITE} handleCreateRole`, () => {
     expect(await permsOf((await roleNamed(name("bare"))).id)).toEqual([
       ...FEATURE_PERMISSION_CODES,
     ]);
-    expect(res.result).not.toMatch(/lacks/);
+    expect(renderShown(res.result as ShownText)).not.toMatch(/lacks/);
   });
 
   // Round 2: an admin who lacks a default feature permission still creates the role — that
@@ -220,7 +221,7 @@ dbDescribe(`${SUITE} handleCreateRole`, () => {
     expect(await permsOf((await roleNamed(name("partial"))).id)).toEqual(
       FEATURE_PERMISSION_CODES.filter((c) => c !== "can_translate")
     );
-    expect(res.result).toMatch(/lacks can_translate/);
+    expect(renderShown(res.result as ShownText)).toMatch(/lacks can_translate/);
     // Asked for by name, it is refused as before.
     const asked = await shared(() =>
       handleCreateRole(
@@ -246,7 +247,7 @@ dbDescribe(`${SUITE} handleCreateRole`, () => {
     expect(await permsOf((await roleNamed(name("notr"))).id)).toEqual(
       FEATURE_PERMISSION_CODES.filter((c) => c !== "can_translate")
     );
-    expect(res.result).toMatch(/lacks can_translate/);
+    expect(renderShown(res.result as ShownText)).toMatch(/lacks can_translate/);
   });
 
   it("says a taken name plainly, never with the database's own message", async () => {
@@ -353,7 +354,7 @@ dbDescribe(`${SUITE} handleDuplicateRole`, () => {
       )
     );
     expect(res).toMatchObject({ success: true });
-    expect(res.result).toMatch(/with 1 permissions/);
+    expect(renderShown(res.result as ShownText)).toMatch(/with 1 permission\./);
     const copy = await roleNamed(name("ops2"));
     expect(await permsOf(copy.id)).toEqual([cat.codes.x]);
     const [row] = await q<{ description: string }>(
@@ -482,7 +483,7 @@ dbDescribe(`${SUITE} handleAssignPermissions`, () => {
       )
     );
     expect(res.success).toBe(true);
-    expect(res.result).toMatch(/\+1, -1/);
+    expect(renderShown(res.result as ShownText)).toMatch(/1 permission added, 1 removed/);
     expect(await permsOf(id)).toEqual([cat.codes.y, ...FEATURE_PERMISSION_CODES].sort());
     // Re-adding a permission the role holds is a no-op.
     const again = await shared(() =>
@@ -503,7 +504,7 @@ dbDescribe(`${SUITE} handleAssignPermissions`, () => {
       )
     );
     expect(res.success).toBe(true);
-    expect(res.result).toMatch(/lacks can_translate/);
+    expect(renderShown(res.result as ShownText)).toMatch(/lacks can_translate/);
   });
 
   it("refuses when the role is not found", async () => {

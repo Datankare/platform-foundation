@@ -62,6 +62,7 @@ import { fitSearchRows, searchSummary } from "@/app/api/admin/ai/handlers/search
 import { createSession, dispatch, loadSession } from "@/platform/app-framework/session";
 import { resetActivityStateStore } from "@/platform/app-framework";
 import type { AgentIdentity, Step, Tool } from "@/platform/kernel";
+import { renderShown } from "@/platform/errors/shown-text";
 
 const actor: AgentIdentity = { actorType: "agent", actorId: "agent:a1", agentRole: "a" };
 
@@ -548,7 +549,7 @@ describe("rv11 L-3: an oversized row hides no other row", () => {
     ];
     const fitted = fitSearchRows(rows, ["id", "description"]);
     expect(fitted.shown.map((r) => r[0])).toEqual(rows.slice(1).map((r) => r[0]));
-    const text = searchSummary("roles", rows.length, fitted);
+    const text = renderShown(searchSummary("roles", rows.length, fitted));
     expect(text).toBe(
       "Showing 19 of 20 matching rows of roles. 1 row left out (big-1): the result is limited to 256 KiB."
     );

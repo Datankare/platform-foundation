@@ -148,3 +148,11 @@ wrong; none weakens it.
   account already exists (a users row, from before the deployment was shared) is assigned the
   tenant holding that account — at its own address, even with sign-ups closed — and refused at any
   other; only an identity with no account anywhere joins the address's tenant.
+- **A12 — One directory: the database's, whenever there is one (D7; TASK-206, N-103).** The tenant
+  lifecycle is SQL on the owner connection (an address removed under the tenant's lock, a
+  deletion, a purge, the overview), so the directory is those same tables wherever a database is
+  configured: `TENANT_DIRECTORY_STORE` left unset means `postgres` with a `DATABASE_URL`, and
+  `memory` beside one is refused at boot in every mode. A dedicated deployment on the in-memory
+  directory kept an operator's new tenant, rename or address in one process while removing that
+  address, or deleting the tenant, read the database and answered 404. Memory remains only for a
+  process with no database (unit tests).
