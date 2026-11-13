@@ -74,6 +74,8 @@ export class SessionVaultError extends Error {
 }
 
 const VERSION = "v1";
+/** AES-GCM's full authentication tag, in bytes; stated to the cipher so no shorter tag is accepted. */
+const TAG_BYTES = 16;
 const KEY_LABEL = "pf_session_tokens.v1";
 const EPHEMERAL_KEY = Symbol.for("datankare.platform.sessionVault.ephemeralKey.v1");
 const SEALED = /^v1\.([0-9a-f]{8})\.([\w-]{16})\.([\w-]{24,12000})$/;
@@ -119,7 +121,9 @@ export function sealTokens(tokens: SessionTokens, idHash: string): SealedTokens 
   const [key] = vaultKeys();
   if (!key) throw new SessionVaultError("no_key");
   const nonce = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key.key, nonce);
+  const cipher = createCipheriv("aes-256-gcm", key.key, nonce, {
+    authTagLength: TAG_BYTES,
+  });
   cipher.setAAD(Buffer.from(`${VERSION}\0${idHash}`, "utf8"));
   const body = Buffer.concat([
     cipher.update(JSON.stringify(tokens), "utf8"),
@@ -150,17 +154,21 @@ function open(sealed: string, idHash: string): SessionTokens {
   const key = keys.find((k) => k.label === m[1]);
   if (!key) throw new SessionVaultError("unreadable");
   const body = Buffer.from(m[3], "base64url");
-  if (body.length < 17) throw new SessionVaultError("unreadable");
+  if (body.length < TAG_BYTES + 1) throw new SessionVaultError("unreadable");
   try {
+    // The tag's length is stated, so a shorter tag is refused, never verified (NIST SP 800-38D).
     const decipher = createDecipheriv(
       "aes-256-gcm",
       key.key,
-      Buffer.from(m[2], "base64url")
+      Buffer.from(m[2], "base64url"),
+      {
+        authTagLength: TAG_BYTES,
+      }
     );
     decipher.setAAD(Buffer.from(`${VERSION}\0${idHash}`, "utf8"));
-    decipher.setAuthTag(body.subarray(body.length - 16));
+    decipher.setAuthTag(body.subarray(body.length - TAG_BYTES));
     const text = Buffer.concat([
-      decipher.update(body.subarray(0, body.length - 16)),
+      decipher.update(body.subarray(0, body.length - TAG_BYTES)),
       decipher.final(),
     ]).toString("utf8");
     const parsed: unknown = JSON.parse(text);

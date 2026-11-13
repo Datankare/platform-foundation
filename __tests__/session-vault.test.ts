@@ -7,6 +7,7 @@
  * under a retired key, production with no key at all.
  */
 
+import { createCipheriv, createDecipheriv } from "node:crypto";
 import {
   SessionVaultError,
   openForProvider,
@@ -18,6 +19,16 @@ import {
   vaultReady,
   type SealedTokens,
 } from "@/platform/auth/session-vault";
+
+// The real cipher, watched: the vault's calls go through unchanged and their options are seen.
+jest.mock("node:crypto", () => {
+  const actual = jest.requireActual<typeof import("node:crypto")>("node:crypto");
+  return {
+    ...actual,
+    createCipheriv: jest.fn(actual.createCipheriv),
+    createDecipheriv: jest.fn(actual.createDecipheriv),
+  };
+});
 
 const KEY_A = "a".repeat(48);
 const KEY_B = "b".repeat(48);
@@ -135,6 +146,17 @@ describe("hostile: what does not open", () => {
         unreadable(() => openIdentity(tampered.join(".") as SealedTokens, ID_1))
       ).toBe("unreadable");
     }
+  });
+
+  it("the cipher is told the tag's length both ways, so a shorter tag is never verified", () => {
+    const sealed = sealTokens(USER, ID_1);
+    openIdentity(sealed, ID_1);
+    expect(jest.mocked(createCipheriv).mock.calls.at(-1)?.[3]).toEqual({
+      authTagLength: 16,
+    });
+    expect(jest.mocked(createDecipheriv).mock.calls.at(-1)?.[3]).toEqual({
+      authTagLength: 16,
+    });
   });
 
   it("a truncated value, an empty one, another version, plain JSON", () => {

@@ -230,6 +230,13 @@ another origin never change anything).
   only starts with this origin; a sign-out replayed (records and revokes once); a promotion
   across tenants (the defect above); a countdown that reaches zero while "Stay signed in" is in
   flight (the server's answer decides).
+- **After landing (2026-11-13):** CI's Semgrep refused the push (`gcm-no-tag-length`):
+  `session-vault.ts` opened AES-256-GCM without stating the tag's length. The vault always passed
+  the last 16 bytes as the tag, so no shorter tag was reachable, but the cipher was never told
+  to refuse one. Both calls now state `authTagLength: 16`; `session-vault.test.ts` watches the
+  real cipher and fails without it. Semgrep runs only in CI and was not among the batch's gates;
+  run at CI's pinned version and rules, it reports this one finding on the pushed tree and none
+  now. A batch's gates include it from here on.
 
 ### TASK-213 — Batch 56a: the tests' shell proven on macOS (bash 3.2, BSD tools), and the open Dependabot bumps taken on develop
 
