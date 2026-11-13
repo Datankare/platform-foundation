@@ -65,10 +65,11 @@ jobs:
 
       # TASK-204 (N-92): the workflows lint clean (actionlint, with shellcheck on every run script,
       # the runner's own shellcheck) and stay clean. Pinned and checksum-verified, as gitleaks is.
+      # TASK-213: 1.7.10, because 1.7.7 predates the `macos-26` runner label that macos.yml pins.
       - name: Layer 0c — Workflow lint (actionlint)
         env:
-          ACTIONLINT_VERSION: "1.7.7"
-          ACTIONLINT_SHA256: "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+          ACTIONLINT_VERSION: "1.7.10"
+          ACTIONLINT_SHA256: "f4c76b71db5755a713e6055cbb0857ed07e103e028bda117817660ebadb4386f"
         run: |
           set -euo pipefail
           curl --retry 5 --retry-all-errors -sSfL -o "$RUNNER_TEMP/actionlint.tgz" \

@@ -140,6 +140,12 @@ against a real server.
   against the list — portable — and the scan now reads them too (a template literal, or a string
   array joined with "\n", that starts with a shell shebang); the stub `git` ran the real git by an
   unquoted path, which a path with a space would split: quoted.
+- **After landing (2026-11-13):** CI's workflow lint failed on the push: actionlint 1.7.7, the
+  version `ci.yml` pinned, predates the `macos-26` runner label and refused it, while the batch had
+  linted with a newer build than CI's. `ci.yml` now pins actionlint 1.7.10 (sha256 from the
+  release's checksum file). Both versions were run against both repositories: 1.7.7 reports that
+  one label and nothing else; 1.7.10 reports nothing. The macOS job itself had started on
+  `macos-26`, so the label is real. A gate tool is run at the version CI pins.
 
 ### TASK-212 — Residuals 55l: credentials the code reads are registered and dated, the delegation keys and the ACRCloud credit are checked, the model journey runs in CI, the guides count from the files
 
