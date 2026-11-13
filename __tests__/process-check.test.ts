@@ -771,7 +771,7 @@ describe("scripts/process-check.mjs: merges and exact reverts (TASK-200)", () =>
     }).trim();
     writeFileSync(
       join(bin, "git"),
-      `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "git version 2.30.0"; exit 0; fi\nexec ${real} "$@"\n`,
+      `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "git version 2.30.0"; exit 0; fi\nexec "${real}" "$@"\n`,
       { mode: 0o755 }
     );
     const r = repo.check(base, [], { PATH: `${bin}:${process.env.PATH}` });

@@ -123,7 +123,7 @@ for f in $order; do
     "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null
     applied=$((applied + 1))
     exempt=""
-    for x in "${REAPPLY_EXEMPT[@]}"; do [ "${x%%:*}" = "$f" ] && exempt=1; done
+    for x in ${REAPPLY_EXEMPT[@]+"${REAPPLY_EXEMPT[@]}"}; do [ "${x%%:*}" = "$f" ] && exempt=1; done
     [ -n "$exempt" ] && continue
     before=$(schema_snapshot)
     "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null 2>&1 \

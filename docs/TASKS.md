@@ -7,6 +7,140 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-213 — Batch 56a: the tests' shell proven on macOS (bash 3.2, BSD tools), and the open Dependabot bumps taken on develop
+
+| Field        | Detail                                                                                         |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-213                                                                                       |
+| **Type**     | Defect (a commit script failed on the owner's Mac, unseen by every gate); dependency upkeep    |
+| **Severity** | Low (T-1); Important (Next 16.4.5's security release; fast-uri's floor); Nit (registers, docs) |
+| **Phase**    | Phase 5                                                                                        |
+| **Target**   | v6.0.0 (RC)                                                                                    |
+| **Status**   | Fixed on develop (batch 56a)                                                                   |
+| **Logged**   | 2026-11-12 (register T-1; the open Dependabot pull requests)                                   |
+
+Batch 56a, in both repositories (Playform: its TASK-5014).
+
+**T-1 — a macOS gate.** On 2026-11-10 the 55d commit script failed on the owner's Mac:
+`sync-carried-guard.sh` used `case` inside `$( )`, which macOS's bash 3.2 cannot parse (it finds
+the end of a command substitution by counting parentheses; bash 4.0 began parsing it). Every gate
+ran on Linux. Now:
+
+- `.github/workflows/macos.yml` runs what the owner runs — `npm ci`, then `npm test` with no
+  database and no `CI` (`env -u CI npm test`; GitHub sets `CI=true`) — on `macos-26`, pinned as
+  every job is (macos-latest's image today: Apple silicon, Bash 3.2.57, per actions/runner-images).
+  A step puts `/bin/bash` first on `PATH` as `bash` and fails unless it is 3.2, so no Homebrew bash
+  stands in; it prints `bash --version`; the job sets `REQUIRE_BASH_3_2=1`, and the last test of
+  `shell-portability` then fails unless the bash the tests start is 3.2. Seed and results as D-16.
+  This repository is public, so it runs on every push and pull request to develop, staging and
+  main; Playform's runs weekly, on demand and on a change to shell (its TASK-5014: cost).
+- `workflow-hygiene` allows exactly `macos-26`, and only in `macos.yml` (anywhere else it is
+  refused: macOS minutes are billed at about ten times Linux's on a private repository); D-20 is
+  turned around there: the macOS job must not set `REQUIRE_DB_TESTS` or `REQUIRE_VALKEY_TESTS`.
+- `__tests__/shell-portability.test.ts` (shared) reads every shell script (`*.sh`, `*.bash`, and
+  any file with a bash or sh shebang) and every workflow step a test executes (`EXECUTED_STEPS`,
+  by test file), through a lexer that blanks comments, quoted data and here-document bodies, and
+  refuses: `case` or a comment inside `$( )`; bash 4+ syntax (`mapfile`/`readarray`, `coproc`,
+  `declare -A/-n/-g/-l/-u`, `${x,,}` `${x^^}`, `${x@Q}`, negative subscripts and lengths, `|&`,
+  `&>>`, `;;&`/`;&`, `[[ -v ]]`, `wait -n`, `$EPOCHSECONDS`/`$EPOCHREALTIME`/`$BASHPID`/`$SRANDOM`/
+  `$BASH_ARGV0`, shopt options 3.2 lacks); a bare `"${a[@]}"` under `set -u` unless every
+  assignment gives the array an element; GNU-only options (`sed -i` without a suffix, `grep -P`,
+  `date -d`, `readlink -f/-e/-m`, `stat -c`, `sort -V`, `head -n -N`, `xargs -r`, `base64 -w`,
+  `find -printf/-regextype`) and GNU tools macOS lacks (`timeout`, `tac`, `nproc`, `stdbuf`,
+  `numfmt`). Every test file that runs `bash -c`/`sh -c` with a built string must be listed; a
+  literal is scanned where it stands; `execSync`, `exec` and `shell: true` are refused. It also
+  holds the macOS workflow to the owner's run, and (where it filters by path) to a trigger for
+  every script, shell-running test and executed workflow. Sources: GNU bash NEWS/CHANGES (4.0–5.2),
+  Apple's manual pages for each tool, actions/runner-images. It replaces `sync-carried-guard`'s
+  narrow "no case statement" test: the class is covered for every script.
+- It found one: `scripts/migration-replay.sh` expanded `REAPPLY_EXEMPT=()` bare under `set -u`, so
+  bash 3.2 would exit "unbound variable" before the replay's first re-application; now
+  `${REAPPLY_EXEMPT[@]+"${REAPPLY_EXEMPT[@]}"}`.
+- The rule: CLAUDE.md (standing rules) and REVIEW.md rule 26; ASSURANCE (cadence, §2, §6).
+
+**Dependabot (pull requests open on 2026-11-12), applied on develop by hand:** `ioredis` 5.11.1 →
+6.0.0 (#459: RESP3 by default with RESP2-shaped replies, "legacy" mapping; Node ≥ 20; the Valkey
+provider's options are all explicit — the cache suites pass against a TLS redis-server 7);
+`next` and `eslint-config-next` 16.4.3 → **16.4.5**, not the pull request's 16.4.4 (#468): 16.4.4's
+own notes announce the security release published the next day, 16.4.5 (nextjs.org, "November
+2026 Security Release": GHSA-mfr8-8qww-v76h High, GHSA-vc7v-qv4w-wrv8, GHSA-rhh4-g77r-r9qj,
+GHSA-pc58-hwjq-p385, GHSA-f3mh-rxg3-f5g2, GHSA-7qx7-33qx-rqx2 and one without an id; npm's
+advisory database does not list them yet, so `npm audit` stays silent); `jose` 6.2.13 → 6.2.15 and
+`eslint-plugin-regexp` 3.3.1 → 3.3.3 (#468); `github/codeql-action` init, autobuild and analyze
+4.38.3 → 4.39.1, upload-sarif → 4.39.3 (#464–#467; the SHAs Dependabot pinned). Already on develop:
+`@stryker-mutator/core` 10.1.1 (#470), `@types/react` and `@types/react-dom` 19.3.0 (#453, #455),
+fast-uri 3.1.9 in the lock (#463, against main).
+
+**Found on the way, fixed:** fast-uri's override floor stayed `^3.1.8` while 3.1.9 fixed four
+advisories (#463's): now `^3.1.9`. `scripts/override-audit.mjs` checked only that a key had a row,
+so the register's Pinned column could say anything: it now requires the row to state the value
+`package.json` has (an object as "dep range", a gloss in parentheses allowed) and fails naming
+both. The browserslist and `@humanfs/node` rows said "Original advisory to confirm": confirmed
+against npm's advisory database (GHSA-c83g-rgw3-j3cx and GHSA-73wf-gq98-2v4g through 4.28.6;
+GHSA-p498-v437-472g below 0.16.8). `__tests__/runtime-dependencies.test.ts` (shared): every
+production dependency is imported by code that ships, or excepted with a reason that is checked
+(`@sentry/nextjs`'s computed require, `react-dom` as next's peer, `@supabase/supabase-js` for
+Realtime, ADR-053 §5) — Playform carried `@anthropic-ai/sdk` there unused since March (its
+TASK-5014). ASSURANCE said this repository runs no browser E2E (§3, §6): false since TASK-204's
+Layer 3; corrected. TASK-096 resolved (Playform's TASK-5014 has the evidence).
+
+**Tests.** `shell-portability` (each refusal planted, with its line; what bash 3.2 and BSD run
+passed; a test's shell use classified; executed steps found and scanned; the macOS workflow's
+requirements and trigger; the bash version under `REQUIRE_BASH_3_2`); `workflow-hygiene` (the
+macOS image only in `macos.yml`; D-20 inverted there); `override-audit` (Pinned disagreements,
+object values, a gloss, an app's own row); `runtime-dependencies`; the Valkey suites on ioredis 6
+against a real server.
+
+**Design check**
+
+- **Reach:** CI (a new workflow; the runner pin and D-20 in `workflow-hygiene`); two new guards; a
+  shell script (`migration-replay.sh`, one line); the override audit and its register; the
+  dependencies and lockfile; CLAUDE.md, REVIEW.md, ASSURANCE, SECURITY_DEBT. No route, screen or
+  migration.
+- **Races:** none: the guards read files; the workflow runs alone.
+- **Dependencies down:** a macOS runner outage fails the macOS check only (not the CI pipeline); the
+  Valkey provider on ioredis 6 behaves as before when the server is down (its suites' down cases).
+- **Erasure leftovers:** none: no change stores or removes anyone's data.
+- **Screens × responses:** no screen or response changes. Next 16.4.5 renders the same pages: the
+  E2E specs, base and change, and the pages walked at 1280 and 390 px.
+- **Journeys touched:** none changed; E2E spec by spec on both repositories, base and change.
+- **Weakens a tenant's protection?** No. Next 16.4.5 closes cross-tenant cache disclosures in
+  `use cache` (the platform does not use Cache Components; the patch is taken regardless).
+
+**Threat model**
+
+- **Boundary:** the CI workflows (a new job and the guard's rules); the dependency tree that ships.
+- **Actors that exist today:** the owner, who pushes and runs every commit script on his Mac; the
+  agents preparing those scripts; Dependabot, whose pull requests run CI without secrets. The new
+  job reads the code only (`contents: read`, no secret, `persist-credentials: false`). The
+  dependency bumps change what every user's request runs through (Next, jose, ioredis).
+- **Bypasses:** a script that runs shell another way — refused (`execSync`, `exec`, `shell: true`);
+  a shell construct the scan does not know — the macOS job runs it under bash 3.2; a macOS label
+  outside `macos.yml`, or `-latest` — refused.
+- **Forgeries:** none: no input crosses a trust boundary.
+- **Legitimate flows:** the owner's `npm test` on his Mac; CI on Linux unchanged; a Dependabot pull
+  request for a version develop already has closes itself.
+- **Agreed before code:** the owner's brief for batch 56a (2026-11-12): T-1 with Playform's
+  triggers decided by the owner, and the open Dependabot pull requests.
+
+**Self-review**
+
+- **Consumers checked:** every test that starts bash or sh (both repositories, `__tests__/**`, the
+  helpers and the `.mjs` mutation suite) and every workflow step one runs; every reader of
+  `RUNNER_IMAGE` and `jestPassProblems`; every importer of ioredis (`valkey-cache.ts`,
+  `valkey-connector.ts`'s `AbstractConnector`, still exported); every reader of the override
+  register (the audit, the weekly re-audit); every production dependency's importers.
+- **Hostile re-read:** a `case` on the line after `$(` and in double quotes (found); `$( # it's )`
+  (found); `<<<` after a loop (a here-string, not a here-document — the lexer once took it for one
+  and blanked the rest: fixed, tested); `"$1"` in an array (one element, not flagged); `("$@")`
+  (may be empty: flagged); `sed -i ''` (BSD-only: flagged too, since GNU reads `''` as the script);
+  `xargs -n 1 sed -i` (the nested command found); a path filter `**/*.sh` against a root file
+  (matched); a Pinned cell `$deepmergex` (refused) and `$deepmerge (file:…)` (passed). The scripts
+  tests write at run time (two stub `gh`, two stub `git`, stub `curl` and `docker`) were read by hand
+  against the list — portable — and the scan now reads them too (a template literal, or a string
+  array joined with "\n", that starts with a shell shebang); the stub `git` ran the real git by an
+  unquoted path, which a path with a space would split: quoted.
+
 ### TASK-212 — Residuals 55l: credentials the code reads are registered and dated, the delegation keys and the ACRCloud credit are checked, the model journey runs in CI, the guides count from the files
 
 | Field        | Detail                                                                                       |
@@ -3425,12 +3559,19 @@ own Cognito pool, Google client, guest secret and durable stores; `/api/health` 
 | **Severity** | Medium — a visible feature is broken                                          |
 | **Phase**    | Phase 5                                                                       |
 | **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
-| **Status**   | Open                                                                          |
+| **Status**   | Resolved (Playform TASK-5014, platform TASK-213)                              |
 | **Logged**   | 2026-09-26                                                                    |
 
 **What:** `/api/extract` fails with `DOMMatrix is not defined`: the PDF parser needs `@napi-rs/canvas` at runtime, but Playform lists it under devDependencies, so the deployment never installs it.
 
 **Resolution:** Move it to dependencies and declare it a server external package in `next.config.ts`; verify a PDF extract on the deployed address (Playform-owned files).
+
+**Resolved (TASK-5014, 2026-11-12):** the cause is gone. pdf-parse 2.x depends on its own
+`@napi-rs/canvas` (0.1.80; pdfjs-dist on another, optional), so a production install has it
+whatever the top level lists: a production-only install (`npm ci --omit=dev`) of Playform's
+lockfile extracts a PDF's text with no top-level canvas. The top-level devDependency served nothing
+and is removed; `__tests__/extract-pdf-real.test.ts` runs the real parser as the server does. The
+owner checks an upload on playform-dev once (TASK-5014's owner step).
 
 ### TASK-097 — Production accepts the mock auth provider
 

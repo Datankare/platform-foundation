@@ -1,0 +1,107 @@
+name: macOS
+
+# TASK-213 (T-1): the owner runs every commit script on a Mac, and its test step is `npm test`.
+# On 2026-11-10 one failed there — a shell script used `case` inside `$( )`, which macOS's bash
+# 3.2 cannot parse — while every gate had run on Linux. This job runs what the owner runs (npm ci,
+# then npm test: no database, no CI), on macOS, with every `bash` the tests start resolved to
+# macOS's own /bin/bash 3.2 (not a Homebrew bash), and the tests check that they ran under it.
+#
+# platform-foundation is public, so macOS minutes cost nothing here: it runs on every push and
+# pull request to develop, staging and main, like the CI pipeline.
+on:
+  push:
+    branches: [main, staging, develop]
+  pull_request:
+    branches: [main, staging, develop]
+    types: [opened, synchronize, reopened]
+
+# Least privilege (audit H-5): read the code, nothing else.
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS — npm test under bash 3.2
+    # Pinned, as every job is (workflow-hygiene, TASK-201): macos-26 is macos-latest's image today
+    # (Apple silicon; Bash 3.2.57). Change it here and in workflow-hygiene's MACOS_RUNNER_IMAGE.
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      # The tests' own check: the bash they start is 3.2 (__tests__/shell-portability.test.ts).
+      REQUIRE_BASH_3_2: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # The history, as the owner's clone has it (the journey exemptions read a base).
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      # Every `bash` the tests start is found on PATH: put macOS's /bin/bash first, by that name, so
+      # a Homebrew bash on the image can never stand in for it, and fail unless it is 3.2.
+      - name: The tests' bash is macOS's /bin/bash 3.2
+        run: |
+          dir="$RUNNER_TEMP/macos-bash"
+          mkdir -p "$dir"
+          ln -sf /bin/bash "$dir/bash"
+          echo "$dir" >> "$GITHUB_PATH"
+          /bin/bash --version
+          v=$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"')
+          if [ "$v" != "3.2" ]; then
+            echo "::error::/bin/bash is bash $v, not 3.2: this image no longer tests what the owner's Mac runs"
+            exit 1
+          fi
+
+      - name: Check — bash on PATH is /bin/bash
+        run: |
+          command -v bash
+          bash --version
+          v=$(bash -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"')
+          if [ "$v" != "3.2" ]; then
+            echo "::error::bash on PATH is $v, not /bin/bash 3.2"
+            exit 1
+          fi
+
+      # As ci.yml (TASK-198): a registry blip is tried again; a third failure fails the job.
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            echo "::warning::npm ci failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      # TASK-198 D-16, as ci.yml: one fast-check seed per commit, printed and in the step summary,
+      # so a property that failed here replays with `FC_SEED=<seed> npx jest <file>`.
+      - name: The property tests' seed for this commit
+        run: |
+          set -euo pipefail
+          seed=$((16#${GITHUB_SHA:0:7}))
+          echo "FC_SEED=$seed" >> "$GITHUB_ENV"
+          echo "fast-check seed (from ${GITHUB_SHA:0:7}): $seed; replay a property failure with FC_SEED=$seed npx jest <file>"
+          echo "**fast-check seed** (from \`${GITHUB_SHA:0:7}\`): \`$seed\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # The owner's run: no database (the DB and Valkey suites skip — CI's Linux jobs run them), and
+      # no CI — GitHub sets CI=true on every runner, which turns on CI-only requirements the owner's
+      # Mac does not have. The results are kept as JSON (D-16), uploaded below if a test fails.
+      - name: npm test — no database, no CI
+        run: |
+          env -u CI npm test -- --json --outputFile=jest-results-macos.json
+
+      - name: Test results (on failure)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jest-results-macos
+          path: jest-results-*.json
+          if-no-files-found: ignore
+          retention-days: 14

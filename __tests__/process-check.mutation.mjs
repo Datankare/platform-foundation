@@ -2150,7 +2150,7 @@ test("merges: by what each changes itself", () => {
   ]) {
     writeFileSync(
       join(bin, "git"),
-      `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "git version ${version}"; exit 0; fi\nexec ${real} "$@"\n`,
+      `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "git version ${version}"; exit 0; fi\nexec "${real}" "$@"\n`,
       { mode: 0o755 }
     );
     const r = cli(["--base", fx.fork, "--head", fx.clean], fx.dir, {

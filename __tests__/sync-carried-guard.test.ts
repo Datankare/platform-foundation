@@ -11,6 +11,8 @@
  * proceed only when the source strictly descends from it. Real git repositories, built here:
  * hostile cases are a source missing the carried commit (main behind develop), the same commit,
  * a carried task no platform commit names, shallow checkouts, no history to read, wrong arguments.
+ * That the script runs on macOS's bash 3.2 (no `case` inside `$( )`, the 55d failure) is checked
+ * for every script by __tests__/shell-portability.test.ts (TASK-213), and run there by the macOS job.
  */
 import { execFileSync, spawnSync } from "child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -168,13 +170,6 @@ describe.each(SCRIPTS)("%s", (script) => {
     expect(guard(script, join(root, "nope"), a).code).toBe(1);
     expect(guard(script, pf).code).toBe(1);
   });
-});
-
-it("runs under bash 3.2 (macOS): no case statement, whose pattern that bash cannot parse inside a command substitution", () => {
-  for (const f of SCRIPTS) {
-    const code = readFileSync(join(process.cwd(), f), "utf8").replace(/^\s*#.*$/gm, "");
-    expect(code).not.toMatch(/\bcase\b[^\n]+\bin\b/);
-  }
 });
 
 it("an app's copy differs from the template only in its header comment", () => {

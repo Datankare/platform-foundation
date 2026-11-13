@@ -25,7 +25,8 @@
  *     `instrumentation.ts`, `cognito-*` — matches at any depth, so it silently keeps the platform's
  *     `platform/ai/instrumentation.ts` (or any future file of that name) out of the consumer.
  *     A root file is written `/package.json`.
- *   - Every job runs on the pinned runner image, `ubuntu-24.04` (TASK-201, S2-C1): GitHub began
+ *   - Every job runs on the pinned runner image, `ubuntu-24.04` (TASK-201, S2-C1) — or, in
+ *     .github/workflows/macos.yml only, the pinned macOS image `macos-26` (TASK-213): GitHub began
  *     moving `ubuntu-latest` to Ubuntu 26.04 on 2026-10-19, which changes every job at once. A
  *     `-latest` label, an expression, a missing `runs-on` or another image is refused; and the
  *     Postgres apt source names the image's release (`PGDG_CODENAME: noble`), checked against the
@@ -777,6 +778,15 @@ export function jestPassProblems(
       const run = step.run!;
       const label = `${file} job ${id}, step "${step.name ?? run.slice(0, 40)}"`;
       for (const flag of ["REQUIRE_DB_TESTS", "REQUIRE_VALKEY_TESTS"]) {
+        // TASK-213: the macOS job is the owner's run — npm test with no database and no cache, as
+        // on his Mac; CI's Linux jobs run those suites. There, the flags must be absent.
+        if (file === MACOS_WORKFLOW) {
+          if ((step.env?.[flag] ?? job.env?.[flag]) !== undefined)
+            out.push(
+              `${label} sets ${flag}: the macOS job is the owner's run, with no database or cache (TASK-213)`
+            );
+          continue;
+        }
         if (String(step.env?.[flag] ?? job.env?.[flag] ?? "") !== "1")
           out.push(
             `${label} runs jest without ${flag}: "1" — a missing service would skip its suites (D-20)`
@@ -964,6 +974,43 @@ describe("fail on absence (TASK-198, D-16, D-20)", () => {
     expect(jestPassProblems("ci.yml", fixed, scripts)).toEqual([]);
     expect(installRetryProblems("ci.yml", fixed)).toEqual([]);
     expect(silentSkips("w.yml", fixed)).toEqual([]);
+  });
+
+  it("[self-test] the macOS job (the owner's run) must not require a database or cache; any other must (TASK-213)", () => {
+    const owners = (env?: Record<string, string>): Workflow => ({
+      jobs: {
+        macos: {
+          steps: [
+            {
+              name: "Seed",
+              run: 'echo "FC_SEED=1" >> "$GITHUB_ENV" # GITHUB_SHA GITHUB_STEP_SUMMARY',
+            },
+            {
+              name: "npm test",
+              run: "env -u CI npm test -- --json --outputFile=jest-results-macos.json",
+              env,
+            },
+            {
+              name: "Results",
+              if: "failure()",
+              uses: "actions/upload-artifact@x",
+              with: { path: "jest-results-*.json" },
+            },
+          ],
+        },
+      },
+    });
+    expect(jestPassProblems(MACOS_WORKFLOW, owners(), scripts)).toEqual([]);
+    expect(
+      jestPassProblems(MACOS_WORKFLOW, owners({ REQUIRE_DB_TESTS: "1" }), scripts)
+    ).toEqual([
+      expect.stringMatching(/sets REQUIRE_DB_TESTS: the macOS job is the owner's run/),
+    ]);
+    // The same job anywhere else is held to D-20.
+    expect(jestPassProblems("ci.yml", owners(), scripts)).toEqual([
+      expect.stringMatching(/without REQUIRE_DB_TESTS: "1"/),
+      expect.stringMatching(/without REQUIRE_VALKEY_TESTS: "1"/),
+    ]);
   });
 
   it("the CI workflow exists (a consumer's own included)", () => {
@@ -1510,6 +1557,15 @@ describe("the sync opens one pull request at a time (TASK-200, round 8)", () => 
  */
 export const RUNNER_IMAGE = "ubuntu-24.04";
 export const RUNNER_CODENAME = "noble";
+/**
+ * TASK-213 (T-1): the one other image — macOS, pinned like the Ubuntu one (macos-26 is macos-latest's
+ * image today: Apple silicon, bash 3.2.57) — and the one workflow allowed to use it. The owner runs
+ * every commit script on a Mac; this job runs the tests there (__tests__/shell-portability.test.ts
+ * checks what it runs). Anywhere else a macOS label is refused: macOS minutes are billed at a
+ * multiple on a private repository.
+ */
+export const MACOS_RUNNER_IMAGE = "macos-26";
+export const MACOS_WORKFLOW = ".github/workflows/macos.yml";
 /** How the apt source names the release: the step's own PGDG_CODENAME (built: not a template). */
 const PGDG_SUITE = ["$", "{PGDG_CODENAME}-pgdg"].join("");
 
@@ -1546,9 +1602,14 @@ export function runnerProblems(file: string, wf: Workflow): string[] {
         out.push(
           `${label}: runs-on "${l}" moves to a new image when GitHub moves the label (ubuntu-latest began moving to Ubuntu 26.04 on 2026-10-19) — write runs-on: ${RUNNER_IMAGE}`
         );
+      } else if (l === MACOS_RUNNER_IMAGE) {
+        if (file !== MACOS_WORKFLOW)
+          out.push(
+            `${label}: runs-on "${l}" — macOS runs only in ${MACOS_WORKFLOW} (TASK-213); write runs-on: ${RUNNER_IMAGE}`
+          );
       } else if (l !== RUNNER_IMAGE) {
         out.push(
-          `${label}: runs-on "${l}" is not the pinned image — write runs-on: ${RUNNER_IMAGE} (or move every job, RUNNER_IMAGE and PGDG_CODENAME together)`
+          `${label}: runs-on "${l}" is not a pinned image — write runs-on: ${RUNNER_IMAGE} (or move every job, RUNNER_IMAGE and PGDG_CODENAME together; macOS: ${MACOS_RUNNER_IMAGE}, in ${MACOS_WORKFLOW} only)`
         );
       }
     }
@@ -1623,6 +1684,12 @@ describe("runner images are pinned (TASK-201, S2-C1)", () => {
         "    runs-on: ubuntu-24.04",
         "  reuse:",
         "    uses: ./.github/workflows/other.yml",
+        "  mac:",
+        "    runs-on: macos-26",
+        "  maclatest:",
+        "    runs-on: macos-latest",
+        "  macold:",
+        "    runs-on: macos-15",
       ].join("\n")
     ).toJS() as Workflow;
     expect(runnerProblems("w.yml", wf)).toEqual([
@@ -1630,17 +1697,31 @@ describe("runner images are pinned (TASK-201, S2-C1)", () => {
         /^w\.yml job latest: runs-on "ubuntu-latest" moves to a new image/
       ),
       expect.stringMatching(
-        /^w\.yml job arm: runs-on "self-hosted" is not the pinned image/
+        /^w\.yml job arm: runs-on "self-hosted" is not a pinned image/
       ),
       expect.stringMatching(/^w\.yml job arm: runs-on "ubuntu-latest" moves/),
       expect.stringMatching(/^w\.yml job expr: runs-on ".*" is an expression/),
       "w.yml job none has no runs-on: write runs-on: ubuntu-24.04",
       expect.stringMatching(
-        /^w\.yml job older: runs-on "ubuntu-22\.04" is not the pinned image/
+        /^w\.yml job older: runs-on "ubuntu-22\.04" is not a pinned image/
       ),
       expect.stringMatching(
         /^w\.yml job group: runs-on \{"group":"big"\} names no image/
       ),
+      'w.yml job mac: runs-on "macos-26" — macOS runs only in .github/workflows/macos.yml (TASK-213); write runs-on: ubuntu-24.04',
+      expect.stringMatching(
+        /^w\.yml job maclatest: runs-on "macos-latest" moves to a new image/
+      ),
+      expect.stringMatching(
+        /^w\.yml job macold: runs-on "macos-15" is not a pinned image/
+      ),
+    ]);
+    // In the macOS workflow, macos-26 (and only it) is pinned.
+    expect(
+      runnerProblems(MACOS_WORKFLOW, wf).filter((p) => /job mac(?:latest|old)?:/.test(p))
+    ).toEqual([
+      expect.stringMatching(/job maclatest: runs-on "macos-latest" moves/),
+      expect.stringMatching(/job macold: runs-on "macos-15" is not a pinned image/),
     ]);
   });
 

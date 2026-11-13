@@ -141,3 +141,16 @@ had asked whether a person could do the job on screen. Each breach is **Importan
     The change's author walks each changed admin flow in a browser against a production build
     (`npm run build && npm run start` on a seeded database) before calling it done, and keeps the
     screenshots with the change's record (CLAUDE.md, "Before handing a change to the owner").
+
+## Blocking rule — the owner's Mac (TASK-213)
+
+On 2026-11-10 a commit script failed on the owner's Mac: a shell script used `case` inside `$( )`,
+which macOS's bash 3.2 cannot parse, and every gate had run on Linux. Each breach is **Important**.
+
+26. **Shell runs on bash 3.2 and BSD tools.** A change that adds or edits a shell script, a workflow
+    step a test executes, or a test that starts `bash` or `sh` is read for what bash 3.2 or BSD
+    lacks (`__tests__/shell-portability.test.ts` refuses the known list; a construct it does not
+    know is still a finding). A test that runs a workflow step with `bash -c` lists it in that
+    file's `EXECUTED_STEPS`; a shell string run any other way (`execSync`, `shell: true`) is a
+    finding. The macOS job (`.github/workflows/macos.yml`) must stay green: `npm test` with no
+    database and no `CI`, under /bin/bash 3.2, as the owner runs it.

@@ -26,9 +26,8 @@ or Upstash for the shared cache; Jest with ts-jest; Semgrep, CodeQL and gitleaks
   (`screen-literal-baseline.json`, screen-text-indirect); a caught error's text is only logged.
 - **Registers:** work and defects go in [TASKS](docs/TASKS.md), deferred security items in
   [SECURITY_DEBT](docs/SECURITY_DEBT.md), every new doc in the [docs index](docs/README.md).
-- **Width:** code is formatted by Prettier at its `printWidth` (`.prettierrc`); comments and
-  Markdown prose, which Prettier leaves as written, wrap at 100 characters — except a line that
-  is one command, URL or table row, kept whole.
+- **Width:** Prettier formats code at its `printWidth`; comments and Markdown prose, which it
+  leaves as written, wrap at 100 characters — except a line that is one command, URL or table row.
 
 ## Standing rules
 
@@ -38,6 +37,7 @@ or Upstash for the shared cache; Jest with ts-jest; Semgrep, CodeQL and gitleaks
   hidden prompt (`read -rs`), never a chat or a command line.
 - **Commands are zsh-paste-safe:** no `#` comment lines, no unquoted parentheses or `!`, one
   step at a time, each with the command that checks it worked.
+- **Shell runs on the owner's Mac:** bash 3.2 and BSD tools only (REVIEW.md 26, `macos.yml`).
 - **Every change ships with hostile tests** — abuse per role, second paths, malformed and
   hostile input, injected failure ([CONTRIBUTING](CONTRIBUTING.md), Adversarial Validation).
 - **Every refusal has a screen:** a code a route can return is handled by its callers' screens
