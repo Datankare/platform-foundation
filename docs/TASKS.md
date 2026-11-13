@@ -237,6 +237,14 @@ another origin never change anything).
   real cipher and fails without it. Semgrep runs only in CI and was not among the batch's gates;
   run at CI's pinned version and rules, it reports this one finding on the pushed tree and none
   now. A batch's gates include it from here on.
+- **After landing, 2 (2026-11-13):** on the dev deployment the operator readiness check read
+  `sessions` degraded: "AdminSetUserMFAPreference did not answer (InvalidParameterException)".
+  The probe sent that call with no setting; a real pool refuses it as malformed before it looks
+  for the user, so the probe could never read ready. The tests' stand-in answered "no such
+  user" to anything. The probe now sends the real call's setting; the owner ran that exact
+  call against the dev pool and it answered UserNotFoundException. The stand-in now answers as
+  the pool did, and the test fails without the fix. Turning a factor off was never affected:
+  it always sent the setting.
 
 ### TASK-213 — Batch 56a: the tests' shell proven on macOS (bash 3.2, BSD tools), and the open Dependabot bumps taken on develop
 

@@ -2091,19 +2091,29 @@ export class CognitoAuthProvider implements AuthProvider {
     if (!credentials) {
       return { state: "missing", reason: shown("screens.readiness.sessions_no_key") };
     }
-    // AdminSetUserMFAPreference is sent with no setting: were the name ever a user's, nothing
-    // would change.
-    const probes = [
-      "AdminGetUser",
-      "AdminUserGlobalSignOut",
-      "AdminSetUserMFAPreference",
+    // AdminSetUserMFAPreference carries the setting the real call sends (the authenticator off):
+    // with no setting Cognito refuses the call as malformed (InvalidParameterException) before it
+    // looks for the user, so the probe could never read "ready" (seen on a real pool, TASK-214
+    // "After landing"). Nothing can change: AdminGetUser runs first on the same name, and the
+    // loop stops there if that name is ever a user's.
+    const probes: readonly (readonly [string, Record<string, unknown>])[] = [
+      ["AdminGetUser", {}],
+      ["AdminUserGlobalSignOut", {}],
+      [
+        "AdminSetUserMFAPreference",
+        { SoftwareTokenMfaSettings: { Enabled: false, PreferredMfa: false } },
+      ],
     ];
-    for (const action of probes) {
+    for (const [action, settings] of probes) {
       try {
         await callCognito(
           this.config,
           action,
-          { UserPoolId: this.config.userPoolId, Username: ERASURE_PROBE_USERNAME },
+          {
+            UserPoolId: this.config.userPoolId,
+            Username: ERASURE_PROBE_USERNAME,
+            ...settings,
+          },
           credentials
         );
         // A call naming no user cannot succeed; an answer is not taken as proof.

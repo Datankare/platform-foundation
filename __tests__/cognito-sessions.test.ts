@@ -425,17 +425,32 @@ describe("checkSessionAccess — operator readiness, 'sessions' (ADR-057 D7)", (
   const probe = () => new CognitoAuthProvider(CONFIG).checkSessionAccess();
 
   it("ready when the key may make all three calls (each answers 'no such user' for the probe name)", async () => {
-    fetchMock.mockResolvedValue(err("UserNotFoundException"));
+    // As a real pool answers: a preference call that names no setting is malformed, and is
+    // refused as such before the user is looked for (seen on a real pool, 2026-11-13).
+    fetchMock.mockImplementation(async (_url: string, init: RequestInit) => {
+      const headers = init.headers as Record<string, string>;
+      const op = String(headers["X-Amz-Target"] ?? headers["x-amz-target"]).replace(
+        /^.*\./,
+        ""
+      );
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      const noSetting =
+        op === "AdminSetUserMFAPreference" &&
+        !Object.keys(body).some((k) => k.endsWith("MfaSettings"));
+      return err(noSetting ? "InvalidParameterException" : "UserNotFoundException");
+    });
     expect(await probe()).toEqual({ state: "ready" });
     expect(calls().map((c) => [c.op, c.signed, c.body.Username])).toEqual([
       ["AdminGetUser", true, ERASURE_PROBE_USERNAME],
       ["AdminUserGlobalSignOut", true, ERASURE_PROBE_USERNAME],
       ["AdminSetUserMFAPreference", true, ERASURE_PROBE_USERNAME],
     ]);
-    // The preference probe carries no setting: nothing could change.
+    // The preference probe carries the real call's setting, and is sent only after AdminGetUser
+    // answered that the probe name is no user's: nothing could change.
     expect(calls()[2].body).toEqual({
       UserPoolId: CONFIG.userPoolId,
       Username: ERASURE_PROBE_USERNAME,
+      SoftwareTokenMfaSettings: { Enabled: false, PreferredMfa: false },
     });
   });
 
@@ -467,5 +482,11 @@ describe("checkSessionAccess — operator readiness, 'sessions' (ADR-057 D7)", (
   it("a probe call that succeeds proves nothing: unknown", async () => {
     fetchMock.mockResolvedValue(ok({}));
     expect(await probe()).toMatchObject({ state: "unknown" });
+  });
+
+  it("[hostile] the probe name is a user's: it stops at the read, and no preference call is sent", async () => {
+    fetchMock.mockResolvedValue(ok({ Username: ERASURE_PROBE_USERNAME }));
+    expect(await probe()).toMatchObject({ state: "unknown" });
+    expect(calls().map((c) => c.op)).toEqual(["AdminGetUser"]);
   });
 });
