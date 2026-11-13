@@ -2,12 +2,18 @@
  * platform/auth/context.tsx — React auth context
  *
  * Provides the current authenticated user (or guest) to all client components.
- * Handles token storage, refresh, and expiry detection.
  *
- * Only the short-lived access token is kept where script can read it. The refresh token never
- * reaches the browser's storage (audit X-17): the server keeps it in an httpOnly cookie, and an
- * expired access token is renewed through POST /api/auth/refresh (refreshSession). Sign-out
- * revokes the session on the server (POST /api/auth/sign-out) before forgetting it here.
+ * The page holds no credential (ADR-057): the session is an HttpOnly cookie the browser sends
+ * and script cannot read, and the identity provider's tokens never leave the server. What the
+ * page knows — who is signed in, and the session's forgery token to send back with
+ * state-changing requests — it reads from GET /api/auth/session and keeps in memory only: nothing
+ * about the session is written to localStorage, sessionStorage or a script-readable cookie
+ * (__tests__/no-client-tokens.test.ts).
+ *
+ * A browser signed in before ADR-057 is moved over on its first load: what it kept in storage is
+ * deleted unread (legacy-session-cleanup.ts) and the server exchanges its httpOnly legacy cookie
+ * for a server-side session (POST /api/auth/session/migrate) — no new sign-in. A legacy guest
+ * starts again as a guest.
  *
  * Usage:
  *   import { useAuth } from "@/platform/auth/context";
@@ -24,7 +30,7 @@
  *     <App />
  *   </AuthContextProvider>
  *
- * ADR-012: Client-side auth state management.
+ * ADR-012: Client-side auth state management. ADR-057: server-side sessions.
  */
 
 "use client";
@@ -32,12 +38,11 @@
 import React, {
   createContext,
   useContext,
-  useState,
-  useEffect,
   useCallback,
   useMemo,
   useSyncExternalStore,
 } from "react";
+import { removeLegacyStoredSession } from "./legacy-session-cleanup";
 
 /** Client-side user representation */
 export interface AuthUser {
@@ -47,328 +52,350 @@ export interface AuthUser {
   isGuest: boolean;
 }
 
+/** Whose session lifetimes apply (platform/auth/session-lifetimes.ts). */
+export type SessionAudience = "user" | "staff" | "guest";
+
+/** What the server says about the browser's session. Held in memory only. */
+export type SessionState =
+  | { readonly status: "loading" }
+  | { readonly status: "signed-out" }
+  | {
+      readonly status: "signed-in";
+      readonly user: AuthUser;
+      /** Sent in `x-csrf-token` with state-changing requests; not a credential. */
+      readonly csrfToken: string;
+      readonly audience: SessionAudience;
+      /** When the session ends without use, ms since the epoch; null: no idle limit. */
+      readonly idleExpiresAt: number | null;
+      readonly absoluteExpiresAt: number;
+      /** How long before an idle sign-out to warn, seconds. */
+      readonly idleWarningSeconds: number;
+    };
+
 /** Auth context value */
 export interface AuthContextValue {
   user: AuthUser | null;
-  accessToken: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   isGuest: boolean;
-  /** Sign in — stores the access token and updates user state */
-  setSession: (session: SessionInput) => void;
-  /** Sign out — revokes the session on the server, then clears it here */
+  /** The session as the server last described it. */
+  session: SessionState;
+  /**
+   * After a sign-in step succeeded: read the new session from the server. Resolves true when
+   * the browser is signed in.
+   */
+  sessionStarted: () => Promise<boolean>;
+  /** Sign out — ends the session on the server, then forgets it here */
   signOut: () => Promise<void>;
-  /** Get the current access token (for API calls) */
-  getAccessToken: () => string | null;
-}
-
-/** What a sign-in hands the context: never a refresh token (it stays in an httpOnly cookie). */
-export interface SessionInput {
-  accessToken: string;
-  userId: string;
-  email: string;
-  emailVerified: boolean;
-  isGuest?: boolean;
+  /**
+   * Sign out on every device — ends every session of the account on the server. Resolves true
+   * when the server did it (this page is then signed out too); false when it could not be
+   * asked or refused — the page stays signed in, so the person can try again: this is the
+   * action someone takes when they fear another device is in their account, and it never
+   * claims a sign-out that did not happen.
+   */
+  signOutEverywhere: () => Promise<boolean>;
+  /** "Stay signed in": counts as use of the session; resolves false when it has ended. */
+  staySignedIn: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const TOKEN_STORAGE_KEY = "pf_access_token";
-/** Where earlier versions kept the refresh token; removed wherever it is still found. */
-const LEGACY_REFRESH_STORAGE_KEY = "pf_refresh_token";
-const USER_STORAGE_KEY = "pf_user";
+const LOADING: SessionState = { status: "loading" };
+const SIGNED_OUT: SessionState = { status: "signed-out" };
 
-/** Get a value from localStorage safely (SSR-compatible) */
-function getStoredValue(key: string): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    /* justified */
-    // localStorage unavailable — return safe default
+// ---------------------------------------------------------------------------
+// The session store: one per page, in memory, shared with apiFetch
+// ---------------------------------------------------------------------------
+
+let snapshot: SessionState = LOADING;
+const listeners = new Set<() => void>();
+
+function setState(next: SessionState): void {
+  snapshot = next;
+  listeners.forEach((listener) => listener());
+}
+
+/**
+ * React subscribes to the store when the provider is committed — before any component's effect
+ * runs — and the first subscription starts the page's first read of its session. So a screen
+ * whose own effect calls the API at once finds that read already under way (apiFetch waits for
+ * it) instead of sending a request without the session's forgery token.
+ */
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  if (!firstLoadStarted && typeof window !== "undefined") {
+    firstLoadStarted = true;
+    firstLoading = firstLoad().finally(() => {
+      firstLoading = undefined;
+    });
+  }
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+const getSnapshot = (): SessionState => snapshot;
+const getServerSnapshot = (): SessionState => LOADING;
+
+/** The session as last read (apiFetch reads the forgery token from it). */
+export function currentSession(): SessionState {
+  return snapshot;
+}
+
+/** The session ended on the server (an API call answered that it has): forget it here. */
+export function noteSessionEnded(): void {
+  if (snapshot.status !== "signed-out") setState(SIGNED_OUT);
+}
+
+/** A factor change moved the session to a new id: its new forgery token. */
+export function noteCsrfToken(csrfToken: string): void {
+  if (snapshot.status === "signed-in" && csrfToken) setState({ ...snapshot, csrfToken });
+}
+
+function parseSession(data: unknown): SessionState | null {
+  if (typeof data !== "object" || data === null) return null;
+  const d = data as Record<string, unknown>;
+  if (d.authenticated === false) return SIGNED_OUT;
+  const u = d.user as Record<string, unknown> | undefined;
+  if (
+    d.authenticated !== true ||
+    typeof u !== "object" ||
+    u === null ||
+    typeof u.userId !== "string" ||
+    typeof d.csrfToken !== "string" ||
+    typeof d.absoluteExpiresAt !== "number"
+  ) {
     return null;
   }
-}
-
-/** Set a value in localStorage safely */
-function setStoredValue(key: string, value: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    /* justified */
-    // localStorage unavailable — return safe default
-    // localStorage may be full or disabled — fail silently
-  }
-}
-
-/** Remove a value from localStorage safely */
-function removeStoredValue(key: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.removeItem(key);
-  } catch {
-    /* justified */
-    // localStorage unavailable — return safe default
-    // fail silently
-  }
-}
-
-/**
- * Set the session indicator for the page proxy when the server has not: the server sets it for
- * as long as the session can be renewed (the refresh cookie's life), which this must not cut
- * short.
- */
-function setSessionCookie(maxAge: number): void {
-  if (typeof document === "undefined") return;
-  if (/(?:^|;\s*)pf_has_session=true(?:;|$)/.test(document.cookie)) return;
-  document.cookie = "pf_has_session=true; path=/; max-age=" + maxAge + "; SameSite=Lax";
-}
-
-/** Clear session indicator cookie */
-function clearSessionCookie(): void {
-  if (typeof document === "undefined") return;
-  document.cookie = "pf_has_session=; path=/; max-age=0; SameSite=Lax";
-}
-
-/** Guest tokens of the form guest_<id>_<timestamp> are valid for 24h. */
-const GUEST_TOKEN_VALIDITY_MS = 86_400_000;
-
-/**
- * Best-effort token expiry in epoch ms, or null when undeterminable.
- * Handles: guest_<id>_<ts> (underscore scheme), JWTs, and guest.<jwt>.
- * Null means "cannot tell" — hydration proceeds and the server remains the
- * authority; a determinable past expiry means the stored session is stale.
- */
-function getTokenExpiryMs(token: string): number | null {
-  if (token.startsWith("guest_")) {
-    const ts = parseInt(token.slice(token.lastIndexOf("_") + 1), 10);
-    return isNaN(ts) ? 0 : ts + GUEST_TOKEN_VALIDITY_MS;
-  }
-  const segments = token.split(".");
-  const payloadSegment =
-    segments.length === 3
-      ? segments[1]
-      : segments.length === 4 && segments[0] === "guest"
-        ? segments[2]
-        : null;
-  if (!payloadSegment) return null;
-  try {
-    const normalized = payloadSegment.replace(/-/g, "+").replace(/_/g, "/");
-    const payload = JSON.parse(atob(normalized)) as { exp?: number };
-    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
-  } catch {
-    /* justified */
-    // Not a decodable JWT — cannot determine expiry client-side
-    return null;
-  }
-}
-
-/**
- * What the browser holds: a session to restore, nothing, or one to discard. Stale (a
- * determinable past expiry) or corrupt sessions are discarded rather than restored: restoring
- * them leaves the client claiming a session while the pf_has_session cookie (max-age 3600) has
- * expired, so middleware and the client disagree forever and auth pages render blank.
- */
-type StoredSession =
-  | { kind: "session"; user: AuthUser; accessToken: string }
-  | { kind: "none" }
-  | { kind: "discard" }
-  /** A user's access token has expired: renewed from the refresh cookie, else discarded. */
-  | { kind: "expired"; user: AuthUser };
-
-/** Reads, never writes: the purge and the cookie re-issue happen in an effect. */
-function readStoredSession(): StoredSession {
-  const storedToken = getStoredValue(TOKEN_STORAGE_KEY);
-  const storedUser = getStoredValue(USER_STORAGE_KEY);
-  if (!storedToken || !storedUser) return { kind: "none" };
-  let user: AuthUser;
-  try {
-    user = JSON.parse(storedUser) as AuthUser;
-  } catch {
-    /* justified */
-    // Corrupted storage — discard it
-    return { kind: "discard" };
-  }
-  const expiryMs = getTokenExpiryMs(storedToken);
-  if (expiryMs !== null && expiryMs <= Date.now()) {
-    // A guest has no refresh token; a user may (the server holds it).
-    return user && !user.isGuest ? { kind: "expired", user } : { kind: "discard" };
-  }
-  return { kind: "session", user, accessToken: storedToken };
-}
-
-/**
- * The access token of the stored session, for API calls made outside a component (apiFetch):
- * null when there is none, or when it has expired or is corrupt — never a stale token.
- */
-export function readAccessToken(): string | null {
-  const stored = readStoredSession();
-  return stored.kind === "session" ? stored.accessToken : null;
-}
-
-/**
- * The session as an external store (React's useSyncExternalStore): read from storage once, on
- * the client, then changed only by setSession, signOut and refreshSession. The server snapshot
- * is "not read yet", so the server render and the hydrating render agree (loading) and no state
- * is set inside an effect. One store per page, shared by every provider and by apiFetch.
- */
-function createSessionStore() {
-  let snapshot: StoredSession | undefined;
-  const listeners = new Set<() => void>();
   return {
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
+    status: "signed-in",
+    user: {
+      userId: u.userId,
+      email: typeof u.email === "string" ? u.email : "",
+      emailVerified: u.emailVerified === true,
+      isGuest: u.isGuest === true,
     },
-    getSnapshot(): StoredSession {
-      snapshot ??= readStoredSession();
-      return snapshot;
-    },
-    set(next: StoredSession) {
-      snapshot = next;
-      listeners.forEach((listener) => listener());
-    },
+    csrfToken: d.csrfToken,
+    audience:
+      d.audience === "staff" ? "staff" : d.audience === "guest" ? "guest" : "user",
+    idleExpiresAt: typeof d.idleExpiresAt === "number" ? d.idleExpiresAt : null,
+    absoluteExpiresAt: d.absoluteExpiresAt,
+    idleWarningSeconds:
+      typeof d.idleWarningSeconds === "number" ? d.idleWarningSeconds : 120,
   };
 }
 
-const notReadOnServer = (): undefined => undefined;
-
-type SessionStore = ReturnType<typeof createSessionStore>;
-/** The mounted provider's store, so a renewal made outside React (apiFetch) updates it. */
-let activeStore: SessionStore | undefined;
-
-function clearStoredSession(): void {
-  removeStoredValue(TOKEN_STORAGE_KEY);
-  removeStoredValue(LEGACY_REFRESH_STORAGE_KEY);
-  removeStoredValue(USER_STORAGE_KEY);
-  clearSessionCookie();
+function askSession(method: "GET" | "POST"): Promise<Response> {
+  const headers: Record<string, string> = {};
+  if (method === "POST" && snapshot.status === "signed-in") {
+    headers["x-csrf-token"] = snapshot.csrfToken;
+  }
+  return fetch("/api/auth/session", {
+    method,
+    credentials: "same-origin",
+    cache: "no-store",
+    headers,
+  });
 }
 
-function storeSession(session: SessionInput): void {
-  const authUser: AuthUser = {
-    userId: session.userId,
-    email: session.email,
-    emailVerified: session.emailVerified,
-    isGuest: session.isGuest ?? false,
-  };
-  setStoredValue(TOKEN_STORAGE_KEY, session.accessToken);
-  setStoredValue(USER_STORAGE_KEY, JSON.stringify(authUser));
-  // A refresh token an earlier version left in storage is removed (audit X-17).
-  removeStoredValue(LEGACY_REFRESH_STORAGE_KEY);
-  setSessionCookie(3600);
-  activeStore?.set({ kind: "session", user: authUser, accessToken: session.accessToken });
+async function readSession(method: "GET" | "POST"): Promise<SessionState | null> {
+  const res = await askSession(method);
+  if (!res.ok) return null;
+  return parseSession(await res.json().catch(() => null));
 }
-
-let refreshing: Promise<string | null> | undefined;
 
 /**
- * Renew the signed-in user's access token from the server's refresh cookie: the new token, or
- * null (no user session, or the refresh was refused — then the session is ended here). Calls
- * made at once share one request.
+ * A page's first read that the server could not answer (refused for now, an outage, the network)
+ * is asked again after these waits before the page concludes anything: a signed-in person is not
+ * shown the sign-in form because one read failed.
  */
-export function refreshSession(): Promise<string | null> {
-  if (typeof window === "undefined") return Promise.resolve(null);
-  const current = readStoredSession();
-  const user =
-    current.kind === "session" || current.kind === "expired" ? current.user : null;
-  if (!user || user.isGuest) return Promise.resolve(null);
-  refreshing ??= (async () => {
+const FIRST_READ_RETRY_MS: readonly number[] = [250, 750];
+let firstReadRetryMs = FIRST_READ_RETRY_MS;
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The page's read of its session: the server's answer, or none — and whether having none is for
+ * now (refused for the moment, a server error, the network: worth asking again) or an answer in
+ * itself (a coded refusal of this account or request).
+ */
+async function readStatus(): Promise<{ state: SessionState | null; forNow: boolean }> {
+  try {
+    const res = await askSession("GET");
+    if (res.ok) {
+      return { state: parseSession(await res.json().catch(() => null)), forNow: false };
+    }
+    return { state: null, forNow: res.status === 429 || res.status >= 500 };
+  } catch {
+    /* justified */
+    // Network failure: no answer for now; the caller decides.
+    return { state: null, forNow: true };
+  }
+}
+
+let loading: Promise<SessionState> | undefined;
+let firstLoadStarted = false;
+let firstLoading: Promise<void> | undefined;
+
+/**
+ * The read of the session now under way, if any (apiFetch waits for it before a state-changing
+ * call; it never starts one — a page without the provider has no session to read).
+ */
+export function pendingSessionLoad(): Promise<unknown> | undefined {
+  return firstLoading ?? loading;
+}
+
+/**
+ * Read the session from the server and keep it. Calls made at once share one request. When the
+ * server cannot say (an outage, a refusal for now), the state already held stands — a signed-in
+ * page is not signed out by a failed read — and a page with nothing yet asks again, briefly
+ * (FIRST_READ_RETRY_MS), and only then is signed out.
+ */
+export function loadSession(): Promise<SessionState> {
+  if (typeof window === "undefined") return Promise.resolve(LOADING);
+  loading ??= (async () => {
+    let read = await readStatus();
+    for (const ms of snapshot.status === "loading" ? firstReadRetryMs : []) {
+      if (read.state !== null || !read.forNow) break;
+      await wait(ms);
+      read = await readStatus();
+    }
+    const next = read.state ?? (snapshot.status === "signed-in" ? snapshot : SIGNED_OUT);
+    setState(next);
+    return next;
+  })().finally(() => {
+    loading = undefined;
+  });
+  return loading;
+}
+
+/**
+ * The first read of a page: what a legacy sign-in left in storage is deleted, and when the
+ * server knows no session but the browser held a legacy one, the server is asked to move it.
+ */
+async function firstLoad(): Promise<void> {
+  const hadLegacy = removeLegacyStoredSession();
+  if (!hadLegacy) {
+    await loadSession();
+    return;
+  }
+  // A browser signed in before ADR-057: it is not shown as signed out until the move has been
+  // tried — the page stays "loading", so the sign-in form does not flash at a signed-in user.
+  let state: SessionState | null = null;
+  try {
+    state = await readSession("GET");
+  } catch {
+    /* justified */
+    // Network failure: loadSession below decides.
+  }
+  if (state?.status !== "signed-in") {
     try {
-      const res = await fetch("/api/auth/refresh", {
+      await fetch("/api/auth/session/migrate", {
         method: "POST",
         credentials: "same-origin",
+        cache: "no-store",
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        accessToken?: unknown;
-        userId?: unknown;
-      };
-      if (res.ok && typeof data.accessToken === "string" && data.userId === user.userId) {
-        storeSession({ ...user, accessToken: data.accessToken });
-        return data.accessToken;
-      }
     } catch {
       /* justified */
-      // Network failure: the session ends here, as a refused refresh does.
+      // Not moved: the browser shows sign-in.
     }
-    clearStoredSession();
-    activeStore?.set({ kind: "none" });
-    return null;
-  })().finally(() => {
-    refreshing = undefined;
-  });
-  return refreshing;
+  }
+  await loadSession();
+}
+
+/**
+ * Forget the page's session state (tests). `firstReadRetryMs` replaces the waits before a failed
+ * first read is asked again, for a test that would otherwise wait them out.
+ */
+export function resetSessionStateForTests(
+  options: { firstReadRetryMs?: readonly number[] } = {}
+): void {
+  firstReadRetryMs = options.firstReadRetryMs ?? FIRST_READ_RETRY_MS;
+  snapshot = LOADING;
+  loading = undefined;
+  firstLoading = undefined;
+  firstLoadStarted = false;
+  listeners.clear();
+}
+
+async function post(path: string): Promise<void> {
+  try {
+    await fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      headers:
+        snapshot.status === "signed-in" ? { "x-csrf-token": snapshot.csrfToken } : {},
+    });
+  } catch {
+    /* justified */
+    // Offline: the session still ends here; the server's session ends by its lifetimes.
+  }
 }
 
 export function AuthContextProvider({ children }: { children: React.ReactNode }) {
-  const [store] = useState(createSessionStore);
-  useEffect(() => {
-    activeStore = store;
-    return () => {
-      if (activeStore === store) activeStore = undefined;
-    };
-  }, [store]);
-  const stored = useSyncExternalStore(
-    store.subscribe,
-    store.getSnapshot,
-    notReadOnServer
+  const session = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+
+  const sessionStarted = useCallback(
+    async () => (await loadSession()).status === "signed-in",
+    []
   );
-  // An expired session is still loading: it is renewed, or ended, by the effect below.
-  const isLoading = stored === undefined || stored.kind === "expired";
-  const user = stored?.kind === "session" ? stored.user : null;
-  const accessToken = stored?.kind === "session" ? stored.accessToken : null;
 
-  // Bring storage and the middleware cookie in line with what was restored: a discarded session
-  // is purged; a restored one re-issues the cookie so both sides agree again.
-  useEffect(() => {
-    if (stored?.kind === "discard") {
-      clearStoredSession();
-      store.set({ kind: "none" });
-    } else if (stored?.kind === "session") {
-      setSessionCookie(3600);
-      removeStoredValue(LEGACY_REFRESH_STORAGE_KEY);
-    } else if (stored?.kind === "expired") void refreshSession();
-  }, [stored, store]);
-
-  const setSession = useCallback((session: SessionInput) => storeSession(session), []);
-
-  // The server revokes the refresh token (its cookie) and the access token's sign-in; the
-  // session is forgotten here whatever it answers, so a failed revocation never leaves the
-  // browser claiming one.
+  // The server ends the session; it is forgotten here whatever the server answers, so a failed
+  // sign-out never leaves the page claiming one.
   const signOut = useCallback(async () => {
-    const token = stored?.kind === "session" ? stored.accessToken : null;
+    await post("/api/auth/sign-out");
+    setState(SIGNED_OUT);
+  }, []);
+
+  const signOutEverywhere = useCallback(async () => {
+    let done = false;
     try {
-      await fetch("/api/auth/sign-out", {
+      const res = await fetch("/api/auth/sign-out-everywhere", {
         method: "POST",
         credentials: "same-origin",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers:
+          snapshot.status === "signed-in" ? { "x-csrf-token": snapshot.csrfToken } : {},
       });
+      const data = (await res.json().catch(() => null)) as { success?: unknown } | null;
+      done = res.ok && data?.success === true;
+      // The session had already ended: there is nothing left to end from here.
+      if (res.status === 401) done = true;
     } catch {
       /* justified */
-      // Offline: the session still ends here; the server's tokens expire on their own.
+      // Offline: not done; the page stays signed in and says so.
     }
-    clearStoredSession();
-    store.set({ kind: "none" });
-  }, [store, stored]);
+    if (done) setState(SIGNED_OUT);
+    return done;
+  }, []);
 
-  const getAccessToken = useCallback(() => {
-    return accessToken;
-  }, [accessToken]);
+  const staySignedIn = useCallback(async () => {
+    let next: SessionState | null = null;
+    try {
+      next = await readSession("POST");
+    } catch {
+      /* justified */
+      // Network failure: the state held stands; the next poll decides.
+    }
+    if (next === null) return snapshot.status === "signed-in";
+    setState(next);
+    return next.status === "signed-in";
+  }, []);
 
+  const user = session.status === "signed-in" ? session.user : null;
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
-      accessToken,
-      isLoading,
+      isLoading: session.status === "loading",
       isAuthenticated: user !== null,
       isGuest: user?.isGuest ?? false,
-      setSession,
+      session,
+      sessionStarted,
       signOut,
-      getAccessToken,
+      signOutEverywhere,
+      staySignedIn,
     }),
-    [user, accessToken, isLoading, setSession, signOut, getAccessToken]
+    [user, session, sessionStarted, signOut, signOutEverywhere, staySignedIn]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

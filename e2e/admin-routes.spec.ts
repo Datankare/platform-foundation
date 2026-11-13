@@ -38,17 +38,16 @@ import {
   type Page,
 } from "@playwright/test";
 import { Client } from "pg";
+import { sessionFetch, signInPage } from "./helpers/session";
 
 const OWNER_URL = process.env.E2E_DATABASE_OWNER_URL;
 const TENANT = "00000000-0000-4000-8000-000000000001";
 
 const ADMIN_A = {
-  token: "mock-access-token:admin-a",
   id: "e2e00000-0000-4000-8000-00000000000a",
   email: "admin-a@e2e.test",
 };
 const ADMIN_B = {
-  token: "mock-access-token:admin-b",
   id: "e2e00000-0000-4000-8000-00000000000b",
   email: "admin-b@e2e.test",
 };
@@ -86,8 +85,6 @@ test.beforeAll(async () => {
   }
 });
 
-const as = (admin: typeof ADMIN_A) => ({ Authorization: `Bearer ${admin.token}` });
-
 /** A request's answer: its status, its text, and its JSON body (an object; {} when it is not one). */
 async function answer(
   res: APIResponse
@@ -113,52 +110,23 @@ async function waitOut(retryAfter: string | undefined): Promise<void> {
   await new Promise((r) => setTimeout(r, seconds * 1000));
 }
 
+/** A request as `admin` — its own cookie session (e2e/helpers/session.ts), whatever `_api` holds. */
 async function apiFetch(
-  api: APIRequestContext,
+  _api: APIRequestContext,
   admin: typeof ADMIN_A,
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   data?: unknown
 ) {
   for (let attempt = 0; ; attempt++) {
-    const res = await api.fetch(path, {
-      method,
-      headers: {
-        ...as(admin),
-        ...(data === undefined ? {} : { "Content-Type": "application/json" }),
-      },
-      ...(data === undefined ? {} : { data }),
-    });
+    const res = await sessionFetch(admin, method, path, data);
     if (res.status() !== 429 || attempt >= 3) return answer(res);
     await waitOut(res.headers()["retry-after"]);
   }
 }
 
 async function openConsole(page: Page, admin: typeof ADMIN_A): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: "pf_has_session",
-      value: "true",
-      domain: "localhost",
-      path: "/",
-      httpOnly: false,
-      secure: false,
-      sameSite: "Lax",
-    },
-  ]);
-  await page.addInitScript((a) => {
-    localStorage.setItem("pf_access_token", a.token);
-    localStorage.setItem("pf_refresh_token", "mock-refresh-token");
-    localStorage.setItem(
-      "pf_user",
-      JSON.stringify({
-        userId: a.id,
-        email: a.email,
-        emailVerified: true,
-        isGuest: false,
-      })
-    );
-  }, admin);
+  await signInPage(page, admin);
   for (let attempt = 0; ; attempt++) {
     const session = page.waitForResponse((r) => r.url().endsWith("/api/admin/session"));
     await page.goto("/admin");

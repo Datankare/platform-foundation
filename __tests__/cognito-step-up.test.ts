@@ -2,7 +2,8 @@
  * __tests__/cognito-step-up.test.ts — CognitoAuthProvider.confirmCurrentFactor (TASK-194, audit
  * C-3)
  *
- * The step-up proves the token's own user holds the enrolled factor now: GetUser names the pool
+ * The step-up proves the session's own user holds the enrolled factor now: AdminGetUser (the
+ * administrative key, by the session's subject — the user's token is not used) names the pool
  * username, a password sign-in must be answered with a SOFTWARE_TOKEN_MFA challenge, and the code
  * must pass it. The session that sign-in makes is revoked. Hostile cases: no factor enrolled, a
  * sign-in that asks for no factor, a wrong password or code, another user's proof, and a
@@ -24,6 +25,12 @@ const CONFIG: CognitoConfig = {
   userPoolId: "us-east-1_TestPool",
   clientId: "test-client-id",
   timeoutMs: 5000,
+  // ADR-057 D7: the session's user is read with the administrative key (AdminGetUser), never
+  // with the user's own token.
+  adminCredentials: {
+    accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+    secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  },
 };
 const SUB = "11111111-2222-4333-8444-555555555555";
 
@@ -70,9 +77,10 @@ afterEach(() => {
 /** The Cognito operation (X-Amz-Target) and body of each call made. */
 const calls = () =>
   fetchMock.mock.calls.map(([, init]) => ({
+    // A signed (administrative) call's header names are lower-case.
     op: String(
-      (init as RequestInit).headers &&
-        (init.headers as Record<string, string>)["X-Amz-Target"]
+      (init.headers as Record<string, string>)["X-Amz-Target"] ??
+        (init.headers as Record<string, string>)["x-amz-target"]
     ).replace(/^.*\./, ""),
     body: JSON.parse(String((init as RequestInit).body)),
   }));
@@ -88,12 +96,12 @@ describe("confirmCurrentFactor", () => {
         ok({ AuthenticationResult: { AccessToken: jwt(SUB), RefreshToken: "r1" } })
       )
       .mockResolvedValueOnce(ok({}));
-    expect(await provider().confirmCurrentFactor("tok", "pw", "123456")).toEqual({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", "123456")).toEqual({
       success: true,
     });
     const c = calls();
     expect(c.map((x) => x.op)).toEqual([
-      "GetUser",
+      "AdminGetUser",
       "InitiateAuth",
       "RespondToAuthChallenge",
       "RevokeToken",
@@ -111,11 +119,11 @@ describe("confirmCurrentFactor", () => {
 
   it("refuses an account with no factor enrolled, without signing in", async () => {
     fetchMock.mockResolvedValueOnce(user([]));
-    expect(await provider().confirmCurrentFactor("tok", "pw", "123456")).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", "123456")).toMatchObject({
       success: false,
       errorCode: "auth.step_up_required",
     });
-    expect(calls().map((x) => x.op)).toEqual(["GetUser"]);
+    expect(calls().map((x) => x.op)).toEqual(["AdminGetUser"]);
   });
 
   it("refuses a sign-in that asked for no factor, and revokes it", async () => {
@@ -125,7 +133,7 @@ describe("confirmCurrentFactor", () => {
         ok({ AuthenticationResult: { AccessToken: jwt(SUB), RefreshToken: "r2" } })
       )
       .mockResolvedValueOnce(ok({}));
-    expect(await provider().confirmCurrentFactor("tok", "pw", "123456")).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", "123456")).toMatchObject({
       success: false,
       errorCode: "auth.step_up_required",
     });
@@ -136,7 +144,7 @@ describe("confirmCurrentFactor", () => {
     fetchMock
       .mockResolvedValueOnce(user(["SOFTWARE_TOKEN_MFA"]))
       .mockResolvedValueOnce(err("NotAuthorizedException"));
-    expect(await provider().confirmCurrentFactor("tok", "bad", "123456")).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "bad", "123456")).toMatchObject({
       success: false,
       errorCode: "auth.invalid_credentials",
     });
@@ -144,11 +152,55 @@ describe("confirmCurrentFactor", () => {
       .mockResolvedValueOnce(user(["SOFTWARE_TOKEN_MFA"]))
       .mockResolvedValueOnce(ok({ ChallengeName: "SOFTWARE_TOKEN_MFA", Session: "s" }))
       .mockResolvedValueOnce(err("CodeMismatchException"));
-    expect(await provider().confirmCurrentFactor("tok", "pw", "000000")).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", "000000")).toMatchObject({
       success: false,
       errorCode: "auth.code_invalid",
     });
   });
+
+  it("refuses when the pool's record is another subject's, without signing in (ADR-057 D7)", async () => {
+    fetchMock.mockResolvedValueOnce(user(["SOFTWARE_TOKEN_MFA"]));
+    expect(
+      await provider().confirmCurrentFactor(
+        "99999999-2222-4333-8444-555555555555",
+        "pw",
+        "123456"
+      )
+    ).toMatchObject({ success: false, errorCode: "auth.token_invalid" });
+    expect(calls().map((x) => x.op)).toEqual(["AdminGetUser"]);
+  });
+
+  it("the user's own token is never presented: the read is signed with the administrative key, by username", async () => {
+    fetchMock.mockResolvedValueOnce(user([]));
+    await provider().confirmCurrentFactor(SUB, "pw", null);
+    const [first] = fetchMock.mock.calls;
+    expect(JSON.parse(String(first[1].body))).toEqual({
+      UserPoolId: CONFIG.userPoolId,
+      Username: SUB,
+    });
+    expect(JSON.stringify(first[1].body)).not.toContain("AccessToken");
+    expect(first[1].headers.Authorization ?? first[1].headers.authorization).toMatch(
+      /^AWS4-HMAC-SHA256 /
+    );
+  });
+
+  it.each([
+    ["no administrative key", { ...CONFIG, adminCredentials: undefined }, null],
+    ["a key whose policy refuses AdminGetUser", CONFIG, "AccessDeniedException"],
+  ] as const)(
+    "%s: the proof cannot be made — service.unavailable (auth), never a pass",
+    async (_name, config, denial) => {
+      if (denial) fetchMock.mockResolvedValueOnce(err(denial));
+      expect(
+        await new CognitoAuthProvider(config).confirmCurrentFactor(SUB, "pw", "123456")
+      ).toMatchObject({
+        success: false,
+        errorCode: "service.unavailable",
+        errorParams: { service: "auth" },
+      });
+      expect(calls().map((x) => x.op)).toEqual(denial ? ["AdminGetUser"] : []);
+    }
+  );
 
   it("refuses a proof that signed in another user", async () => {
     fetchMock
@@ -163,7 +215,7 @@ describe("confirmCurrentFactor", () => {
         })
       )
       .mockResolvedValueOnce(ok({}));
-    expect(await provider().confirmCurrentFactor("tok", "pw", "123456")).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", "123456")).toMatchObject({
       success: false,
       errorCode: "auth.token_invalid",
     });
@@ -175,22 +227,20 @@ describe("confirmCurrentFactor — a federated (SSO) account", () => {
     fetchMock
       .mockResolvedValueOnce(federatedUser(["SOFTWARE_TOKEN_MFA"]))
       .mockResolvedValueOnce(err("NotAuthorizedException"));
-    expect(await provider().confirmCurrentFactor("tok", "guess", "123456")).toMatchObject(
-      {
-        success: false,
-        errorCode: "auth.step_up_unavailable",
-      }
-    );
-    expect(calls().map((x) => x.op)).toEqual(["GetUser", "InitiateAuth"]);
+    expect(await provider().confirmCurrentFactor(SUB, "guess", "123456")).toMatchObject({
+      success: false,
+      errorCode: "auth.step_up_unavailable",
+    });
+    expect(calls().map((x) => x.op)).toEqual(["AdminGetUser", "InitiateAuth"]);
   });
 
   it("is told so when it has no factor enrolled, without signing in", async () => {
     fetchMock.mockResolvedValueOnce(federatedUser([]));
-    expect(await provider().confirmCurrentFactor("tok", "pw", "123456")).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", "123456")).toMatchObject({
       success: false,
       errorCode: "auth.step_up_unavailable",
     });
-    expect(calls().map((x) => x.op)).toEqual(["GetUser"]);
+    expect(calls().map((x) => x.op)).toEqual(["AdminGetUser"]);
   });
 
   it("still needs the challenge: a linked account with a pool password proves it as anyone", async () => {
@@ -198,7 +248,7 @@ describe("confirmCurrentFactor — a federated (SSO) account", () => {
       .mockResolvedValueOnce(federatedUser(["SOFTWARE_TOKEN_MFA"]))
       .mockResolvedValueOnce(ok({ ChallengeName: "SOFTWARE_TOKEN_MFA", Session: "s" }))
       .mockResolvedValueOnce(err("CodeMismatchException"));
-    expect(await provider().confirmCurrentFactor("tok", "pw", "000000")).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", "000000")).toMatchObject({
       success: false,
       errorCode: "auth.code_invalid",
     });
@@ -208,7 +258,7 @@ describe("confirmCurrentFactor — a federated (SSO) account", () => {
     fetchMock
       .mockResolvedValueOnce(federatedUser(["SOFTWARE_TOKEN_MFA"]))
       .mockResolvedValueOnce(err("TooManyRequestsException"));
-    expect(await provider().confirmCurrentFactor("tok", "pw", "123456")).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", "123456")).toMatchObject({
       success: false,
       errorCode: "auth.too_many_attempts",
     });
@@ -225,19 +275,23 @@ describe("confirmCurrentFactor — a password alone (code null)", () => {
         ok({ AuthenticationResult: { AccessToken: jwt(SUB), RefreshToken: "r9" } })
       )
       .mockResolvedValueOnce(ok({}));
-    expect(await provider().confirmCurrentFactor("tok", "pw", null)).toEqual({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", null)).toEqual({
       success: true,
     });
-    expect(calls().map((x) => x.op)).toEqual(["GetUser", "InitiateAuth", "RevokeToken"]);
+    expect(calls().map((x) => x.op)).toEqual([
+      "AdminGetUser",
+      "InitiateAuth",
+      "RevokeToken",
+    ]);
   });
 
   it("refuses an account with a factor: its code is needed — without signing in", async () => {
     fetchMock.mockResolvedValueOnce(user(["SOFTWARE_TOKEN_MFA"]));
-    expect(await provider().confirmCurrentFactor("tok", "pw", null)).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", null)).toMatchObject({
       success: false,
       errorCode: "auth.step_up_required",
     });
-    expect(calls().map((x) => x.op)).toEqual(["GetUser"]);
+    expect(calls().map((x) => x.op)).toEqual(["AdminGetUser"]);
   });
 
   it("refuses a sign-in that asked for more (a challenge), a wrong password, another user's", async () => {
@@ -246,13 +300,13 @@ describe("confirmCurrentFactor — a password alone (code null)", () => {
       .mockResolvedValueOnce(
         ok({ ChallengeName: "NEW_PASSWORD_REQUIRED", Session: "s" })
       );
-    expect(await provider().confirmCurrentFactor("tok", "pw", null)).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", null)).toMatchObject({
       errorCode: "auth.step_up_required",
     });
     fetchMock
       .mockResolvedValueOnce(user([]))
       .mockResolvedValueOnce(err("NotAuthorizedException"));
-    expect(await provider().confirmCurrentFactor("tok", "bad", null)).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "bad", null)).toMatchObject({
       errorCode: "auth.invalid_credentials",
     });
     fetchMock
@@ -263,7 +317,7 @@ describe("confirmCurrentFactor — a password alone (code null)", () => {
         })
       )
       .mockResolvedValueOnce(ok({}));
-    expect(await provider().confirmCurrentFactor("tok", "pw", null)).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "pw", null)).toMatchObject({
       errorCode: "auth.token_invalid",
     });
   });
@@ -272,7 +326,7 @@ describe("confirmCurrentFactor — a password alone (code null)", () => {
     fetchMock
       .mockResolvedValueOnce(federatedUser([]))
       .mockResolvedValueOnce(err("NotAuthorizedException"));
-    expect(await provider().confirmCurrentFactor("tok", "guess", null)).toMatchObject({
+    expect(await provider().confirmCurrentFactor(SUB, "guess", null)).toMatchObject({
       errorCode: "auth.step_up_unavailable",
     });
   });

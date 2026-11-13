@@ -137,6 +137,11 @@ async function seed(t: TestTenant, user: string, other: string): Promise<void> {
     ],
     [`insert into user_ai_context (user_id) values ($1)`, [user]],
     [
+      `insert into auth_sessions (id_hash, kind, subject, method, csrf_token, sealed_tokens)
+       values (md5('own' || $1::text) || md5($1::text), 'user', $1::text, 'password', repeat('c', 43), 'v1.sealed')`,
+      [user],
+    ],
+    [
       `insert into app_sessions (id, state, version, meta)
        values ('s-own-' || $1::text, '{}'::jsonb, 1,
                jsonb_build_object('participants', jsonb_build_array(jsonb_build_object('actorId', $1::text))))`,
@@ -393,6 +398,11 @@ async function seedOther(t: TestTenant, other: string): Promise<void> {
     ],
     [
       `insert into rate_limit_events (bucket) values ('ai:per-user:actor:' || $1::text)`,
+      [other],
+    ],
+    [
+      `insert into auth_sessions (id_hash, kind, subject, method, csrf_token, sealed_tokens)
+       values (md5('other' || $1::text) || md5($1::text), 'user', $1::text, 'password', repeat('c', 43), 'v1.sealed')`,
       [other],
     ],
     [

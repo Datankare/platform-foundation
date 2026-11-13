@@ -3,10 +3,9 @@
  *
  * POST { code, state } from /auth/callback. Checks `state` against the attempt cookie set by
  * GET /api/auth/sso/[provider] (constant time), exchanges the code with the PKCE verifier, and
- * returns the session like sign-in: { success, userId, accessToken, expiresIn, email,
- * emailVerified }, the refresh token in the httpOnly refresh cookie (sessionResponse). The attempt
- * cookie is cleared on every outcome — an attempt is used once. The ID token itself is not
- * returned.
+ * starts the session like sign-in: { success, userId, email, emailVerified } with the session
+ * cookie — the provider's tokens stay on the server (sessionResponse, ADR-057). The attempt
+ * cookie is cleared on every outcome — an attempt is used once.
  */
 
 import { NextRequest, NextResponse } from "next/server";

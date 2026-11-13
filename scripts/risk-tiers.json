@@ -92,6 +92,7 @@
         "eslint.config.mjs",
         "eslint-rules/**",
         "journey-exemptions.json",
+        "client-credential-register.json",
         "scripts/process-check.mjs",
         "scripts/process-check.app.json",
         "stryker.config.mjs",

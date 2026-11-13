@@ -21,8 +21,12 @@ jest.mock("@/components/admin/leave-console", () => ({
 }));
 
 import AdminPage from "@/app/admin/page";
-import { AuthContextProvider } from "@/platform/auth/context";
-import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
+import { AuthContextProvider, resetSessionStateForTests } from "@/platform/auth/context";
+import {
+  CSRF_TOKEN,
+  routeAnswer,
+  type RouteFixtureName,
+} from "@/__tests__/fixtures/route-responses";
 
 const TOKEN = "staff-access-token";
 const fetchMock = jest.fn();
@@ -41,6 +45,8 @@ function serve(signOutAnswer: () => Promise<unknown>) {
   fetchMock.mockImplementation(async (url: unknown) => {
     const u = String(url);
     if (u === "/api/auth/sign-out") return signOutAnswer();
+    // The page reads who is signed in from the server (ADR-057): a signed-in browser.
+    if (u === "/api/auth/session") return json("GET /api/auth/session — signed in");
     if (u.startsWith("/api/admin/session"))
       return json("GET /api/admin/session — a moderator");
     if (u.startsWith("/api/admin/approvals"))
@@ -49,7 +55,8 @@ function serve(signOutAnswer: () => Promise<unknown>) {
   });
 }
 
-function signedIn() {
+/** What a sign-in before ADR-057 left in the browser: removed on the first load, never used. */
+function legacyStorage() {
   localStorage.setItem("pf_access_token", TOKEN);
   localStorage.setItem(
     "pf_user",
@@ -61,7 +68,6 @@ function signedIn() {
     })
   );
   localStorage.setItem("pf_refresh_token", "legacy-refresh");
-  document.cookie = "pf_has_session=true; path=/";
 }
 
 const stored = () => [
@@ -83,24 +89,27 @@ beforeEach(() => {
   fetchMock.mockReset();
   leaveConsole.mockReset();
   localStorage.clear();
-  document.cookie = "pf_has_session=; path=/; max-age=0";
+  resetSessionStateForTests();
   global.fetch = fetchMock as unknown as typeof fetch;
-  signedIn();
+  legacyStorage();
 });
 
 describe("the console's Sign Out ends the session (TASK-184)", () => {
-  it("calls the server's sign-out with the access token, clears the tokens, then leaves for /auth", async () => {
+  it("calls the server's sign-out with the session's forgery token and no credential of its own, then leaves for /auth", async () => {
     serve(async () => json("POST /api/auth/sign-out — signed out"));
     fireEvent.click(await openConsole());
     await waitFor(() => expect(leaveConsole).toHaveBeenCalledWith("/auth"));
     expect(signOutCalls()).toHaveLength(1);
     const [, init] = signOutCalls()[0];
     expect(init?.method).toBe("POST");
-    expect((init?.headers as Record<string, string>).Authorization).toBe(
-      `Bearer ${TOKEN}`
-    );
+    // The session is the browser's HttpOnly cookie: the page sends the forgery token, no bearer.
+    const headers = new Headers(init?.headers);
+    expect(headers.get("x-csrf-token")).toBe(CSRF_TOKEN);
+    expect(headers.get("authorization")).toBeNull();
+    expect(init?.credentials).toBe("same-origin");
+    expect(JSON.stringify(fetchMock.mock.calls)).not.toContain(TOKEN);
     expect(stored()).toEqual([null, null, null]);
-    expect(document.cookie).not.toMatch(/pf_has_session=true/);
+    expect(document.cookie).toBe("");
     expect(leaveConsole).toHaveBeenCalledTimes(1);
     expect(leaveConsole).not.toHaveBeenCalledWith("/");
   });
@@ -127,7 +136,7 @@ describe("the console's Sign Out ends the session (TASK-184)", () => {
       fireEvent.click(await openConsole());
       await waitFor(() => expect(leaveConsole).toHaveBeenCalledWith("/auth"));
       expect(stored()).toEqual([null, null, null]);
-      expect(document.cookie).not.toMatch(/pf_has_session=true/);
+      expect(document.cookie).toBe("");
     }
   );
 });

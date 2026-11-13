@@ -12,6 +12,7 @@
  */
 
 import { NextRequest } from "next/server";
+import { sessionHeadersFor } from "@/__tests__/helpers/session";
 import {
   registerAuthProvider,
   getAuthProvider,
@@ -31,11 +32,9 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: () => "test-req-id",
 }));
 
-function makeRequest(token?: string): NextRequest {
-  const headers = new Headers();
-  if (token) {
-    headers.set("authorization", `Bearer ${token}`);
-  }
+/** A request from a browser whose session holds `token` (ADR-057); none: no session. */
+async function makeRequest(token?: string): Promise<NextRequest> {
+  const headers = new Headers(token ? await sessionHeadersFor(token) : {});
   return new NextRequest("http://localhost:3000/api/test", { headers });
 }
 
@@ -62,8 +61,8 @@ describe("requireAuth", () => {
     registerAuthProvider(createMockAuthProvider());
   });
 
-  it("returns 401 when no Authorization header", async () => {
-    const request = makeRequest();
+  it("returns 401 without a session", async () => {
+    const request = await makeRequest();
     const result = await requireAuth(request);
     expect("error" in result).toBe(true);
     if ("error" in result) {
@@ -71,9 +70,9 @@ describe("requireAuth", () => {
     }
   });
 
-  it("returns 401 when Authorization header is not Bearer", async () => {
+  it("returns 401 for an Authorization header of any kind: a user route takes no such credential (ADR-057 D8)", async () => {
     const headers = new Headers();
-    headers.set("authorization", "Basic abc123");
+    headers.set("authorization", "Bearer mock-access-token");
     const request = new NextRequest("http://localhost:3000/api/test", {
       headers,
     });
@@ -85,7 +84,7 @@ describe("requireAuth", () => {
   });
 
   it("returns 401 when token is invalid", async () => {
-    const request = makeRequest("invalid-token");
+    const request = await makeRequest("invalid-token");
     const result = await requireAuth(request);
     expect("error" in result).toBe(true);
     if ("error" in result) {
@@ -94,14 +93,16 @@ describe("requireAuth", () => {
   });
 
   it("returns user payload when token is valid", async () => {
-    const request = makeRequest("mock-access-token");
+    const request = await makeRequest("mock-access-token");
     const result = await requireAuth(request);
     expect("user" in result).toBe(true);
     if ("user" in result) {
       expect(result.user!.sub).toBeDefined();
       expect(result.user!.email).toBeDefined();
       expect(result.user!.emailVerified).toBe(true);
-      expect(result.accessToken).toBe("mock-access-token");
+      // The route is handed the session, never its token.
+      expect(result.session!.kind).toBe("user");
+      expect("accessToken" in result).toBe(false);
     }
   });
 });
@@ -111,25 +112,25 @@ describe("optionalAuth", () => {
     registerAuthProvider(createMockAuthProvider());
   });
 
-  it("returns null user when no Authorization header", async () => {
-    const request = makeRequest();
+  it("returns null user without a session", async () => {
+    const request = await makeRequest();
     const result = await optionalAuth(request);
     expect(result.user).toBeNull();
-    expect(result.accessToken).toBeNull();
+    expect(result.session).toBeNull();
   });
 
   it("returns null user when token is invalid", async () => {
-    const request = makeRequest("invalid-token");
+    const request = await makeRequest("invalid-token");
     const result = await optionalAuth(request);
     expect(result.user).toBeNull();
-    expect(result.accessToken).toBeNull();
+    expect(result.session).toBeNull();
   });
 
   it("returns user when token is valid", async () => {
-    const request = makeRequest("mock-access-token");
+    const request = await makeRequest("mock-access-token");
     const result = await optionalAuth(request);
     expect(result.user).not.toBeNull();
     expect(result.user!.sub).toBeDefined();
-    expect(result.accessToken).toBe("mock-access-token");
+    expect(result.session!.kind).toBe("user");
   });
 });

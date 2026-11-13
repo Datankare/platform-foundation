@@ -288,8 +288,14 @@ import { PATCH as reviewPATCH } from "@/app/api/moderation/review/[id]/route";
 import { POST as assistPOST } from "@/app/api/moderation/review/[id]/assist/route";
 import { runWithTenant } from "@/platform/tenancy/context";
 import { CALLERS } from "@/__tests__/helpers/test-identities";
-import { POST as refreshPOST } from "@/app/api/auth/refresh/route";
-import { REFRESH_COOKIE, refreshCookieValue } from "@/platform/auth/auth-response";
+import {
+  GET as authSessionGET,
+  POST as authSessionPOST,
+} from "@/app/api/auth/session/route";
+import { POST as migratePOST } from "@/app/api/auth/session/migrate/route";
+import { POST as signOutEverywherePOST } from "@/app/api/auth/sign-out-everywhere/route";
+import { sessionHeadersFor, startTestSession } from "@/__tests__/helpers/session";
+import { mintGuestToken } from "@/platform/auth/guest-token";
 import { GET as featuresGET } from "@/app/api/features/route";
 import { POST as guestPOST } from "@/app/api/auth/guest/route";
 import { POST as signInPOST } from "@/app/api/auth/sign-in/route";
@@ -821,11 +827,15 @@ const ADMIN_CONSOLE: Readonly<Record<string, () => Promise<RouteFixture>>> = {
   "POST /api/auth/sign-out — signed out": async () =>
     record(
       await signOutPOST(
-        rawReq("/api/auth/sign-out", "POST", {
-          authorization: "Bearer staff-access-token",
-        })
+        rawReq(
+          "/api/auth/sign-out",
+          "POST",
+          (await startTestSession({ refreshToken: "refresh-1" })).headers
+        )
       )
     ),
+  // The provider failing to revoke the refresh token does not undo the sign-out: the session is
+  // ended in its record, which is what refuses the id from then on (ADR-057 D6).
   "POST /api/auth/sign-out — the provider failing": async () => {
     provider({
       signOut: async () => {
@@ -834,9 +844,11 @@ const ADMIN_CONSOLE: Readonly<Record<string, () => Promise<RouteFixture>>> = {
     });
     return record(
       await signOutPOST(
-        rawReq("/api/auth/sign-out", "POST", {
-          authorization: "Bearer staff-access-token",
-        })
+        rawReq(
+          "/api/auth/sign-out",
+          "POST",
+          (await startTestSession({ refreshToken: "refresh-1" })).headers
+        )
       )
     );
   },
@@ -1399,37 +1411,6 @@ const APPEALS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
   },
 };
 
-/**
- * A made-up access token. The refresh route passes the provider's token through without reading
- * it (it compares the account), and the client reads an opaque token's expiry as "cannot tell", so
- * an opaque one records the route's answer as truly as a JWT would — and leaves the fixture file
- * nothing a secret scan reads as a credential (gitleaks' `jwt` and `generic-api-key` rules).
- */
-const accessToken = (userId: string): string => `renewed-for-${userId}`;
-const FIXTURE_SECONDS = Math.floor(Date.parse(FIXTURE_NOW) / 1000);
-
-/** POST /api/auth/refresh with the refresh cookie the sign-in set for `userId`. */
-const refresh = (userId?: string) =>
-  refreshPOST(
-    rawReq(
-      "/api/auth/refresh",
-      "POST",
-      userId
-        ? { cookie: `${REFRESH_COOKIE}=${refreshCookieValue(userId, "refresh-1")}` }
-        : {}
-    )
-  );
-const renewedFor = (userId: string) =>
-  provider({
-    refreshToken: async () => ({
-      accessToken: accessToken(userId),
-      userId,
-      // The provider renews with the refresh token it was given; it issues no new one.
-      refreshToken: "refresh-1",
-      expiresAt: FIXTURE_SECONDS + 3600,
-    }),
-  } as Partial<AuthProvider>);
-
 /** The process environment with these settings while `fn` runs. */
 async function withEnv<T>(
   vars: Record<string, string>,
@@ -1456,6 +1437,25 @@ const signIn = () =>
       { email: "a@b.c", password: "a-long-password-1" }
     )
   );
+
+/**
+ * GET or POST /api/auth/session as a signed-in user or a guest: the route verifies its caller
+ * itself (requireActor, the mock identity provider) from a real server-side session.
+ */
+async function sessionAs(who: "user" | "guest", method: "GET" | "POST" = "GET") {
+  initAuth();
+  mockRealProvider ??= getAuthProvider();
+  const identities = createMockAuthProvider();
+  registerAuthProvider(identities);
+  const token =
+    who === "guest"
+      ? (await mintGuestToken()).token
+      : ((await identities.signIn("member@example.test", "x")).accessToken ?? "");
+  const headers = await sessionHeadersFor(token);
+  return (method === "GET" ? authSessionGET : authSessionPOST)(
+    rawReq("/api/auth/session", method, headers)
+  );
+}
 
 /** The sign-in screen (components/auth/AuthPage.tsx) and the session (platform/auth/context.tsx). */
 /**
@@ -1489,15 +1489,11 @@ async function ask(
   }));
   let token = (await identities.signIn("member@example.test", "x")).accessToken ?? "";
   if (who === "guest") {
-    const minted = (await (
-      await guestPOST(rawReq("/api/auth/guest", "POST"))
-    ).json()) as {
-      token: string;
-    };
-    token = minted.token;
+    // A guest's token is the platform's own (the guest route keeps it in the guest's session).
+    token = (await mintGuestToken()).token;
   }
   return streamPOST(
-    rawReq("/api/stream", "POST", { authorization: `Bearer ${token}` }, { prompt })
+    rawReq("/api/stream", "POST", await sessionHeadersFor(token), { prompt })
   );
 }
 function screened(
@@ -1583,9 +1579,10 @@ const SESSION: Readonly<Record<string, () => Promise<RouteFixture>>> = {
     ),
   "POST /api/auth/guest — started": async () => {
     const f = await record(await guestPOST(rawReq("/api/auth/guest", "POST")));
-    // The guest's id and token are random per mint: fixed here, as a request id is.
-    const body = f.body as { guestId: string; token: string };
-    return { ...f, body: { ...body, guestId: "guest_abc", token: "guest.p.m" } };
+    // The guest's id is random per mint: fixed here, as a request id is. No token is answered
+    // (ADR-057): it stays in the guest's server-side session.
+    const body = f.body as { guestId: string };
+    return { ...f, body: { ...body, guestId: "guest_abc" } };
   },
   "POST /api/auth/guest — the mint failing": async () => {
     mockMint.fail = true;
@@ -1601,16 +1598,47 @@ const SESSION: Readonly<Record<string, () => Promise<RouteFixture>>> = {
     } as Partial<AuthProvider>);
     return record(await signIn());
   },
-  "POST /api/auth/refresh — renewed": async () => {
-    renewedFor("user-1");
-    return record(await refresh("user-1"));
+  "POST /api/auth/sign-in — signed in": async () => record(await signIn()),
+  "GET /api/auth/session — signed out": async () =>
+    record(await authSessionGET(rawReq("/api/auth/session", "GET"))),
+  "GET /api/auth/session — signed in": async () => record(await sessionAs("user")),
+  "GET /api/auth/session — a guest": async () => {
+    const f = await record(await sessionAs("guest"));
+    // The guest's id is random per mint: fixed here, as a request id is.
+    const body = f.body as { user: Record<string, unknown> };
+    return { ...f, body: { ...body, user: { ...body.user, userId: "guest_abc" } } };
   },
-  "POST /api/auth/refresh — refused (no refresh cookie)": async () =>
-    record(await refresh()),
-  "POST /api/auth/refresh — refused (the provider renewed another account)": async () => {
-    renewedFor("someone-else");
-    return record(await refresh("user-1"));
+  "GET /api/auth/session — an ended session": async () => {
+    const session = await startTestSession({
+      createdAt: Date.parse(FIXTURE_NOW) - 400 * 86_400_000,
+    });
+    return record(
+      await authSessionGET(rawReq("/api/auth/session", "GET", { cookie: session.cookie }))
+    );
   },
+  "POST /api/auth/session — stayed signed in": async () =>
+    record(await sessionAs("user", "POST")),
+  "POST /api/auth/session — refused (no session token)": async () => {
+    const session = await startTestSession();
+    return record(
+      await authSessionPOST(
+        rawReq("/api/auth/session", "POST", {
+          cookie: session.cookie,
+          origin: "http://localhost",
+        })
+      )
+    );
+  },
+  "POST /api/auth/session/migrate — nothing to migrate": async () =>
+    record(
+      await migratePOST(
+        rawReq("/api/auth/session/migrate", "POST", { origin: "http://localhost" })
+      )
+    ),
+  "POST /api/auth/sign-out-everywhere — signed out": async () =>
+    record(
+      await signOutEverywherePOST(req("/api/auth/sign-out-everywhere", "POST", "free"))
+    ),
 };
 
 const MFA_URI =

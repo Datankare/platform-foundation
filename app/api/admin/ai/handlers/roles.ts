@@ -12,6 +12,7 @@
  * checks them again, so a concurrent change cannot slip between the check and the write.
  */
 
+import { endSubjectSessions } from "@/platform/auth/session-revocation";
 import { shown } from "@/platform/errors/shown-text";
 import { withTenantTx, type Tx } from "@/platform/data";
 import {
@@ -730,6 +731,8 @@ export async function handleChangeUserRole(
       // and an invalidation is harmless if it did not.
       if ((outcome.success || outcome.indeterminate) && plan.target.cognitoSub) {
         await invalidatePermissions(plan.target.cognitoSub);
+        // A session opened under the old role does not carry on under the new one (ADR-057 D6).
+        await endSubjectSessions(plan.target.cognitoSub, "role_changed");
       }
       return outcome;
     }

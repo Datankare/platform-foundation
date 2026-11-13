@@ -14,6 +14,7 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: () => "req-email-verified",
 }));
 
+import { sessionHeadersFor } from "../helpers/session";
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { withOwnerTx } from "@/platform/data";
@@ -62,25 +63,37 @@ function signInAs(sub: string, over: Partial<TokenPayload> = {}): string {
   return token;
 }
 
-const httpRequest = (token: string) =>
+/** A request from a browser whose session holds `token` (ADR-057), in the deployment's tenant. */
+const httpRequest = async (token: string) =>
   new NextRequest("http://localhost/api/x", {
-    headers: { authorization: `Bearer ${token}`, "x-forwarded-for": "203.0.113.9" },
+    headers: {
+      ...(await sessionHeadersFor(token, { tenantId: process.env.TENANT_ID })),
+      "x-forwarded-for": "203.0.113.9",
+    },
   });
 
 const saved = { mode: process.env.TENANCY_MODE, tenant: process.env.TENANT_ID };
 /** One request of a single-tenant deployment of `a` (the scope tenantRoute gives a route). */
+/** Requests under way: the deployment's settings are put back when the last of them ends. */
+let requestsUnderWay = 0;
 async function request(token: string) {
+  // Requests made at once share the process's settings: the first to finish must not take the
+  // tenant away from the others, which still have their session and their scope to read it for.
+  requestsUnderWay += 1;
   delete process.env.TENANCY_MODE;
   process.env.TENANT_ID = a.id;
   try {
-    return await runRequestScope(() =>
-      requireActor(httpRequest(token), { allowGuests: false })
+    return await runRequestScope(async () =>
+      requireActor(await httpRequest(token), { allowGuests: false })
     );
   } finally {
-    if (saved.mode === undefined) delete process.env.TENANCY_MODE;
-    else process.env.TENANCY_MODE = saved.mode;
-    if (saved.tenant === undefined) delete process.env.TENANT_ID;
-    else process.env.TENANT_ID = saved.tenant;
+    requestsUnderWay -= 1;
+    if (requestsUnderWay === 0) {
+      if (saved.mode === undefined) delete process.env.TENANCY_MODE;
+      else process.env.TENANCY_MODE = saved.mode;
+      if (saved.tenant === undefined) delete process.env.TENANT_ID;
+      else process.env.TENANT_ID = saved.tenant;
+    }
   }
 }
 

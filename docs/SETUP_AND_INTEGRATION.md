@@ -125,7 +125,7 @@ NEXT_PUBLIC_COGNITO_CLIENT_ID=<client>
 COGNITO_CLIENT_SECRET=<the app client's secret>
 GUEST_TOKEN_SECRET=$(openssl rand -base64 48)
 ERASURE_HASH_KEY=$(openssl rand -hex 32)
-REFRESH_COOKIE_KEY=$(openssl rand -hex 32)   # the refresh cookie's HMAC (review 17 M1)
+SESSION_ENCRYPTION_KEY=$(openssl rand -hex 32)   # encrypts a sign-in session's tokens at rest (ADR-057)
 ```
 
 The `COGNITO_*` aliases are accepted only when equal to the `NEXT_PUBLIC_` names; `AWS_REGION` is

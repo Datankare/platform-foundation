@@ -24,11 +24,14 @@ import type {
   MfaVerifyResult,
   PasswordRecoveryResult,
   PasswordResetResult,
+  RenewalOutcome,
+  SignOutEverywhereResult,
   SsoCallbackResult,
   SsoInitResult,
   SsoProvider,
   TokenPayload,
 } from "@/platform/auth/types";
+import { sameId } from "@/platform/auth/same-id";
 
 const MOCK_USER_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const MOCK_EMAIL = "test@example.com";
@@ -42,7 +45,8 @@ const MOCK_GUEST_ID = "mock-guest-001";
  * administrators — one asks for a change, a different one approves it (dual control never lets
  * the requester approve); the moderation journey (TASK-210) a moderator and a member; the
  * assistant journey (TASK-211) its own asker, so the decision its blocked question records never
- * restricts an account another journey signs in as. Each signs in with a second factor, as staff must (audit A-9). Only the
+ * restricts an account another journey signs in as; the session journey (TASK-214) a person with
+ * two devices, whose "sign out everywhere" ends no other journey's session. Each signs in with a second factor, as staff must (audit A-9). Only the
  * test double knows them: a deployment never runs it (ADR-050 D1 — the environment contract
  * refuses the mock provider off the ci and local hosts).
  */
@@ -73,7 +77,40 @@ export const MOCK_EXTRA_IDENTITIES: Readonly<
     sub: "e2e00000-0000-4000-8000-00000000000f",
     email: "asker-q@e2e.test",
   },
+  // TASK-214: the session journey's person with two devices (provisioned on first use).
+  "mock-access-token:devices-d": {
+    sub: "e2e00000-0000-4000-8000-0000000000d2",
+    email: "devices-d@e2e.test",
+  },
 };
+
+/** The further identity that signs in with `email` — `[its token, the identity]` — if any. */
+const extraIdentityByEmail = (email: string) =>
+  Object.entries(MOCK_EXTRA_IDENTITIES).find(
+    ([, identity]) => identity.email === email.trim().toLowerCase()
+  );
+/** The further identity whose subject is `sub`, if any. */
+const extraIdentityBySub = (sub: string) =>
+  Object.entries(MOCK_EXTRA_IDENTITIES).find(([, identity]) => sameId(identity.sub, sub));
+
+/** The test double's renewal: its own refresh tokens, for its own users; anything else refused. */
+async function mockRenewal(
+  refreshToken: AuthToken,
+  subject: string
+): Promise<RenewalOutcome> {
+  if (!refreshToken.startsWith(MOCK_REFRESH_TOKEN)) return { kind: "refused" };
+  const extra = extraIdentityBySub(subject);
+  if (!extra && !sameId(subject, MOCK_USER_ID)) return { kind: "refused" };
+  return {
+    kind: "renewed",
+    session: {
+      userId: subject,
+      accessToken: extra ? extra[0] : MOCK_ACCESS_TOKEN,
+      refreshToken,
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    },
+  };
+}
 
 export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthProvider {
   // ADR-053 D2: the tenant each user is assigned, as a provider attribute would hold it.
@@ -110,17 +147,26 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
           challengeSession: "mock-new-password-session",
         };
       }
+      // One of the further identities signs in by its address (TASK-214): a journey starts its
+      // cookie session through this route, as a browser does.
+      const extra = extraIdentityByEmail(email);
       return {
         success: true,
-        userId: MOCK_USER_ID,
-        accessToken: MOCK_ACCESS_TOKEN,
-        refreshToken: MOCK_REFRESH_TOKEN,
+        userId: extra ? extra[1].sub : MOCK_USER_ID,
+        accessToken: extra ? extra[0] : MOCK_ACCESS_TOKEN,
+        refreshToken: extra
+          ? `${MOCK_REFRESH_TOKEN}:${extra[1].sub}`
+          : MOCK_REFRESH_TOKEN,
         expiresIn: 3600,
       };
     },
 
     async signOut(): Promise<void> {
       // No-op for mock
+    },
+
+    async signOutEverywhere(): Promise<SignOutEverywhereResult> {
+      return { success: true };
     },
 
     async verifyToken(accessToken: AuthToken): Promise<TokenPayload | null> {
@@ -171,12 +217,14 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
       };
     },
 
+    renewSession: mockRenewal,
+
     async forgotPassword(): Promise<PasswordRecoveryResult> {
       return { success: true, deliveryMedium: "EMAIL" };
     },
 
     async confirmForgotPassword(): Promise<PasswordResetResult> {
-      return { success: true };
+      return { success: true, userId: MOCK_USER_ID };
     },
 
     async changePassword(
@@ -270,7 +318,7 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
     // Step-up (audit C-3): "wrong-password" and the code 000000 are refused, as elsewhere here;
     // the mock account has no second factor, so a password alone (code null) proves it.
     async confirmCurrentFactor(
-      _accessToken: AuthToken,
+      _userId: string,
       password: string,
       totpCode: string | null
     ): Promise<{ success: boolean; error?: string; errorCode?: ErrorCode }> {

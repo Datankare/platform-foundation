@@ -88,6 +88,9 @@ const REQUEST_CALLS = new Set([
   "waitForRequest",
   "fetch",
   "apiFetch",
+  // The journeys' one way to call a route as a signed-in person (e2e/helpers/session.ts,
+  // TASK-214): the cookie session and its forgery token — a request call like the others.
+  "sessionFetch",
   "get",
   "post",
   "put",

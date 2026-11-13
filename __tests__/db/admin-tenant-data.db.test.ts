@@ -47,6 +47,8 @@ jest.mock("@/app/api/admin/ai/command-bar", () => {
   };
 });
 
+import { getSessionStore } from "@/platform/auth/session-store";
+import { startTestSession } from "../helpers/session";
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { withOwnerTx } from "@/platform/data";
@@ -125,6 +127,9 @@ async function q<R extends Record<string, unknown>>(
 ): Promise<R[]> {
   return (await withOwnerTx("operator", (tx) => tx.query<R>(text, values))).rows;
 }
+/** A session's state in its tenant: "live", or why it was ended. */
+const sessionState = async (t: TestTenant, idHash: string) =>
+  (await t.run(() => getSessionStore().find(idHash)))?.revokedReason ?? "live";
 const roleOf = async (id: string) =>
   (await q<{ role_id: string }>("select role_id from users where id = $1::uuid", [id]))[0]
     ?.role_id;
@@ -243,6 +248,9 @@ dbDescribe(`${SUITE} handleChangeUserRole (command bar)`, () => {
 
   it("records, then assigns a user found by email to a role", async () => {
     (invalidatePermissions as jest.Mock).mockClear();
+    // ADR-057 D6: sessions opened under the old role, and one that is someone else's.
+    const hers = await startTestSession({ subject: `sub-${alice}`, tenantId: a.id });
+    const his = await startTestSession({ subject: `sub-${bob}`, tenantId: a.id });
     const before = (await auditOf(a)).length;
     const res = await a.run(() =>
       handleChangeUserRole(
@@ -253,6 +261,8 @@ dbDescribe(`${SUITE} handleChangeUserRole (command bar)`, () => {
     expect(res.success).toBe(true);
     expect(await roleOf(alice)).toBe(cat.roles.staff);
     expect(invalidatePermissions).toHaveBeenCalledWith(`sub-${alice}`);
+    expect(await sessionState(a, hers.idHash)).toBe("role_changed");
+    expect(await sessionState(a, his.idHash)).toBe("live");
     expect((await auditOf(a)).slice(before)[0]).toMatchObject({
       action: "role_changed",
       actor_id: admin.userId,
@@ -555,10 +565,19 @@ dbDescribe(`${SUITE} PATCH /api/admin/users`, () => {
 
   it("changes the role and records who did it", async () => {
     const before = (await auditOf(a)).length;
+    const carolSub = (
+      await q<{ cognito_sub: string }>(
+        "select cognito_sub from users where id = $1::uuid",
+        [carol]
+      )
+    )[0].cognito_sub;
+    // ADR-057 D6: a session opened under the old role.
+    const hers = await startTestSession({ subject: carolSub, tenantId: a.id });
     const res = await patch({ userId: carol, roleId: moderatorRole });
     expect(res.status).toBe(200);
     expect((await res.json()).success).toBe(true);
     expect(await roleOf(carol)).toBe(moderatorRole);
+    expect(await sessionState(a, hers.idHash)).toBe("role_changed");
     expect((await auditOf(a)).slice(before)[0]).toMatchObject({
       action: "role_changed",
       actor_id: admin.userId,

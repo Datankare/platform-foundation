@@ -7,6 +7,7 @@
  * cut off at its token limit reported as truncated with the catalog's notice — never as complete.
  */
 import { POST } from "@/app/api/stream/route";
+import { sessionHeadersFor } from "@/__tests__/helpers/session";
 import { NextRequest } from "next/server";
 import { registerAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
@@ -38,7 +39,10 @@ async function read() {
   const res = await POST(
     new NextRequest("http://localhost:3000/api/stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json", authorization: `Bearer ${token}` },
+      headers: {
+        "Content-Type": "application/json",
+        ...(await sessionHeadersFor(token, { origin: "http://localhost:3000" })),
+      },
       body: JSON.stringify({ prompt: "hi", maxTokens: 64 }),
     })
   );

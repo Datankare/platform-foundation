@@ -13,10 +13,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 const push = jest.fn();
 const replace = jest.fn();
 const signOut = jest.fn(async () => undefined);
+/** The page's sign-in session, as the auth context reports it (absent: a page not yet told). */
+const mockPageSession: { current?: { status: string } } = {};
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push, replace }) }));
 jest.mock("@/platform/auth/context", () => ({
   ...jest.requireActual("@/platform/auth/context"),
-  useAuth: () => ({ signOut }),
+  useAuth: () => ({ signOut, session: mockPageSession.current }),
 }));
 
 import AdminPage from "@/app/admin/page";
@@ -57,6 +59,23 @@ describe("admin console when the session is refused (B-14)", () => {
       expect(push).toHaveBeenCalledWith("/auth");
     }
   );
+
+  it("an open console whose sign-in session ends (a staff session idle past its limit, ADR-057 D5) becomes the access page — no shell left standing", async () => {
+    mockPageSession.current = { status: "signed-in" };
+    fetchMock.mockResolvedValue(answer("GET /api/admin/session — an admin"));
+    const view = render(<AdminPage />);
+    await screen.findByRole("navigation", { name: "Admin sections" });
+    expect(screen.queryByText(/This page is for administrators/)).toBeNull();
+
+    // The session ended: the context says so (apiFetch's 401, or the idle notice's read).
+    mockPageSession.current = { status: "signed-out" };
+    view.rerender(<AdminPage />);
+    expect(screen.getByText(/This page is for administrators/)).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Admin sections" })).toBeNull();
+    fireEvent.click(screen.getByText("Sign in"));
+    expect(push).toHaveBeenCalledWith("/auth");
+    mockPageSession.current = undefined;
+  });
 
   // TASK-181: a refusal other than "no access" is shown as itself, never as the access page.
   it("a session that cannot be reached offers a retry, which asks again", async () => {

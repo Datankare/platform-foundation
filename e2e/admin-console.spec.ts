@@ -27,6 +27,7 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import { Client } from "pg";
+import { signInPage } from "./helpers/session";
 
 const OWNER_URL = process.env.E2E_DATABASE_OWNER_URL;
 const SHOTS = process.env.ADMIN_SCREENSHOTS_DIR;
@@ -34,12 +35,10 @@ const TENANT = "00000000-0000-4000-8000-000000000001";
 
 /** The test double's two administrators (platform/auth/mock-provider.ts MOCK_EXTRA_IDENTITIES). */
 const ADMIN_A = {
-  token: "mock-access-token:admin-a",
   id: "e2e00000-0000-4000-8000-00000000000a",
   email: "admin-a@e2e.test",
 };
 const ADMIN_B = {
-  token: "mock-access-token:admin-b",
   id: "e2e00000-0000-4000-8000-00000000000b",
   email: "admin-b@e2e.test",
 };
@@ -90,30 +89,7 @@ test.beforeAll(async () => {
 
 /** Open the console as `admin` (the test double's session in this browser). */
 async function openConsole(page: Page, admin: typeof ADMIN_A): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: "pf_has_session",
-      value: "true",
-      domain: "localhost",
-      path: "/",
-      httpOnly: false,
-      secure: false,
-      sameSite: "Lax",
-    },
-  ]);
-  await page.addInitScript((a) => {
-    localStorage.setItem("pf_access_token", a.token);
-    localStorage.setItem("pf_refresh_token", "mock-refresh-token");
-    localStorage.setItem(
-      "pf_user",
-      JSON.stringify({
-        userId: a.id,
-        email: a.email,
-        emailVerified: true,
-        isGuest: false,
-      })
-    );
-  }, admin);
+  await signInPage(page, admin);
   const session = page.waitForResponse((r) => r.url().endsWith("/api/admin/session"));
   await page.goto("/admin");
   expect((await session).status()).toBe(200);

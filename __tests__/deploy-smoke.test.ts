@@ -22,13 +22,34 @@ interface Deployment {
     draining?: boolean;
   };
   anonymous: { status: number; body: unknown };
-  guestToken: string | null;
+  /** What POST /api/auth/guest answers: its body, and the Set-Cookie line (null: none). */
+  guestBody: Record<string, unknown>;
+  guestCookie: string | null;
+  /** What GET /api/auth/session answers for the guest's cookie. */
+  sessionStatusBody: Record<string, unknown>;
+  /** Whether a state-changing request without the session's token is refused. */
+  forgeryRefused: boolean;
   translations: unknown;
   /** The session route's answer (step 6, TASK-181). */
   sessionStatus: number;
   dispatchStatus: number;
   sessionTranslations: unknown;
 }
+
+const SESSION_ID = "s".repeat(43);
+const CSRF = "c".repeat(43);
+/** What a browser sends for the guest's session on a state-changing request (ADR-057 D4). */
+const BROWSER = (origin: string) => ({
+  cookie: `pf_session=${SESSION_ID}`,
+  origin,
+  csrf: CSRF,
+});
+/** The credentials of a request as the stand-in saw them. */
+const seen = (req: IncomingMessage) => ({
+  cookie: req.headers.cookie,
+  origin: req.headers.origin,
+  csrf: req.headers["x-csrf-token"],
+});
 
 const healthy = (): Deployment => ({
   commit: "e3c3fe4a1b2c",
@@ -44,17 +65,26 @@ const healthy = (): Deployment => ({
     status: 401,
     body: { code: "auth.required", message: "Sign in to continue." },
   },
-  guestToken: "guest.payload.sig",
+  guestBody: { success: true, guestId: "guest_1", expiresAt: 1_900_000_000 },
+  guestCookie: `pf_session=${SESSION_ID}; Path=/; Max-Age=86400; HttpOnly; SameSite=lax`,
+  sessionStatusBody: {
+    authenticated: true,
+    user: { userId: "guest_1", email: "", emailVerified: false, isGuest: true },
+    csrfToken: CSRF,
+  },
+  forgeryRefused: true,
   translations: [{ language: "French", text: "Bonjour" }],
   sessionStatus: 200,
   dispatchStatus: 200,
   sessionTranslations: [{ code: "fr", translated: "Bonjour" }],
 });
 
-let dispatched: { auth?: string; body?: unknown } = {};
+let dispatched: { auth?: unknown; body?: unknown } = {};
+/** Every Authorization header the stand-in received: the smoke test must send none. */
+let authorizationHeaders: string[] = [];
 
 let deployment = healthy();
-let translateAuth: string | undefined;
+let translateAuth: ReturnType<typeof seen> | undefined;
 
 function send(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "content-type": "application/json" });
@@ -68,6 +98,7 @@ let pendingReadiness: Record<string, unknown> = {};
 
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   const d = deployment;
+  if (req.headers.authorization) authorizationHeaders.push(req.headers.authorization);
   if (req.method === "GET" && req.url === "/api/health/live") {
     return send(res, d.liveStatus, { status: "live", commit: d.commit });
   }
@@ -80,13 +111,24 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     return send(res, 200, { features: { sso_google: { available: true } } });
   }
   if (req.method === "POST" && req.url === "/api/auth/guest") {
-    return send(res, 200, { success: true, token: d.guestToken });
+    res.writeHead(200, {
+      "content-type": "application/json",
+      ...(d.guestCookie ? { "set-cookie": d.guestCookie } : {}),
+    });
+    return res.end(JSON.stringify(d.guestBody));
+  }
+  if (req.url === "/api/auth/session") {
+    req.resume();
+    if (req.method === "GET") return send(res, 200, d.sessionStatusBody);
+    // The keep-alive: a state-changing request, refused without the session's token.
+    return req.headers["x-csrf-token"] === CSRF || !d.forgeryRefused
+      ? send(res, 200, d.sessionStatusBody)
+      : send(res, 403, { code: "auth.csrf_failed" });
   }
   if (req.method === "POST" && req.url === "/api/process") {
     req.resume();
-    if (!req.headers.authorization)
-      return send(res, d.anonymous.status, d.anonymous.body);
-    translateAuth = req.headers.authorization;
+    if (!req.headers.cookie) return send(res, d.anonymous.status, d.anonymous.body);
+    translateAuth = seen(req);
     return send(res, 200, { translations: d.translations });
   }
   if (req.method === "POST" && req.url === "/api/translate/session") {
@@ -99,7 +141,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     let raw = "";
     req.on("data", (c) => (raw += c));
     req.on("end", () => {
-      dispatched = { auth: req.headers.authorization, body: JSON.parse(raw) };
+      dispatched = { auth: seen(req), body: JSON.parse(raw) };
       if (d.dispatchStatus !== 200) {
         return send(res, d.dispatchStatus, { code: "guest.allowance_exhausted" });
       }
@@ -124,6 +166,7 @@ beforeEach(() => {
   deployment = healthy();
   translateAuth = undefined;
   dispatched = {};
+  authorizationHeaders = [];
 });
 
 function smoke(env: Record<string, string>): Promise<{ code: number; out: string }> {
@@ -162,7 +205,12 @@ describe("deploy smoke (TASK-102)", () => {
     expect(r.out).toContain("✓ translate: 1 translation(s)");
     expect(r.out).toContain("✓ smoke passed");
     expect(r.code).toBe(0);
-    expect(translateAuth).toBe("Bearer guest.payload.sig");
+    // As a browser: the session cookie, this origin and the session's token — never a bearer.
+    expect(translateAuth).toEqual(BROWSER(base));
+    expect(authorizationHeaders).toEqual([]);
+    expect(r.out).toContain(
+      "✓ a request without the session's token refused (auth.csrf_failed)"
+    );
   });
 
   it("fails when the deployment runs a different commit (D6: the wrong branch is live)", async () => {
@@ -303,13 +351,6 @@ describe("deploy smoke (TASK-102)", () => {
     expect(r.out).toContain("got 200");
   });
 
-  it("fails when no signed guest token is issued (e.g. a build that predates ADR-050 D4)", async () => {
-    deployment.guestToken = "mock-guest-token";
-    const r = await smoke({ SMOKE_BASE_URL: base });
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("guest: 200, no signed guest token");
-  });
-
   it("fails on an empty translation — a 200 is not a result", async () => {
     deployment.translations = [{ language: "French", text: "  " }];
     const r = await smoke({ SMOKE_BASE_URL: base });
@@ -331,14 +372,16 @@ describe("deploy smoke (TASK-102)", () => {
   it("skips only the translation with SMOKE_SKIP_TRANSLATE=1, and says so (CI without AI credentials)", async () => {
     deployment.translations = [];
     const r = await smoke({ SMOKE_BASE_URL: base, SMOKE_SKIP_TRANSLATE: "1" });
-    expect(r.out).toContain("✓ guest token issued (signed)");
+    expect(r.out).toContain(
+      "✓ guest session started (HttpOnly cookie, no token in the answer)"
+    );
     expect(r.out).toContain("– translate: skipped (SMOKE_SKIP_TRANSLATE=1");
     expect(r.out).toContain("✓ smoke passed (translate skipped)");
     expect(r.code).toBe(0);
     expect(translateAuth).toBeUndefined();
 
     // Everything before it still has to pass.
-    deployment.guestToken = null;
+    deployment.guestCookie = null;
     const failed = await smoke({ SMOKE_BASE_URL: base, SMOKE_SKIP_TRANSLATE: "1" });
     expect(failed.code).toBe(1);
   });
@@ -371,7 +414,7 @@ describe("deploy smoke (TASK-102)", () => {
       expect(r.out).toContain("✓ dispatch: 1 translation(s) in the session");
       expect(r.code).toBe(0);
       expect(dispatched).toEqual({
-        auth: "Bearer guest.payload.sig",
+        auth: BROWSER(base),
         body: {
           sessionId: "s-1",
           intent: { type: "translate", text: "Good morning", additionalLanguages: [] },
@@ -435,5 +478,110 @@ describe("deploy smoke (TASK-102)", () => {
       expect({ env, code: r.code }).toEqual({ env, code: 2 });
       expect(r.out).toContain("✗ settings:");
     }
+  });
+});
+
+describe("deploy smoke: the guest session (ADR-057)", () => {
+  it("fails when the guest's answer carries a token — at any depth (ADR-057: none may reach the browser; a build that predates it does)", async () => {
+    deployment.guestBody = { success: true, token: "guest.payload.sig" };
+    let r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(
+      "guest: the answer carries a token (token) — none may reach the browser"
+    );
+    deployment.guestBody = {
+      success: true,
+      session: { accessToken: "a", refresh_token: "r" },
+    };
+    r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("(session.accessToken, session.refresh_token)");
+  });
+
+  it("fails when no session cookie is set, or it is one script could read", async () => {
+    deployment.guestCookie = null;
+    let r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("guest: 200, no session cookie");
+
+    // Not HttpOnly: page script could read the session id.
+    deployment.guestCookie = `pf_session=${SESSION_ID}; Path=/; SameSite=lax`;
+    r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("guest: the session cookie is not HttpOnly");
+
+    deployment.guestCookie = `pf_session=${SESSION_ID}; Path=/api; Domain=example.com; HttpOnly`;
+    r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.out).toContain(
+      "guest: the session cookie is has a Domain, Path is not /, no SameSite=Lax"
+    );
+    expect(r.code).toBe(1);
+
+    // Another cookie is not the session's.
+    deployment.guestCookie = `pf_has_session=true; Path=/`;
+    r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.out).toContain("guest: 200, no session cookie");
+  });
+
+  it("on https — every deployment — the cookie must be __Host-pf_session and Secure", async () => {
+    // The stand-in is plain http, where browsers refuse a __Host- cookie: the rule for https is
+    // asked of the script's own functions.
+    const ask = (line: string, base: string) =>
+      new Promise<string>((resolve, reject) =>
+        execFile(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            `import { cookieProblems, sessionCookieFrom } from ${JSON.stringify(SCRIPT)};
+             const c = sessionCookieFrom([process.argv[1]]);
+             console.log(JSON.stringify(c ? cookieProblems(c, process.argv[2]) : null));`,
+            line,
+            base,
+          ],
+          (err, stdout) => (err ? reject(err) : resolve(stdout.trim()))
+        )
+      );
+    const good = `__Host-pf_session=${SESSION_ID}; Path=/; Max-Age=60; HttpOnly; Secure; SameSite=lax`;
+    expect(await ask(good, "https://app.example.com")).toBe("[]");
+    expect(await ask(good.replace("; Secure", ""), "https://app.example.com")).toBe(
+      '["not Secure"]'
+    );
+    expect(
+      await ask(
+        good.replace("__Host-pf_session", "pf_session"),
+        "https://app.example.com"
+      )
+    ).toBe('["not __Host-pf_session"]');
+    expect(await ask(good.replace("; HttpOnly", ""), "https://app.example.com")).toBe(
+      '["not HttpOnly"]'
+    );
+    // A cleared cookie (no value) is no session cookie.
+    expect(
+      await ask("__Host-pf_session=; Path=/; Max-Age=0", "https://app.example.com")
+    ).toBe("null");
+  });
+
+  it("fails when the session is not a guest's, or gives no forgery token", async () => {
+    deployment.sessionStatusBody = { authenticated: false };
+    let r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("guest: the session is not a guest's (200)");
+    deployment.sessionStatusBody = {
+      authenticated: true,
+      user: { userId: "guest_1", isGuest: true },
+    };
+    r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("guest: the session is not a guest's (200)");
+  });
+
+  it("fails when a state-changing request without the session's token is let through (the forgery defence is off)", async () => {
+    deployment.forgeryRefused = false;
+    const r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(
+      "forgery: expected 403 auth.csrf_failed without the session's token, got 200"
+    );
   });
 });

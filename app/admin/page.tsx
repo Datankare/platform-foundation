@@ -232,8 +232,12 @@ export default function AdminPage() {
   const router = useRouter();
   const [session, setSession] = useState<ConsoleSession>({ kind: "loading" });
   const [sessionAttempt, setSessionAttempt] = useState(0);
-  const { signOut } = useAuth();
+  const { signOut, session: pageSession } = useAuth();
   useRefusalSessionEnd();
+  // The sign-in session ended while the console was open (ADR-057 D5: a staff session idle for
+  // thirty minutes, or ended from another device): the console is not left standing with panels
+  // that can no longer read — it becomes the access page, with the way to sign in.
+  const sessionEnded = pageSession?.status === "signed-out";
 
   // Which sections to show: the admin's own permissions (audit B-14 — every section was shown
   // to every admin). Display only: each section's route checks its own permission.
@@ -463,7 +467,7 @@ export default function AdminPage() {
   }
 
   // Nobody, or someone without administrative access: no console shell at all (audit B-14).
-  if (session.kind === "refused") {
+  if (session.kind === "refused" || sessionEnded) {
     return (
       <main className="mx-auto max-w-md p-8 text-center">
         <p className="mb-4 text-sm text-gray-300">

@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { defineConfig, devices } from "@playwright/test";
+import { E2E_LEGACY_REFRESH_COOKIE_KEY } from "./e2e/helpers/legacy-cookie";
 
 // TASK-204 (N-5, N-94): platform-foundation's own E2E layer, as Playform's (its TASK-5001): the
 // production build on a database the migration replay builds, in CI.
@@ -7,6 +8,9 @@ import { defineConfig, devices } from "@playwright/test";
 // ADR-050 D4: /api/auth/guest signs guest tokens with GUEST_TOKEN_SECRET, which a production
 // build requires. The harness gets a fresh, test-only secret per run. Never a deployment's secret.
 const E2E_GUEST_TOKEN_SECRET = randomBytes(48).toString("base64");
+// ADR-057 D2: a production build seals a session's tokens under SESSION_ENCRYPTION_KEY and starts
+// no session without it. A fresh, test-only key per run, as the guest secret is.
+const E2E_SESSION_ENCRYPTION_KEY = randomBytes(32).toString("hex");
 
 // The E2E server runs on a real database: the actor guard reads each caller's feature permission
 // — a user's from their role, a guest's from the `guest` role — and refuses with 503 when it
@@ -77,6 +81,11 @@ export default defineConfig({
           // with the mock token, so it opts in explicitly. Refused off the ci/local hosts.
           E2E_TEST_DOUBLE_AUTH: "true",
           GUEST_TOKEN_SECRET: E2E_GUEST_TOKEN_SECRET,
+          SESSION_ENCRYPTION_KEY: E2E_SESSION_ENCRYPTION_KEY,
+          // The key a deployment before ADR-057 signed its refresh cookie with: the session
+          // journey forges such a cookie with it to prove a signed-in browser is moved over
+          // (e2e/session.spec.ts). A fixed, public, test-only value — never a deployment's.
+          REFRESH_COOKIE_KEY: E2E_LEGACY_REFRESH_COOKIE_KEY,
           // The database, in the one tenant the migrations create. The test double's user gets
           // its row the way every new account does — provisioned on its first guarded request with
           // the default role — and records its age as a user does (e2e/global-setup.ts).

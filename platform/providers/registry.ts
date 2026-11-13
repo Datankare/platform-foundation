@@ -728,6 +728,7 @@ export const CORE_PROVIDER_SINGLETON_KEYS: readonly string[] = [
   "platform.agents.proposalStore",
   "platform.agents.approvalPolicyStore",
   "platform.auth.guestUsageStore",
+  "platform.auth.sessionStore",
   "platform.agents.effectLedger",
   "platform.appFramework.stateStore",
   "platform.rag.embeddingStore",

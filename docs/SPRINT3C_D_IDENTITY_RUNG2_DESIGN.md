@@ -233,7 +233,7 @@ and every per-capability user-gate check all pass.
 
 ## 5. Decisions needed before build
 
-**Q1 — delegation token transport. DECIDED: dedicated `x-agent-delegation` header.** A dedicated `x-agent-delegation` header (keeps the user JWT in Authorization, clean separation) vs `Authorization: Bearer` with the user JWT moved to a cookie/session. Recommendation: **dedicated header** — least disruption to the existing user-auth path, clean two-credential model.
+**Q1 — delegation token transport. DECIDED: dedicated `x-agent-delegation` header.** _(Superseded November 2026, TASK-5015 / platform ADR-057 D8: no user token exists outside the server, so `Authorization` carries only a machine's credential — the token is sent as `Authorization: Bearer`, and the header named here is no longer read. docs/AGENT_DELEGATION_GUIDE.md is current.)_ A dedicated `x-agent-delegation` header (keeps the user JWT in Authorization, clean separation) vs `Authorization: Bearer` with the user JWT moved to a cookie/session. Recommendation: **dedicated header** — least disruption to the existing user-auth path, clean two-credential model.
 
 **Q2 — delegation token format. DECIDED: self-issued RS256 JWT, `method: "oauth2.1-pkce"`.** A signed JWT minted by our own token endpoint (self-issued, HS/RS256) vs adopting a specific external IdP now. ADR-033 says the wire format is deliberately unratified. Recommendation: **self-issued RS256 JWT** with a documented claim set, `method: "oauth2.1-pkce"` — real crypto, standards-shaped, no premature IdP lock-in. The `AgentDelegation` type already abstracts the format, so a future swap to an external issuer changes only the validation body.
 

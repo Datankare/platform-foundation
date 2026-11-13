@@ -18,6 +18,7 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: () => "req-relink",
 }));
 
+import { sessionHeadersFor } from "../helpers/session";
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { withOwnerTx } from "@/platform/data";
@@ -225,10 +226,14 @@ function signInAs(sub: string, over: Partial<TokenPayload> = {}): string {
   });
   return token;
 }
-const httpRequest = (path: string, token: string, method = "GET") =>
+/** A request from a browser whose session holds `token` (ADR-057), in the deployment's tenant. */
+const httpRequest = async (path: string, token: string, method = "GET") =>
   new NextRequest(`http://localhost${path}`, {
     method,
-    headers: { authorization: `Bearer ${token}`, "x-forwarded-for": "203.0.113.7" },
+    headers: {
+      ...(await sessionHeadersFor(token, { tenantId: process.env.TENANT_ID })),
+      "x-forwarded-for": "203.0.113.7",
+    },
   });
 
 const saved = { mode: process.env.TENANCY_MODE, tenant: process.env.TENANT_ID };
@@ -282,6 +287,11 @@ beforeEach(async () => {
   await clearPermissionsCache();
   resetRateLimiter();
 });
+
+// hostile:role n/a: the re-link is an operator's command, not a route: the routes driven after it are judged as the session's account, asserted in 'afterwards a sign-in'
+// hostile:self n/a: the command acts on the account an operator names: no caller acts on their own account through it
+// hostile:store-down n/a: the command is one transaction on the database it runs against: with no database it does not start, and the pool's outages are subject-is-sub.db's
+// hostile:id-spelling n/a: subjects are compared by sameId in the command; an address typed in another case is this file's own hostile case
 
 dbDescribe("re-linking an account to its identity in a new pool (Postgres)", () => {
   it("a dry run prints the plan and changes nothing", async () => {
@@ -370,7 +380,7 @@ dbDescribe("re-linking an account to its identity in a new pool (Postgres)", () 
     await asSingle(a, async () => {
       const token = signInAs(g.sub, { email });
       const admin = await requireAdmin(
-        httpRequest("/api/admin/config", token),
+        await httpRequest("/api/admin/config", token),
         perms!.permissions.find(
           (p) => p.startsWith("admin_") || p === "can_access_admin"
         )!
@@ -382,12 +392,12 @@ dbDescribe("re-linking an account to its identity in a new pool (Postgres)", () 
         roleName: "super_admin",
       });
 
-      const actor = await requireActor(httpRequest("/api/x", token), {
+      const actor = await requireActor(await httpRequest("/api/x", token), {
         allowGuests: false,
       });
       expect(actor.actor).toMatchObject({ kind: "user", id, tenantId: a.id });
       const guarded = await requireActorWithStatus(
-        httpRequest("/api/x", token),
+        await httpRequest("/api/x", token),
         "translate",
         { allowGuests: false }
       );
@@ -421,7 +431,9 @@ dbDescribe("re-linking an account to its identity in a new pool (Postgres)", () 
     await relinkIdentities(request({ email, apply: true }), deps());
 
     await asSingle(a, async () => {
-      const res = await exportGET(httpRequest("/api/account/export", signInAs(g.sub)));
+      const res = await exportGET(
+        await httpRequest("/api/account/export", signInAs(g.sub))
+      );
       expect(res.status).toBe(200);
       const body = (await res.json()) as { profile: Row; auditLog: Row[] };
       expect(body.profile).toMatchObject({ id });
@@ -774,7 +786,7 @@ dbDescribe("re-linking a whole pool (Postgres)", () => {
     });
     await expect(a.run(() => ensureUserProvisioned(intruder))).resolves.toBe("failed");
     await asSingle(a, async () => {
-      const r = await requireActor(httpRequest("/api/x", signInAs(intruder)), {
+      const r = await requireActor(await httpRequest("/api/x", signInAs(intruder)), {
         allowGuests: false,
       });
       expect(r.error?.status).toBe(403);
@@ -783,7 +795,7 @@ dbDescribe("re-linking a whole pool (Postgres)", () => {
       });
       expect(await a.run(() => resolvePermissions(intruder))).toBeNull();
       const guest = await guestPOST(
-        httpRequest("/api/auth/guest", signInAs(intruder), "POST")
+        await httpRequest("/api/auth/guest", signInAs(intruder), "POST")
       );
       expect(guest.status).toBe(403);
     });

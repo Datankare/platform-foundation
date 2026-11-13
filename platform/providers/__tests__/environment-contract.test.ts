@@ -46,6 +46,7 @@ function valid(extra: Record<string, string | undefined> = {}): EnvSource {
     GUEST_TOKEN_SECRET: GUEST_SECRET,
     ERASURE_HASH_KEY: "e".repeat(64),
     REFRESH_COOKIE_KEY: "r".repeat(64),
+    SESSION_ENCRYPTION_KEY: "k".repeat(64),
     CRON_SECRET: "c".repeat(64),
     APP_STATE_STORE: "supabase",
     TRAJECTORY_STORE: "supabase",
@@ -568,7 +569,7 @@ describe("required settings", () => {
         COGNITO_CLIENT_SECRET: "s".repeat(52),
         GUEST_TOKEN_SECRET: GUEST_SECRET,
         ERASURE_HASH_KEY: "e".repeat(64),
-        REFRESH_COOKIE_KEY: "r".repeat(64),
+        SESSION_ENCRYPTION_KEY: "k".repeat(64),
         CRON_SECRET: "c".repeat(64),
         CACHE_PROVIDER: "upstash",
         UPSTASH_REDIS_REST_URL: "https://cache.example.upstash.io",
@@ -596,10 +597,55 @@ describe("required settings", () => {
     ]);
   });
 
-  it("a real auth provider requires REFRESH_COOKIE_KEY; its previous key only beside it, never equal (review 17 M1)", () => {
-    expect(checkEnvironmentContract(valid({ REFRESH_COOKIE_KEY: undefined }))).toEqual([
-      "REFRESH_COOKIE_KEY is required by AUTH_PROVIDER=cognito (the refresh cookie's HMAC)",
+  it("a real auth provider requires SESSION_ENCRYPTION_KEY; its previous key only beside it, never equal (ADR-057 D2)", () => {
+    expect(
+      checkEnvironmentContract(valid({ SESSION_ENCRYPTION_KEY: undefined }))
+    ).toEqual([
+      "SESSION_ENCRYPTION_KEY is required by AUTH_PROVIDER=cognito (a session's tokens are encrypted before they are stored)",
     ]);
+    expect(checkEnvironmentContract(valid({ SESSION_ENCRYPTION_KEY: "short" }))).toEqual([
+      expect.stringMatching(
+        /^SESSION_ENCRYPTION_KEY has the wrong shape — expected at least 32 random characters/
+      ),
+    ]);
+    expect(
+      checkEnvironmentContract(valid({ SESSION_ENCRYPTION_KEY_PREVIOUS: "p".repeat(64) }))
+    ).toEqual([]);
+    expect(
+      checkEnvironmentContract(valid({ SESSION_ENCRYPTION_KEY_PREVIOUS: "k".repeat(64) }))
+    ).toEqual([
+      "SESSION_ENCRYPTION_KEY_PREVIOUS is the same as SESSION_ENCRYPTION_KEY — set it to the key before the current one, or unset it",
+    ]);
+    expect(
+      checkEnvironmentContract(
+        valid({
+          SESSION_ENCRYPTION_KEY: undefined,
+          SESSION_ENCRYPTION_KEY_PREVIOUS: "p".repeat(64),
+        })
+      )
+    ).toEqual([
+      "SESSION_ENCRYPTION_KEY is required by AUTH_PROVIDER=cognito (a session's tokens are encrypted before they are stored)",
+      "SESSION_ENCRYPTION_KEY_PREVIOUS is set without SESSION_ENCRYPTION_KEY — rotation keeps the old key beside a new one",
+    ]);
+  });
+
+  it("the test-double auth providers need no SESSION_ENCRYPTION_KEY", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({
+          AUTH_PROVIDER: "mock",
+          E2E_TEST_DOUBLE_AUTH: "true",
+          DEPLOYMENT_HOST: "ci",
+          SESSION_ENCRYPTION_KEY: undefined,
+        })
+      ).filter((v) => v.includes("SESSION_ENCRYPTION_KEY"))
+    ).toEqual([]);
+  });
+
+  it("REFRESH_COOKIE_KEY is optional now (ADR-057: it only verifies pre-migration cookies); its previous key only beside it, never equal", () => {
+    expect(checkEnvironmentContract(valid({ REFRESH_COOKIE_KEY: undefined }))).toEqual(
+      []
+    );
     expect(checkEnvironmentContract(valid({ REFRESH_COOKIE_KEY: "short" }))).toEqual([
       expect.stringMatching(
         /^REFRESH_COOKIE_KEY has the wrong shape — expected at least 32 random characters/
@@ -621,7 +667,6 @@ describe("required settings", () => {
         })
       )
     ).toEqual([
-      "REFRESH_COOKIE_KEY is required by AUTH_PROVIDER=cognito (the refresh cookie's HMAC)",
       "REFRESH_COOKIE_KEY_PREVIOUS is set without REFRESH_COOKIE_KEY — rotation keeps the old key beside a new one",
     ]);
   });

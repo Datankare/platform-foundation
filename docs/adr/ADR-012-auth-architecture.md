@@ -571,6 +571,28 @@ carries `aws.cognito.signin.user.admin`, so whoever steals it can call `SetUserM
 the owner's decision; `docs/SECURITY_DEBT.md` SEC-016); the root fix is batch S9, server-side
 sessions, which keeps the token out of the browser.
 
+## Amendment (TASK-214, 2026-11-12) — superseded in part by ADR-057: server-side sessions
+
+[ADR-057](ADR-057-server-side-sessions.md) replaces how a session is held. What it changes here:
+
+- **The browser holds no token.** The access token is no longer in `localStorage`, and no route
+  answers one: the session is a server-side record behind the HttpOnly `__Host-pf_session` cookie.
+  The TASK-194 residual above is closed (SEC-016); what remains is the server-held token of a
+  native sign-in (SEC-018).
+- **D11 (review 17) is kept in its intent and simplified in its means.** Sign-out still ends and
+  records only a subject that was proven — now the session record's own subject, which only a
+  sign-in the provider answered could have written. The refresh cookie, its HMAC and
+  `/api/auth/refresh` are gone: the server renews a session itself. `REFRESH_COOKIE_KEY` only
+  verifies the cookies of browsers signed in before ADR-057, to move them over, and is removed
+  30 days after that deploy.
+- **A user route no longer accepts `Authorization: Bearer`** (ADR-057 D8). A bearer is a
+  machine's credential.
+- **The token's user is read with the administrative key** (`AdminGetUser`), not by presenting
+  the token to Cognito; D11's rule that the answer must name the token's own `sub` applies to it
+  unchanged.
+- **Step-up (TASK-194) is unchanged**, and now binds what it was meant to: with no token in the
+  browser, the direct Cognito calls it could not stop are out of a page script's reach.
+
 ## References
 
 - Phase 1 Identity & Access Plan (Playform_Phase1_Identity_Access_Plan_v1.0.pdf)

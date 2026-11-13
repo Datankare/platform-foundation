@@ -54,6 +54,8 @@ export const AUTH_CONTRACT = {
 export interface AuthContractFixtures {
   makeProvider: () => AuthProvider | Promise<AuthProvider>;
   validAccessToken: string;
+  /** The subject (`sub`) `validAccessToken` names: what administrative calls are made by. */
+  validUserId: string;
   invalidAccessToken: string;
   validRefreshToken: string;
   mfaSession: string;
@@ -117,8 +119,42 @@ export function runAuthProviderContract(fx: AuthContractFixtures): void {
   });
 
   describe("signOut", () => {
-    it("completes without error", async () => {
-      await expect(auth.signOut(fx.validAccessToken)).resolves.toBeUndefined();
+    it("ends one sign-in from its refresh token alone (no access token needed)", async () => {
+      await expect(auth.signOut("", fx.validRefreshToken)).resolves.toBeUndefined();
+    });
+
+    it("completes with nothing to revoke", async () => {
+      await expect(auth.signOut("")).resolves.toBeUndefined();
+    });
+  });
+
+  describe("signOutEverywhere (ADR-057 D6)", () => {
+    it("ends every token of a user by its subject, and says so", async () => {
+      await expect(auth.signOutEverywhere(fx.validUserId)).resolves.toMatchObject({
+        success: true,
+      });
+    });
+  });
+
+  describe("renewSession (ADR-057 D3)", () => {
+    it("renews a session for its own subject, with an expiry in epoch seconds", async () => {
+      const outcome = await auth.renewSession(fx.validRefreshToken, fx.validUserId);
+      expect(outcome.kind).toBe("renewed");
+      if (outcome.kind !== "renewed") return;
+      expect(outcome.session.userId).toBe(fx.validUserId);
+      expect(outcome.session.accessToken).toBeTruthy();
+      const nowSec = Math.floor(Date.now() / 1000);
+      expect(outcome.session.expiresAt).toBeGreaterThan(nowSec);
+      expect(outcome.session.expiresAt).toBeLessThan(nowSec + 365 * 24 * 3600);
+    });
+
+    it("refuses a renewal for another subject, or with no refresh token — never renews it", async () => {
+      await expect(
+        auth.renewSession(fx.validRefreshToken, "someone-else")
+      ).resolves.toEqual({ kind: "refused" });
+      await expect(auth.renewSession("", fx.validUserId)).resolves.toEqual({
+        kind: "refused",
+      });
     });
   });
 
@@ -262,8 +298,8 @@ export function runAuthProviderContract(fx: AuthContractFixtures): void {
       expect(result.error).toBeDefined();
     });
 
-    it("disables MFA", async () => {
-      const result = await auth.disableMfa(fx.validAccessToken);
+    it("disables MFA for a user by its subject (an administrative call, ADR-057 D7)", async () => {
+      const result = await auth.disableMfa(fx.validUserId);
       expect(result.success).toBe(true);
     });
   });

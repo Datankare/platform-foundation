@@ -18,6 +18,7 @@ jest.mock("@/lib/logger", () => ({
 }));
 
 import fc from "fast-check";
+import { startTestSession } from "@/__tests__/helpers/session";
 import { NextRequest } from "next/server";
 import { InMemoryCacheProvider } from "@/platform/cache/memory-cache";
 import type { CacheProvider } from "@/platform/cache/types";
@@ -336,10 +337,10 @@ describe("the request guard", () => {
       };
     });
     const { requireAuth } = await import("@/platform/auth/middleware");
+    // The browser's session holds the token (ADR-057); the guard verifies what it holds.
+    const session = await startTestSession({ token: "a.b.c", subject: "user-x" });
     const res = await requireAuth(
-      new NextRequest("http://localhost/api/x", {
-        headers: { authorization: "Bearer a.b.c" },
-      }),
+      new NextRequest("http://localhost/api/x", { headers: session.headers }),
       { privileged: true }
     );
     expect(res.error?.status).toBe(503);
@@ -404,9 +405,10 @@ describe("the request guard", () => {
       };
     });
     const { requireActor } = await import("@/platform/auth/middleware");
+    const session = await startTestSession({ token: "a.b.c", subject: "user-x" });
     const req = () =>
       new NextRequest("http://localhost/api/account/export", {
-        headers: { authorization: "Bearer a.b.c" },
+        headers: session.headers,
       });
     const res = await requireActor(req(), { allowGuests: false, privileged: true });
     expect(res.error?.status).toBe(503);

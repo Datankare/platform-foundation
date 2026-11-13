@@ -1,5 +1,10 @@
 # Migrating from v1.x to v2.x
 
+> **Superseded in part (November 2026, TASK-5015).** The agent's delegation token is now sent as
+> `Authorization: Bearer`, and the agent authenticates its request and exchange with its client
+> credential (`Authorization: Basic`); `x-agent-delegation` is no longer read.
+> [AGENT_DELEGATION_GUIDE](AGENT_DELEGATION_GUIDE.md) is current.
+
 v2.0.0 delivers the Phase 5 application-and-governance framework (agentic workflow lifecycle,
 AUX, agent identity rung 2, per-account restriction, and the GenAI-native governance admin).
 Most of it is **additive** — new capabilities you opt into. This guide covers the one part that

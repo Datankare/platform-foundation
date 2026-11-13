@@ -34,6 +34,12 @@ const TEST_CONFIG: CognitoConfig = {
   hostedUiDomain: "testpool.auth.us-east-1.amazoncognito.com",
   timeoutMs: 5000,
   jwks: TEST_JWKS,
+  // ADR-057 D7: the user a token names is read, signed out everywhere and its factor removed
+  // with the administrative key — never with the user's own token.
+  adminCredentials: {
+    accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+    secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  },
 };
 
 // Signed as the pool signs (review 8 M5: the provider checks the signature before GetUser).
@@ -69,6 +75,7 @@ interface CognitoPayload {
     REFRESH_TOKEN?: string;
   };
   AccessToken?: string;
+  Username?: string;
   PreviousPassword?: string;
   ChallengeName?: string;
   ChallengeResponses?: {
@@ -125,6 +132,22 @@ function routeCognito(action: string, payload: CognitoPayload) {
       return ok(authResult());
     }
 
+    // The pool's record of the user a signed token names (ADR-057 D7): asked with the
+    // administrative key, by username — the token itself is not presented.
+    case "AdminGetUser":
+      if (payload.Username === "user-123") {
+        return ok({
+          Username: "user-123",
+          Enabled: true,
+          UserAttributes: [
+            { Name: "sub", Value: "user-123" },
+            { Name: "email", Value: C.email },
+            { Name: "email_verified", Value: "true" },
+          ],
+        });
+      }
+      return errBody("UserNotFoundException", "User does not exist.");
+
     case "GetUser":
       if (payload.AccessToken === VALID_ACCESS_TOKEN) {
         return ok({
@@ -177,7 +200,9 @@ function routeCognito(action: string, payload: CognitoPayload) {
         ],
       });
 
-    case "GlobalSignOut":
+    case "RevokeToken":
+    case "AdminUserGlobalSignOut":
+    case "AdminSetUserMFAPreference":
     case "ForgotPassword":
     case "ConfirmForgotPassword":
     case "ConfirmSignUp":
@@ -209,7 +234,9 @@ beforeAll(() => {
         }) as unknown as Response;
       }
       const headers = (init?.headers ?? {}) as Record<string, string>;
-      const action = (headers["X-Amz-Target"] ?? "").split(".")[1] ?? "";
+      // A signed (administrative) call's header names are lower-case.
+      const action =
+        (headers["X-Amz-Target"] ?? headers["x-amz-target"] ?? "").split(".")[1] ?? "";
       const payload = init?.body
         ? (JSON.parse(String(init.body)) as CognitoPayload)
         : ({} as CognitoPayload);
@@ -226,6 +253,7 @@ afterAll(() => {
 const cognitoFixtures: AuthContractFixtures = {
   makeProvider: () => new CognitoAuthProvider(TEST_CONFIG),
   validAccessToken: VALID_ACCESS_TOKEN,
+  validUserId: "user-123",
   invalidAccessToken: "invalid-token",
   validRefreshToken: "valid-refresh-token",
   mfaSession: "mfa-session-1",

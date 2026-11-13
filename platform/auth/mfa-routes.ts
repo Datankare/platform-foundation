@@ -47,9 +47,15 @@ import { auditableAccountId } from "@/platform/auth/account-identity";
 import {
   apiError,
   errorFromResult,
+  internalError,
   readJsonBody,
   type InputSchemaNode,
 } from "@/platform/errors";
+import {
+  rotateSession,
+  totpEnrolmentToken,
+  type LiveSession,
+} from "@/platform/auth/session";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
 /** The body a step-up reads (TASK-203, N-31): read against its schema — any other key refused. */
@@ -68,9 +74,10 @@ const TOTP = /^\d{6}$/;
 
 /** The caller the route verified (requireAuth). */
 export interface MfaCaller {
-  /** `mfaEnabled`: whether the account has a second factor now (read with the token). */
+  /** `mfaEnabled`: whether the account has a second factor now (read at verification). */
   readonly user: { readonly sub: string; readonly mfaEnabled?: boolean };
-  readonly accessToken: string;
+  /** The caller's server-side session: enrolment uses its token, a change moves it to a new id. */
+  readonly session: LiveSession;
 }
 
 /**
@@ -97,7 +104,7 @@ export type SteppedUp =
  */
 async function steppedUp(
   request: NextRequest,
-  caller: { sub: string; accessToken: string },
+  caller: { sub: string },
   purpose: "disable" | "re-enrol"
 ): Promise<SteppedUp> {
   // No body, or one that is not an object, carries no proof: the step-up is asked for.
@@ -110,7 +117,7 @@ async function steppedUp(
 }
 
 /**
- * A fresh step-up of the token's own user, for any route that grants or changes authority
+ * A fresh step-up of the session's own user, for any route that grants or changes authority
  * (TASK-194; round 1, B1 — the delegation consent reuses it): `password`, and `currentCode` (six
  * digits) from the enrolled authenticator, confirmed by the identity provider in a fresh sign-in
  * (AuthProvider.confirmCurrentFactor). `allowPasswordOnly`: an account with no second factor
@@ -120,7 +127,7 @@ async function steppedUp(
  */
 export async function confirmStepUp(args: {
   readonly request: NextRequest;
-  readonly caller: { readonly sub: string; readonly accessToken: string };
+  readonly caller: { readonly sub: string };
   readonly purpose: string;
   readonly password: unknown;
   readonly currentCode: unknown;
@@ -131,7 +138,6 @@ export async function confirmStepUp(args: {
     currentCode !== undefined && currentCode !== null && currentCode !== "";
   if (
     !caller.sub ||
-    !caller.accessToken ||
     typeof password !== "string" ||
     password.length === 0 ||
     password.length > 256 ||
@@ -142,7 +148,7 @@ export async function confirmStepUp(args: {
   }
   const code = codeGiven ? (currentCode as string) : null;
   const called = await callAuthProvider(
-    (auth) => auth.confirmCurrentFactor(caller.accessToken, password, code),
+    (auth) => auth.confirmCurrentFactor(caller.sub, password, code),
     { request, context: "MFA step-up failed" }
   );
   if (!called.ok) return { ok: false, response: called.response };
@@ -175,8 +181,27 @@ export async function confirmStepUp(args: {
 }
 
 type Verified =
-  | { readonly ok: true; readonly sub: string; readonly accessToken: string }
+  | { readonly ok: true; readonly sub: string; readonly session: LiveSession }
   | { readonly ok: false; readonly response: NextResponse };
+
+/**
+ * The session's access token, for enrolling an authenticator — the one operation the server
+ * performs with the user's own token (ADR-057 D7, docs/SECURITY_DEBT.md SEC-018): Cognito offers
+ * no administrative call for it. A session that holds none (not a user's) cannot enrol.
+ */
+function enrolmentToken(
+  request: NextRequest,
+  caller: { readonly session: LiveSession }
+): { readonly token: string } | { readonly response: NextResponse } {
+  // A single sign-on session cannot enrol (ADR-057 D7): its token is no longer issued the scope
+  // enrolment needs, and the identity provider applies no factor of its own to a federated
+  // sign-in — said plainly, never as an invalid session (which would sign the page out).
+  if (caller.session.method === "sso") {
+    return { response: apiError("auth.mfa_sso_managed", { request }) };
+  }
+  const token = totpEnrolmentToken(caller.session);
+  return token ? { token } : { response: apiError("auth.token_invalid", { request }) };
+}
 
 /** Per account as well as per address: codes are guessed one account at a time, from anywhere. */
 async function verified(request: NextRequest, caller: MfaCaller): Promise<Verified> {
@@ -184,12 +209,34 @@ async function verified(request: NextRequest, caller: MfaCaller): Promise<Verifi
     actorId: caller.user.sub,
   });
   if (perAccount) return { ok: false, response: perAccount };
-  return { ok: true, sub: caller.user.sub, accessToken: caller.accessToken };
+  return { ok: true, sub: caller.user.sub, session: caller.session };
 }
 
 function noStore(response: NextResponse): NextResponse {
   response.headers.set("Cache-Control", "no-store");
   return response;
+}
+
+/**
+ * The answer to a completed factor change: the caller's session moved to a new id (its new
+ * forgery token is in the body — the old one stopped working with the old id), and every other
+ * session of the account ended.
+ */
+async function factorChanged(
+  request: NextRequest,
+  caller: { readonly session: LiveSession },
+  body: { readonly success: true; readonly mfaEnabled: boolean }
+): Promise<NextResponse> {
+  try {
+    const carrier = NextResponse.json({});
+    const rotated = await rotateSession(carrier, caller.session, "factor_changed");
+    const response = NextResponse.json({ ...body, csrfToken: rotated.csrfToken });
+    for (const cookie of carrier.cookies.getAll()) response.cookies.set(cookie);
+    return noStore(response);
+  } catch (err) {
+    // The factor did change; a session that could not be moved is ended by its lifetimes.
+    return internalError(err, { request, context: "Session rotation failed" });
+  }
 }
 
 /** POST /api/auth/mfa/setup — start enrolment: the secret for the authenticator app. */
@@ -205,7 +252,9 @@ export async function mfaSetup(
     const proof = await steppedUp(request, caller, "re-enrol");
     if (!proof.ok) return proof.response;
   }
-  const called = await callAuthProvider((auth) => auth.setupMfa(caller.accessToken), {
+  const enrol = enrolmentToken(request, caller);
+  if ("response" in enrol) return enrol.response;
+  const called = await callAuthProvider((auth) => auth.setupMfa(enrol.token), {
     request,
     context: "MFA setup failed",
   });
@@ -239,8 +288,10 @@ export async function mfaVerify(
       request,
     });
   }
+  const enrol = enrolmentToken(request, caller);
+  if ("response" in enrol) return enrol.response;
   const called = await callAuthProvider(
-    (auth) => auth.verifyMfaSetup(caller.accessToken, code),
+    (auth) => auth.verifyMfaSetup(enrol.token, code),
     { request, context: "MFA verification failed" }
   );
   if (!called.ok) return called.response;
@@ -269,7 +320,9 @@ export async function mfaVerify(
   if (!recorded) {
     return apiError("service.unavailable", { params: { service: "audit" }, request });
   }
-  return noStore(NextResponse.json({ success: true, mfaEnabled: true }));
+  // How the account signs in changed: this session moves to a new id and the account's other
+  // sessions end (ADR-057 D6 — a session opened before the factor existed does not outlive it).
+  return factorChanged(request, caller, { success: true, mfaEnabled: true });
 }
 
 /** POST /api/auth/mfa/disable — turn MFA off. */
@@ -282,7 +335,7 @@ export async function mfaDisable(
   // Removing the factor needs proof of it (audit C-3).
   const proof = await steppedUp(request, caller, "disable");
   if (!proof.ok) return proof.response;
-  const called = await callAuthProvider((auth) => auth.disableMfa(caller.accessToken), {
+  const called = await callAuthProvider((auth) => auth.disableMfa(caller.sub), {
     request,
     context: "MFA removal failed",
   });
@@ -305,5 +358,5 @@ export async function mfaDisable(
   if (!recorded) {
     return apiError("service.unavailable", { params: { service: "audit" }, request });
   }
-  return noStore(NextResponse.json({ success: true, mfaEnabled: false }));
+  return factorChanged(request, caller, { success: true, mfaEnabled: false });
 }

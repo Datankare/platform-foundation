@@ -18,6 +18,7 @@
  * @module platform/tenancy
  */
 
+import { endSubjectSessions } from "@/platform/auth/session-revocation";
 import { randomUUID } from "node:crypto";
 import { audited, AuditWriteError } from "@/platform/auth/audit";
 import { DEFAULT_USER_ROLE } from "@/platform/auth/user-provisioning";
@@ -26,7 +27,7 @@ import { withOwnerSnapshot, withOwnerTx } from "@/platform/data";
 import { isTenantId } from "@/platform/providers/environment-contract";
 import { assignUserRole } from "@/platform/auth/role-assignment";
 import type { RoleRefusal, VerifiedAdmin } from "@/platform/auth/role-governance";
-import { peekTenant } from "./context";
+import { peekTenant, runWithTenant } from "./context";
 import { TENANT_PURGE_AFTER_DAYS } from "./postgres-directory";
 import {
   CachedTenantDirectory,
@@ -907,6 +908,13 @@ export async function makeTenantAdmin(
         return ok({ userId: assigned.target.id });
       });
       if (promotedSub) await invalidatePermissions(promotedSub);
+      // A session opened under the old role does not carry on under the new one (ADR-057 D6).
+      // The account's sessions are its own tenant's rows — not the operator's, in whose tenant
+      // this runs — so they are ended there.
+      const acting = peekTenant();
+      await runWithTenant({ tenantId, mode: acting?.mode ?? "single" }, () =>
+        endSubjectSessions(promotedSub, "role_changed")
+      );
       return result;
     }
   );

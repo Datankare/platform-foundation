@@ -10,7 +10,7 @@
  */
 import React from "react";
 import "@testing-library/jest-dom";
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { routeAnswer } from "@/__tests__/fixtures/route-responses";
 
 const replace = jest.fn();
@@ -23,6 +23,7 @@ const mockAuth = {
   isAuthenticated: false,
   isGuest: false,
   signOut: jest.fn(async () => undefined),
+  signOutEverywhere: jest.fn(async () => true),
 };
 jest.mock("@/platform/auth/context", () => ({
   ...jest.requireActual("@/platform/auth/context"),
@@ -98,6 +99,77 @@ describe("the account page (TASK-210)", () => {
       "href",
       "/"
     );
+  });
+});
+
+describe("sign out everywhere, from the account page (ADR-057 D6)", () => {
+  const signedIn = () => {
+    Object.assign(mockAuth, { user: { email: "a@b.c" }, isAuthenticated: true });
+    // The decisions section beside it reads its own route: answered as that route answers.
+    const [status, body] = routeAnswer("GET /api/moderation/appeals — one appealable");
+    fetchMock.mockResolvedValue({ ok: true, status, json: async () => body });
+    render(<AccountClient />);
+    return within(screen.getByRole("region", { name: "Signed-in devices" }));
+  };
+  beforeEach(() => mockAuth.signOutEverywhere.mockReset());
+
+  it("a guest has no devices to sign out: the section is not shown", () => {
+    Object.assign(mockAuth, { isAuthenticated: true, isGuest: true });
+    render(<AccountClient />);
+    expect(screen.queryByRole("region", { name: "Signed-in devices" })).toBeNull();
+  });
+
+  it("asks before acting; Cancel does nothing", async () => {
+    const section = signedIn();
+    fireEvent.click(section.getByRole("button", { name: "Sign out everywhere" }));
+    expect(
+      section.getByText("Sign out of every device, including this one?")
+    ).toBeVisible();
+    expect(
+      section.getByRole("button", { name: "Yes, sign out everywhere" })
+    ).toHaveFocus();
+    expect(mockAuth.signOutEverywhere).not.toHaveBeenCalled();
+    fireEvent.click(section.getByRole("button", { name: "Cancel" }));
+    expect(mockAuth.signOutEverywhere).not.toHaveBeenCalled();
+    expect(section.getByRole("button", { name: "Sign out everywhere" })).toBeVisible();
+  });
+
+  it("confirmed and done: once, then to sign-in", async () => {
+    mockAuth.signOutEverywhere.mockResolvedValue(true);
+    const section = signedIn();
+    fireEvent.click(section.getByRole("button", { name: "Sign out everywhere" }));
+    await act(async () => {
+      fireEvent.click(section.getByRole("button", { name: "Yes, sign out everywhere" }));
+    });
+    expect(mockAuth.signOutEverywhere).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledWith("/auth");
+  });
+
+  it("the server could not do it: says so, stays on the page, and can be tried again", async () => {
+    mockAuth.signOutEverywhere.mockResolvedValue(false);
+    const section = signedIn();
+    fireEvent.click(section.getByRole("button", { name: "Sign out everywhere" }));
+    await act(async () => {
+      fireEvent.click(section.getByRole("button", { name: "Yes, sign out everywhere" }));
+    });
+    expect(section.getByRole("alert")).toHaveTextContent(
+      "We could not sign you out everywhere. You are still signed in here."
+    );
+    expect(replace).not.toHaveBeenCalledWith("/auth");
+    expect(section.getByRole("button", { name: "Sign out everywhere" })).toBeEnabled();
+  });
+
+  it("while it works the two buttons cannot be pressed twice", async () => {
+    let finish: (done: boolean) => void = () => undefined;
+    mockAuth.signOutEverywhere.mockReturnValue(
+      new Promise<boolean>((resolve) => (finish = resolve))
+    );
+    const section = signedIn();
+    fireEvent.click(section.getByRole("button", { name: "Sign out everywhere" }));
+    fireEvent.click(section.getByRole("button", { name: "Yes, sign out everywhere" }));
+    expect(section.getByRole("button", { name: "Signing out…" })).toBeDisabled();
+    expect(section.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await act(async () => finish(true));
   });
 });
 

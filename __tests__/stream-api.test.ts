@@ -3,6 +3,7 @@
  */
 
 import { POST } from "@/app/api/stream/route";
+import { sessionHeadersFor } from "@/__tests__/helpers/session";
 import { NextRequest } from "next/server";
 import { registerAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
@@ -52,9 +53,15 @@ beforeEach(() => {
   (getOrchestrator as jest.Mock).mockClear();
 });
 
-function req(body: unknown, auth: string | null = `Bearer ${userToken}`): NextRequest {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (auth) headers.authorization = auth;
+/** A POST from a browser whose session holds `token` (ADR-057); null: no session. */
+async function req(
+  body: unknown,
+  token: string | null = userToken
+): Promise<NextRequest> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(token ? await sessionHeadersFor(token, { origin: "http://localhost:3000" }) : {}),
+  };
   return new NextRequest("http://localhost:3000/api/stream", {
     method: "POST",
     headers,
@@ -72,20 +79,20 @@ async function code(res: Response): Promise<string | undefined> {
 
 describe("/api/stream — caller verification", () => {
   it("refuses a request with no credentials", async () => {
-    const res = await POST(req({ prompt: "hi" }, null));
+    const res = await POST(await req({ prompt: "hi" }, null));
     expect(res.status).toBe(401);
     expect(streamMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a bearer value that is not a valid token", async () => {
-    const res = await POST(req({ prompt: "hi" }, "Bearer not-a-real-token"));
+  it("refuses a session whose token is not a valid one", async () => {
+    const res = await POST(await req({ prompt: "hi" }, "not-a-real-token"));
     expect(res.status).toBe(401);
     expect(streamMock).not.toHaveBeenCalled();
   });
 
   it("[hostile:role] refuses a guest — streaming is for signed-in users", async () => {
     const guest = await mintGuestToken();
-    const res = await POST(req({ prompt: "hi" }, `Bearer ${guest.token}`));
+    const res = await POST(await req({ prompt: "hi" }, guest.token));
     expect(res.status).toBe(401);
     expect(await code(res)).toBe("auth.sign_in_required");
     expect(streamMock).not.toHaveBeenCalled();
@@ -135,14 +142,14 @@ describe("/api/stream — server-side bounds", () => {
       "request.field_not_accepted",
     ],
   ])("refuses %s with a coded 400", async (_label, body, expected) => {
-    const res = await POST(req(body));
+    const res = await POST(await req(body));
     expect(res.status).toBe(400);
     expect(await code(res)).toBe(expected);
     expect(streamMock).not.toHaveBeenCalled();
   });
 
   it("applies the default tier and the token bound when the caller sends neither", async () => {
-    const res = await POST(req({ prompt: "hi" }));
+    const res = await POST(await req({ prompt: "hi" }));
     await res.text();
     expect(streamMock).toHaveBeenCalledWith(
       expect.objectContaining({ tier: "standard", maxTokens: STREAM_MAX_TOKENS }),
@@ -158,7 +165,7 @@ describe("/api/stream — screening and streaming", () => {
       reason: "blocked term",
       decision: "block",
     });
-    const res = await POST(req({ prompt: "hi" }));
+    const res = await POST(await req({ prompt: "hi" }));
     expect(res.status).toBe(422);
     expect(await code(res)).toBe("content.rejected");
     expect(checkSafety).toHaveBeenCalledWith(
@@ -169,7 +176,7 @@ describe("/api/stream — screening and streaming", () => {
   });
 
   it("always uses the platform's system prompt", async () => {
-    await (await POST(req({ prompt: "hi" }))).text();
+    await (await POST(await req({ prompt: "hi" }))).text();
     const sent = streamMock.mock.calls[0][0];
     expect(typeof sent.system).toBe("string");
     expect(sent.system.length).toBeGreaterThan(20);
@@ -178,7 +185,7 @@ describe("/api/stream — screening and streaming", () => {
 
   it("streams the model's chunks as server-sent events", async () => {
     const res = await POST(
-      req({ prompt: "hi", tier: "fast", maxTokens: 64, temperature: 0.2 })
+      await req({ prompt: "hi", tier: "fast", maxTokens: 64, temperature: 0.2 })
     );
     expect(res.headers.get("content-type")).toBe("text/event-stream");
     const text = await res.text();
@@ -202,7 +209,7 @@ describe("/api/stream — screening and streaming", () => {
         usage: { inputTokens: 1, outputTokens: 64 },
       };
     });
-    const text = await (await POST(req({ prompt: "hi", maxTokens: 64 }))).text();
+    const text = await (await POST(await req({ prompt: "hi", maxTokens: 64 }))).text();
     const events = text
       .split("\n\n")
       .filter((l) => l.startsWith("data: {"))
@@ -218,7 +225,7 @@ describe("/api/stream — screening and streaming", () => {
     streamMock.mockImplementation(async function* () {
       yield { text: "Done.", done: true, stopReason: "end_turn" };
     });
-    const text = await (await POST(req({ prompt: "hi" }))).text();
+    const text = await (await POST(await req({ prompt: "hi" }))).text();
     expect(text).not.toContain("truncated");
     expect(text).toContain('"stopReason":"end_turn"');
   });
@@ -228,7 +235,7 @@ describe("/api/stream — screening and streaming", () => {
       yield { text: "", done: false };
       throw new Error("upstream secret detail: key sk-123");
     });
-    const res = await POST(req({ prompt: "hi" }));
+    const res = await POST(await req({ prompt: "hi" }));
     const text = await res.text();
     expect(text).toContain('"code":"internal.error"');
     expect(text).not.toContain("upstream secret detail");
@@ -238,7 +245,7 @@ describe("/api/stream — screening and streaming", () => {
     streamMock.mockImplementation(async function* () {
       yield { text: "Half an ans", done: false };
     });
-    const text = await (await POST(req({ prompt: "hi" }))).text();
+    const text = await (await POST(await req({ prompt: "hi" }))).text();
     expect(text).toContain('"code":"service.unavailable"');
     expect(text).not.toContain("[DONE]");
     expect(text).not.toMatch(/"done":true,"usage"/);
@@ -252,7 +259,7 @@ describe("/api/stream — screening and streaming", () => {
         "transient"
       );
     });
-    const text = await (await POST(req({ prompt: "hi" }))).text();
+    const text = await (await POST(await req({ prompt: "hi" }))).text();
     expect(text).toContain('"code":"service.unavailable"');
     expect(text).not.toContain("overloaded_error");
     expect(text).not.toContain("[DONE]");
@@ -263,7 +270,7 @@ describe("/api/stream — screening and streaming", () => {
       yield { text: "", done: false };
       throw new AIRefusalError();
     });
-    const text = await (await POST(req({ prompt: "hi" }))).text();
+    const text = await (await POST(await req({ prompt: "hi" }))).text();
     expect(text).toContain('"code":"ai.request_declined"');
     expect(text).not.toContain("stop_reason");
     expect(text).not.toContain("[DONE]");
@@ -274,7 +281,7 @@ describe("/api/stream — screening and streaming", () => {
       yield { text: "harmful output", done: true };
     });
     (checkOutputSafety as jest.Mock).mockResolvedValue({ safe: false, reason: "x" });
-    const text = await (await POST(req({ prompt: "hi" }))).text();
+    const text = await (await POST(await req({ prompt: "hi" }))).text();
     expect(text).not.toContain("harmful output");
     expect(text).toContain('"code":"content.withheld"');
     expect(text).not.toContain('"code":"content.rejected"');
@@ -295,7 +302,7 @@ describe("/api/stream — screening and streaming", () => {
         safe: false,
         ...(decision ? { decision } : {}),
       });
-      const res = await POST(req({ prompt: "hi" }));
+      const res = await POST(await req({ prompt: "hi" }));
       expect(res.status).toBe(status);
       const body = await res.json();
       expect(body.code).toBe(expected);
@@ -311,14 +318,14 @@ describe("/api/stream — screening and streaming", () => {
     (checkOutputSafety as jest.Mock).mockRejectedValue(
       new Error("classifier down: sk-1")
     );
-    const text = await (await POST(req({ prompt: "hi" }))).text();
+    const text = await (await POST(await req({ prompt: "hi" }))).text();
     expect(text).not.toContain("unscreened");
     expect(text).toContain('"code":"internal.error"');
     expect(text).not.toContain("classifier down");
   });
 
   it("screens the model's output before releasing it", async () => {
-    await (await POST(req({ prompt: "hi" }))).text();
+    await (await POST(await req({ prompt: "hi" }))).text();
     expect(checkOutputSafety).toHaveBeenCalledWith("Hello", expect.anything());
   });
 });

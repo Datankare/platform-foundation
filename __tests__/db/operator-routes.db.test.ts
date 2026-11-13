@@ -1502,6 +1502,7 @@ dbDescribe(`${SUITE} GET /api/operator/readiness`, () => {
       "directory",
       "identity",
       "erasure",
+      "sessions",
       "client_secret",
       "dual_control",
     ]);

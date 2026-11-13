@@ -25,6 +25,13 @@ import { routeAnswer } from "@/__tests__/fixtures/route-responses";
 
 it("registers the browser provider on first render and shows the form", async () => {
   expect(hasAuthProvider()).toBe(false);
+  // The page's first read of its session: the server says no one is signed in.
+  const [signedOutStatus, signedOut] = routeAnswer("GET /api/auth/session — signed out");
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: signedOutStatus < 400,
+    status: signedOutStatus,
+    json: async () => signedOut,
+  }) as unknown as typeof fetch;
   render(
     <AuthContextProvider>
       <AuthPageClient />

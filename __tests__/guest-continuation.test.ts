@@ -8,6 +8,7 @@
  */
 
 import fc from "fast-check";
+import { sessionHeadersFor } from "@/__tests__/helpers/session";
 import { NextRequest } from "next/server";
 import { fuzzParams } from "./helpers/fuzz";
 
@@ -60,6 +61,9 @@ beforeEach(async () => {
   await getGuestUsageStore().reset();
   mockStanding.mockResolvedValue(true);
 });
+
+// hostile:self n/a: the route starts a session for the caller only: it names no other account
+// hostile:id-spelling n/a: no id is read from the request: the caller is its own session's subject
 
 describe("addressBucket (G-8)", () => {
   it.each([
@@ -185,9 +189,9 @@ describe("POST /api/auth/guest — a restricted account (X-20)", () => {
     expect((await res.json()).code).toBe("auth.guest_refused");
   });
 
-  it("refuses, and marks, a banned user who asks for a guest token while signed in", async () => {
+  it("[hostile:role] refuses, and marks, a banned user who asks for a guest session while signed in", async () => {
     mockStanding.mockResolvedValue(false);
-    const res = await guest({ authorization: "Bearer mock-access-token" });
+    const res = await guest(await sessionHeadersFor("mock-access-token"));
     expect(res.status).toBe(403);
     expect(res.cookies.get(RESTRICTED_MARKER)).toMatchObject({
       value: "1",
@@ -196,25 +200,25 @@ describe("POST /api/auth/guest — a restricted account (X-20)", () => {
     });
   });
 
-  it("refuses when the caller's standing cannot be read (fail closed)", async () => {
+  it("[hostile:store-down] refuses when the caller's standing cannot be read (fail closed)", async () => {
     mockStanding.mockRejectedValue(new Error("db down"));
-    const res = await guest({ authorization: "Bearer mock-access-token" });
+    const res = await guest(await sessionHeadersFor("mock-access-token"));
     expect(res.status).toBe(403);
   });
 
   it("does not hold an unverifiable token against the caller", async () => {
-    const res = await guest({ authorization: "Bearer forged" });
+    const res = await guest(await sessionHeadersFor("forged"));
     expect(res.status).toBe(200);
     expect(mockStanding).not.toHaveBeenCalled();
   });
 
   it("mints for a signed-in user in good standing", async () => {
-    const res = await guest({ authorization: "Bearer mock-access-token" });
+    const res = await guest(await sessionHeadersFor("mock-access-token"));
     expect(res.status).toBe(200);
   });
 
   it("TASK-185: the standing check carries the token's address, so an account it first provisions has one", async () => {
-    await guest({ authorization: "Bearer mock-access-token" });
+    await guest(await sessionHeadersFor("mock-access-token"));
     expect(mockStanding).toHaveBeenCalledWith(expect.any(String), {
       email: expect.stringContaining("@"),
       // The mock pool verified it itself (a native user): a trusted verified claim.

@@ -122,17 +122,6 @@ beforeEach(() => {
 
 const signedIn = () => {
   Object.assign(mockAuth, { user: { email: "me@example.test" }, isAuthenticated: true });
-  // The session apiFetch reads (platform/auth/context.tsx), as a signed-in browser holds it.
-  localStorage.setItem("pf_access_token", "mock-access-token");
-  localStorage.setItem(
-    "pf_user",
-    JSON.stringify({
-      userId: "u-1",
-      email: "me@example.test",
-      emailVerified: true,
-      isGuest: false,
-    })
-  );
 };
 
 const QUESTION = "What is a rainbow?";
@@ -222,9 +211,10 @@ describe("the assistant page (TASK-211)", () => {
     expect(url).toBe("/api/stream");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({ prompt: QUESTION });
-    expect(new Headers(init.headers).get("authorization")).toBe(
-      "Bearer mock-access-token"
-    );
+    // As the signed-in user: the browser's session cookie goes with the call (ADR-057) — the
+    // page holds no token to send.
+    expect(init.credentials).toBe("same-origin");
+    expect(new Headers(init.headers).get("authorization")).toBeNull();
   });
 
   it("Ctrl+Enter asks, as the hint says", async () => {

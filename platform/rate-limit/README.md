@@ -49,15 +49,16 @@ the current tenant in every key.
 
 ## Rules
 
-| Rule           | Limit        | Counted by |
-| -------------- | ------------ | ---------- |
-| `AUTH_LOGIN`   | 10 / 15 min  | address    |
-| `AUTH_ACCOUNT` | 10 / hour    | address    |
-| `AUTH_GUEST`   | 20 / hour    | address    |
-| `AUTH_SESSION` | 30 / minute  | address    |
-| `AI_PER_USER`  | 20 / minute  | actor      |
-| `ADMIN_OPS`    | 30 / minute  | address    |
-| `API_GLOBAL`   | 100 / minute | address    |
+| Rule                  | Limit        | Counted by                                     |
+| --------------------- | ------------ | ---------------------------------------------- |
+| `AUTH_LOGIN`          | 10 / 15 min  | address                                        |
+| `AUTH_ACCOUNT`        | 10 / hour    | address                                        |
+| `AUTH_GUEST`          | 20 / hour    | address                                        |
+| `AUTH_SESSION`        | 30 / minute  | address                                        |
+| `AUTH_SESSION_STATUS` | 120 / minute | the session the cookie names, else the address |
+| `AI_PER_USER`         | 20 / minute  | actor                                          |
+| `ADMIN_OPS`           | 30 / minute  | address                                        |
+| `API_GLOBAL`          | 100 / minute | address                                        |
 
 These are the core's rules. A product module declares the rules its routes enforce in its
 definition (ADR-054 D4) — the song-id module's `SONG_IDENTIFY_RULE` (10 / hour per actor, exported by

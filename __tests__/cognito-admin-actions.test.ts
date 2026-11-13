@@ -54,6 +54,19 @@ function policyActions(doc: string): string[] {
     .sort();
 }
 
+/** The actions the policy-simulator command of TENANCY_OPERATIONS §3.3 asks about. */
+export function simulatedActions(doc: string): string[] {
+  const section = doc.slice(doc.indexOf("### 3.3 The IAM key"));
+  const command =
+    /^aws iam simulate-principal-policy .*$/m.exec(
+      section.slice(0, section.indexOf("\n### 3.4"))
+    )?.[0] ?? "";
+  return [...command.matchAll(/\bcognito-idp:([A-Za-z]+)/g)]
+    .map((m) => m[1])
+    .filter((a) => a !== "REGION")
+    .sort();
+}
+
 describe("the Cognito administrative key's actions are stated once (N-23)", () => {
   const listed = [...COGNITO_ADMIN_ACTIONS].sort();
 
@@ -74,6 +87,33 @@ describe("the Cognito administrative key's actions are stated once (N-23)", () =
     const doc = read("docs/TENANCY_OPERATIONS.md");
     expect(policyActions(doc)).toEqual(listed);
     expect(doc).toContain(`\`${COGNITO_ADMIN_POLICY}\``);
+  });
+
+  it("§3.3's policy-simulator check asks about exactly the listed actions, on one line a shell can paste (ADR-057 D7)", () => {
+    const doc = read("docs/TENANCY_OPERATIONS.md");
+    expect(simulatedActions(doc)).toEqual(listed);
+    const command = /^aws iam simulate-principal-policy .*$/m.exec(doc)![0];
+    // zsh-paste-safe: no comment, no unquoted parenthesis; the query is single-quoted.
+    expect(command).not.toMatch(/#/);
+    expect(command.replace(/'[^']*'/g, "")).not.toMatch(/[()`!]/);
+    expect(command).toContain(
+      "--resource-arns arn:aws:cognito-idp:REGION:ACCOUNT:userpool/POOL_ID"
+    );
+  });
+
+  it("[self-test] the simulator reader sees an action missing from, or added to, the command", () => {
+    const doc = (actions: string) =>
+      `### 3.3 The IAM key\n\naws iam simulate-principal-policy --action-names ${actions} --output text\n\n### 3.4 Next`;
+    expect(
+      simulatedActions(doc("cognito-idp:AdminGetUser cognito-idp:ListUsers"))
+    ).toEqual(["AdminGetUser", "ListUsers"]);
+    expect(simulatedActions(doc("cognito-idp:AdminGetUser"))).not.toEqual([
+      "AdminGetUser",
+      "ListUsers",
+    ]);
+    expect(simulatedActions("### 3.3 The IAM key\n\nno command\n\n### 3.4 Next")).toEqual(
+      []
+    );
   });
 
   it("ENV_REFERENCE names every action and the policy, and does not limit the key to shared mode", () => {

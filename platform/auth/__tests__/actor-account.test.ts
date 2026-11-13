@@ -5,6 +5,7 @@
  * is __tests__/identity-relink.test.ts; against Postgres, __tests__/db/identity-relink.db.test.ts.
  */
 import { NextRequest } from "next/server";
+import { sessionHeadersFor } from "@/__tests__/helpers/session";
 import { registerAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
 import { requireActor } from "@/platform/auth/middleware";
@@ -54,28 +55,28 @@ beforeEach(() => {
   mockSync.mockClear();
 });
 
-const req = () =>
+const req = async () =>
   new NextRequest("http://localhost:3000/api/account/export", {
-    headers: { authorization: `Bearer ${token}` },
+    headers: await sessionHeadersFor(token),
   });
 
 describe("requireActor resolves the identity's account", () => {
   it("a re-linked account: actor.id is the account's id; the subject stays on user.sub", async () => {
     mockResolve.mockResolvedValue({ kind: "bound", accountId: ACCOUNT });
-    const r = await requireActor(req(), { allowGuests: false });
+    const r = await requireActor(await req(), { allowGuests: false });
     expect(mockRecord).toHaveBeenCalledWith(sub);
     expect(r.actor).toMatchObject({ kind: "user", id: ACCOUNT, user: { sub } });
   });
 
   it("a first request: actor.id is the subject (the id the account is created with)", async () => {
     mockResolve.mockResolvedValue({ kind: "unprovisioned", accountId: sub });
-    const r = await requireActor(req(), { allowGuests: true });
+    const r = await requireActor(await req(), { allowGuests: true });
     expect(r.actor).toMatchObject({ kind: "user", id: sub });
   });
 
   it("hostile: the subject's id held by another identity's account — refused, never that account; not retryable (review 15 L4)", async () => {
     mockResolve.mockResolvedValue({ kind: "conflict" });
-    const r = await requireActor(req(), { allowGuests: false });
+    const r = await requireActor(await req(), { allowGuests: false });
     expect(r.actor).toBeUndefined();
     // A distinct, non-retryable code: account.not_provisioned (503) tells the client to retry.
     expect(r.error?.status).toBe(403);
@@ -86,7 +87,7 @@ describe("requireActor resolves the identity's account", () => {
 
   it("the binding unreadable: 503 service.unavailable (accounts) — never the subject as a guess", async () => {
     mockResolve.mockRejectedValue(new Error("connection terminated"));
-    const r = await requireActor(req(), { allowGuests: false });
+    const r = await requireActor(await req(), { allowGuests: false });
     expect(r.error?.status).toBe(503);
     await expect(r.error!.json()).resolves.toMatchObject({
       code: "service.unavailable",
@@ -99,7 +100,7 @@ describe("requireActor resolves the identity's account", () => {
     const { token: guest } = await mintGuestToken();
     const r = await requireActor(
       new NextRequest("http://localhost:3000/api/x", {
-        headers: { authorization: `Bearer ${guest}` },
+        headers: await sessionHeadersFor(guest),
       }),
       { allowGuests: true }
     );
@@ -115,7 +116,7 @@ describe("requireActor keeps users.email_verified in step (TASK-176)", () => {
       resolution: { kind: "bound", accountId: ACCOUNT },
       address,
     });
-    const r = await requireActor(req(), { allowGuests: false });
+    const r = await requireActor(await req(), { allowGuests: false });
     expect(r.actor).toMatchObject({ id: ACCOUNT });
     expect(mockSync).toHaveBeenCalledTimes(1);
     expect(mockSync).toHaveBeenCalledWith(
@@ -127,19 +128,20 @@ describe("requireActor keeps users.email_verified in step (TASK-176)", () => {
 
   it("an account not provisioned yet, or a conflict: nothing to sync (provisioning stores the claim)", async () => {
     mockResolve.mockResolvedValue({ kind: "unprovisioned", accountId: sub });
-    await requireActor(req(), { allowGuests: false });
+    await requireActor(await req(), { allowGuests: false });
     mockResolve.mockResolvedValue({ kind: "conflict" });
-    await requireActor(req(), { allowGuests: false });
+    await requireActor(await req(), { allowGuests: false });
     expect(mockSync).not.toHaveBeenCalled();
   });
 
   it("the provider cannot answer: 503, and neither the binding nor the flag is touched", async () => {
     const { getAuthProvider } = await import("@/platform/auth/config");
     const provider = getAuthProvider();
+    const request = await req();
     const spy = jest
       .spyOn(provider, "verifyToken")
       .mockRejectedValueOnce(new TokenVerificationUnavailableError("Throttled"));
-    const r = await requireActor(req(), { allowGuests: false });
+    const r = await requireActor(request, { allowGuests: false });
     spy.mockRestore();
     expect(r.error?.status).toBe(503);
     expect(mockRecord).not.toHaveBeenCalled();

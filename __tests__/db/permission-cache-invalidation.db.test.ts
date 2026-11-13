@@ -148,10 +148,26 @@ dbDescribe(
       const id = await insertUser(t, { roleId: cat.roles.holder });
       const sub = `sub-${id}`;
       expect(await perms(sub)).not.toBeNull();
+      // ADR-057 D6: the account's sessions end with it — on every device, at once.
+      const { getSessionStore } = await import("@/platform/auth/session-store");
+      const { startTestSession } = await import("../helpers/session");
+      const [laptop, phone] = [
+        await startTestSession({ subject: sub, tenantId: t.id }),
+        await startTestSession({ subject: sub, tenantId: t.id }),
+      ];
+      const bystander = await startTestSession({
+        subject: `sub-${randomUUID()}`,
+        tenantId: t.id,
+      });
       await expect(t.run(() => softDeleteUser(id, id))).resolves.toMatchObject({
         success: true,
       });
       expect(await perms(sub)).toBeNull();
+      const state = async (idHash: string) =>
+        (await t.run(() => getSessionStore().find(idHash)))?.revokedReason ?? "live";
+      expect(await state(laptop.idHash)).toBe("account_erased");
+      expect(await state(phone.idHash)).toBe("account_erased");
+      expect(await state(bystander.idHash)).toBe("live");
     });
   }
 );

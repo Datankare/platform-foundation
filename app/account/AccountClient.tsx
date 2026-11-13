@@ -2,7 +2,8 @@
  * app/account/AccountClient.tsx — the signed-in user's account page (TASK-210, N-117)
  *
  * Where a user sees the decisions made about their own content and appeals one
- * (components/account/ModerationDecisions.tsx). Reached from the home page's bar ("Your account"),
+ * (components/account/ModerationDecisions.tsx), and signs out of every device at once
+ * (components/account/SignOutEverywhere.tsx; ADR-057 D6). Reached from the home page's bar ("Your account"),
  * and from the refusal that tells a user their content was rejected or their account restricted
  * (components/refusal/RefusalNotice.tsx, the translate screen) — the places a decision is seen.
  *
@@ -19,6 +20,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/platform/auth/context";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import ModerationDecisions from "@/components/account/ModerationDecisions";
+import SignOutEverywhere from "@/components/account/SignOutEverywhere";
 
 /** This screen's text, from the message catalog (ADR-051 D4). */
 const t = (key: string, values?: MessageValues) =>
@@ -73,6 +75,17 @@ export default function AccountClient() {
               {t("decisions.title")}
             </h2>
             <ModerationDecisions />
+          </section>
+        )}
+        {!isGuest && (
+          <section
+            aria-labelledby="account-sessions"
+            className="mt-6 rounded-2xl border border-gray-800 bg-[#111827] p-4 sm:p-6"
+          >
+            <h2 id="account-sessions" className="mb-2 text-lg font-semibold text-white">
+              {t("sessions.title")}
+            </h2>
+            <SignOutEverywhere />
           </section>
         )}
       </div>

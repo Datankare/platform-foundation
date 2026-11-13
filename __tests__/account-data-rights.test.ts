@@ -28,15 +28,14 @@ jest.mock("@/platform/auth/middleware", () => {
   return {
     ...actual,
     requireActor: jest.fn(async (request: NextRequest) => {
-      const header = request.headers.get("authorization") ?? "";
-      if (header.startsWith("Bearer guest.")) {
+      // The test callers' own cookie (helpers/test-identities.ts): a guest, or a caller's subject.
+      const cookie = request.headers.get("cookie") ?? "";
+      if (cookie.includes("test_guest=1")) {
         return { error: apiError("auth.sign_in_required", { request }) };
       }
-      const name = /^Bearer test-token:test-sub-/.test(header)
-        ? Object.values(ids.CALLERS as Record<string, { sub: string }>).find(
-            (c) => header === `Bearer test-token:${c.sub}`
-          )
-        : undefined;
+      const name = Object.values(ids.CALLERS as Record<string, { sub: string }>).find(
+        (c) => cookie.includes(`${ids.TEST_CALLER_COOKIE}=${c.sub}`)
+      );
       if (!name) return { error: apiError("auth.required", { request }) };
       const identity = name as { sub: string; userId: string };
       return {
@@ -81,7 +80,7 @@ const request = (
     headers: {
       "Content-Type": "application/json",
       ...(caller === "guest-token"
-        ? { authorization: "Bearer guest.abc" }
+        ? { cookie: "test_guest=1" }
         : authAs(caller as CallerName)),
     },
     ...(init.raw !== undefined
@@ -176,6 +175,8 @@ describe("POST /api/account/delete", () => {
     // TASK-193 (B-8/D-9): the identity is deleted by the erasure itself, with the provider's
     // administrative credentials — never by this route with the caller's token, once.
     expect(mockDeleteIdentity).not.toHaveBeenCalled();
+    // The browser leaves with no session: the session cookie and any legacy ones are cleared.
+    expect(res.headers.get("set-cookie") ?? "").toMatch(/pf_session=;/);
     expect(res.headers.get("set-cookie") ?? "").toMatch(/pf_refresh=;/);
   });
 

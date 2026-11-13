@@ -19,6 +19,7 @@
     "/fake-fetch-baseline.json",
     "/body-schema-baseline.json",
     "/open-input-register.json",
+    "/client-credential-register.json",
     "/docs/APP_API_ERRORS.md",
     "/docs/APP_ENV_REFERENCE.md",
     "/messages/app/**",

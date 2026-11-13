@@ -54,18 +54,18 @@ docker run -d --name app -p 3000:3000 \
 Kubernetes Secrets), not a file in the repository. The settings are the same as on any host
 ([ENV_REFERENCE](ENV_REFERENCE.md)). At least these:
 
-| Setting                                            | Notes                                                                                                                                                 |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DEPLOYMENT_HOST`                                  | Baked as `container`. Set your host's name (`aws`, `gcp`, …) if you prefer. Never `local` or `ci` on a deployment.                                    |
-| `AUTH_PROVIDER=cognito` and the Cognito settings   | Production refuses the mock provider (ADR-050 D1).                                                                                                    |
-| `GUEST_TOKEN_SECRET`, `CRON_SECRET`                | Secrets, 32+ random characters. Both required: without `CRON_SECRET` no timed duty would run, so boot refuses.                                        |
-| `ERASURE_HASH_KEY`, `REFRESH_COOKIE_KEY`           | Secrets, 32+ random characters (`openssl rand -hex 32`), required with Cognito; the same on every instance (review 17 M1: the refresh cookie's HMAC). |
-| `DATABASE_URL`, `DATABASE_OWNER_URL`               | The request role (`app_tenant`) through a transaction pooler (RDS Proxy on AWS), and the owner (ADR-053 D4).                                          |
-| `DATABASE_SSL=verify-full` (+ `DATABASE_SSL_CA`)   | `disable` is refused outside `local`/`ci`.                                                                                                            |
-| Every durable store `=postgres`, `JOB_STORE`       | As on Vercel; `.env.example` lists them.                                                                                                              |
-| `CACHE_PROVIDER`                                   | `valkey` with `VALKEY_URL=rediss://…` (your own Valkey or Redis), or `upstash` with its two settings. Never `memory`: refused (below).                |
-| `TENANCY_MODE`, `TENANT_ID` / `TENANT_HOST_HEADER` | Behind an AWS ALB use `TENANT_HOST_HEADER=host`.                                                                                                      |
-| `TRUSTED_PROXY_HOPS`                               | 1 behind a load balancer alone; 2 with a CDN in front of it.                                                                                          |
+| Setting                                            | Notes                                                                                                                                                                                                   |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEPLOYMENT_HOST`                                  | Baked as `container`. Set your host's name (`aws`, `gcp`, …) if you prefer. Never `local` or `ci` on a deployment.                                                                                      |
+| `AUTH_PROVIDER=cognito` and the Cognito settings   | Production refuses the mock provider (ADR-050 D1).                                                                                                                                                      |
+| `GUEST_TOKEN_SECRET`, `CRON_SECRET`                | Secrets, 32+ random characters. Both required: without `CRON_SECRET` no timed duty would run, so boot refuses.                                                                                          |
+| `ERASURE_HASH_KEY`, `SESSION_ENCRYPTION_KEY`       | Secrets, 32+ random characters (`openssl rand -hex 32`), required with Cognito; the same on every instance (ADR-057 D2: sign-in sessions' tokens are encrypted with the second before they are stored). |
+| `DATABASE_URL`, `DATABASE_OWNER_URL`               | The request role (`app_tenant`) through a transaction pooler (RDS Proxy on AWS), and the owner (ADR-053 D4).                                                                                            |
+| `DATABASE_SSL=verify-full` (+ `DATABASE_SSL_CA`)   | `disable` is refused outside `local`/`ci`.                                                                                                                                                              |
+| Every durable store `=postgres`, `JOB_STORE`       | As on Vercel; `.env.example` lists them.                                                                                                                                                                |
+| `CACHE_PROVIDER`                                   | `valkey` with `VALKEY_URL=rediss://…` (your own Valkey or Redis), or `upstash` with its two settings. Never `memory`: refused (below).                                                                  |
+| `TENANCY_MODE`, `TENANT_ID` / `TENANT_HOST_HEADER` | Behind an AWS ALB use `TENANT_HOST_HEADER=host`.                                                                                                                                                        |
+| `TRUSTED_PROXY_HOPS`                               | 1 behind a load balancer alone; 2 with a CDN in front of it.                                                                                                                                            |
 
 Boot checks the environment contract and refuses to start, naming every violation. In a
 container that also covers `NEXT_MANUAL_SIG_HANDLE` (required with `DEPLOYMENT_HOST=container`),

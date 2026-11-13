@@ -30,6 +30,11 @@ const provider = () =>
     clientSecret: "rotated-elsewhere",
     timeoutMs: 5000,
     jwks: TEST_JWKS,
+    // The step-up reads the session's user with the administrative key (ADR-057 D7).
+    adminCredentials: {
+      accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+      secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    },
   });
 
 const originalFetch = global.fetch;
@@ -143,7 +148,11 @@ describe("Cognito: a refused client secret (TASK-197, audit D-4)", () => {
       .mockResolvedValueOnce(
         refused("Unable to verify secret hash for client test-client-id")
       ) as typeof fetch;
-    const r = await provider().confirmCurrentFactor("tok", "pw", "123456");
+    const r = await provider().confirmCurrentFactor(
+      "11111111-2222-4333-8444-555555555555",
+      "pw",
+      "123456"
+    );
     expect(r).toMatchObject({
       success: false,
       errorCode: "service.unavailable",
@@ -158,7 +167,13 @@ describe("Cognito: a refused client secret (TASK-197, audit D-4)", () => {
       .fn()
       .mockResolvedValueOnce(getUser)
       .mockResolvedValueOnce(refused("Incorrect username or password.")) as typeof fetch;
-    expect(await provider().confirmCurrentFactor("tok", "pw", "123456")).toMatchObject({
+    expect(
+      await provider().confirmCurrentFactor(
+        "11111111-2222-4333-8444-555555555555",
+        "pw",
+        "123456"
+      )
+    ).toMatchObject({
       errorCode: "auth.step_up_unavailable",
     });
     expect(raiseAlert).not.toHaveBeenCalled();

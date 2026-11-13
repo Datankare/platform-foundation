@@ -34,15 +34,12 @@ const ROOT = join(__dirname, "..");
 
 /** Files that call fetch only in the browser, to the app's own routes: not external calls. */
 const CLIENT_FILES: Readonly<Record<string, string>> = {
-  "platform/auth/api-fetch.ts": "the browser's own-origin fetch with the session's token",
+  "platform/auth/api-fetch.ts":
+    "the browser's own-origin fetch with the session cookie and its forgery token",
   "platform/auth/context.tsx":
     "the browser's session context, calling the app's own auth routes",
-  "platform/auth/browser-auth-provider.ts":
-    "the browser's auth provider, calling the app's own routes",
   "lib/refusal-notify.ts":
     "Playform's screens: re-mints a guest token from the app's own /api/auth/guest",
-  "app/auth/callback/SsoCallbackClient.tsx":
-    "the SSO callback page, calling the app's own route",
 };
 
 /** file → branch id (`function: condition`) → why that failed-answer branch need not report. */

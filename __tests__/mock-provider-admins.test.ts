@@ -52,6 +52,25 @@ describe("the test double's administrators", () => {
     expect(new Set([q?.sub, u?.sub, d?.sub]).size).toBe(3);
   });
 
+  it("the session journey's person with two devices is its own identity, and every identity's subject is distinct (TASK-214)", async () => {
+    const auth = createMockAuthProvider();
+    const d = await auth.verifyToken("mock-access-token:devices-d");
+    expect(d).toMatchObject({
+      sub: "e2e00000-0000-4000-8000-0000000000d2",
+      email: "devices-d@e2e.test",
+    });
+    // Ending this person's sessions ("sign out everywhere") is ending no one else's: no other
+    // identity shares the subject, the default user's included.
+    const subjects = [
+      (await auth.verifyToken("mock-access-token"))?.sub,
+      ...Object.values(MOCK_EXTRA_IDENTITIES).map((identity) => identity.sub),
+    ];
+    expect(new Set(subjects).size).toBe(subjects.length);
+    // They sign in by their address, as the journeys do.
+    const signedIn = await auth.signIn("devices-d@e2e.test", "a-journey-password");
+    expect(signedIn).toMatchObject({ success: true, userId: d?.sub });
+  });
+
   it("[hostile:id-spelling] another spelling of a token, or an inherited property name, is no one", async () => {
     const auth = createMockAuthProvider();
     for (const token of [

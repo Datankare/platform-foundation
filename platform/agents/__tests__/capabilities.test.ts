@@ -7,6 +7,7 @@
  */
 
 import { buildCapabilities, capabilitySelections } from "../capabilities";
+import { sessionHeadersFor } from "@/__tests__/helpers/session";
 import {
   listWorkflows,
   registerWorkflow,
@@ -64,6 +65,10 @@ const FULL: WorkflowDefinition = {
     },
   ],
 };
+
+// hostile:self n/a: the route reads no account and acts on none: it lists goals
+// hostile:store-down n/a: the route reads no store: its answer is built from the workflows registered in memory and the providers' names
+// hostile:id-spelling n/a: no id is read from the request: nothing is compared
 
 describe("buildCapabilities", () => {
   it("reports one goal capability per definition", () => {
@@ -155,15 +160,17 @@ describe("GET /api/agent/capabilities (audit I-7)", () => {
     return GET(new NextRequest("http://localhost/api/agent/capabilities", { headers }));
   };
 
-  it("refuses a caller it cannot verify", async () => {
+  it("[hostile:role] refuses a caller it cannot verify", async () => {
     expect((await get({})).status).toBe(401);
+    expect((await get(await sessionHeadersFor("forged"))).status).toBe(401);
+    // A bearer credential is not a session (ADR-057 D8).
     expect((await get({ authorization: "Bearer forged" })).status).toBe(401);
   });
 
   it("answers a verified guest, without the plumbing", async () => {
     const { mintGuestToken } = await import("@/platform/auth/guest-token");
     const { token } = await mintGuestToken();
-    const res = await get({ authorization: `Bearer ${token}` });
+    const res = await get(await sessionHeadersFor(token));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(Object.keys(body.providerSelections)).not.toEqual(

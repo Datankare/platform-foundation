@@ -49,6 +49,7 @@
       "account_exists": "An account with this email already exists.",
       "challenge_failed": "Verification did not complete. Try again.",
       "code_expired": "That code has expired. Request a new one.",
+      "csrf_failed": "This request could not be confirmed as coming from this page. Reload the page and try again.",
       "code_invalid": "That code is not correct.",
       "default_role_limited": "The {role} role is given to every new account, so it cannot carry the {permission} permission.",
       "email_not_verified": "Verify your email to continue.",
@@ -57,6 +58,7 @@
       "guest_refused": "Guest access is not available while your account is restricted.",
       "invalid_credentials": "Email or password is incorrect.",
       "mfa_required": "Administrative access needs two-step verification. Set it up, then sign in again.",
+      "mfa_sso_managed": "You signed in through single sign-on, so two-step verification is set with your sign-in provider, not here. Nothing was changed.",
       "password_policy": "The password does not meet the requirements.",
       "permission_denied": "You do not have permission to do this.",
       "required": "Sign in to continue.",
@@ -1308,6 +1310,12 @@
     "stream": {
       "truncated": "The answer was cut off at its length limit: it is not complete. Ask for a shorter answer, or ask it to continue."
     },
+    "session": {
+      "idle_title": "Still there?",
+      "idle_text": "{seconds, plural, one {You will be signed out in # second because this page has been idle.} other {You will be signed out in # seconds because this page has been idle.}} Anything you have typed stays here if you stay signed in.",
+      "stay_signed_in": "Stay signed in",
+      "sign_out": "Sign out"
+    },
     "readiness": {
       "names": {
         "mode": "Mode",
@@ -1316,6 +1324,7 @@
         "directory": "Directory",
         "identity": "Identity",
         "erasure": "Erasure",
+        "sessions": "Sessions",
         "client_secret": "Client secret",
         "dual_control": "Dual control"
       },
@@ -1324,6 +1333,11 @@
       "database_bypasses_rls": "The request connection signs in as {role}, which bypasses row-level security; it must be app_tenant.",
       "database_ready": "The request connection signs in as {role}, under row-level security.",
       "database_unreachable": "The database could not be reached (the detail is in the log).",
+      "sessions_not_needed": "The identity provider needs no administrative key for sessions.",
+      "sessions_ready": "The administrative key can read a user, sign one out everywhere and turn a second factor off.",
+      "sessions_not_ready": "Sessions are degraded: {reason}.",
+      "sessions_no_key": "COGNITO_ADMIN_ACCESS_KEY_ID is not set — sign-in works, but each request is verified with the user's own token, single sign-on still asks for the Cognito admin scope, sign-out everywhere cannot reach the provider and a second factor cannot be turned off (TENANCY_OPERATIONS §3.3: every Cognito deployment needs the key)",
+      "sessions_denied": "the administrative key may not call cognito-idp:{action} on this pool — sign-in still works; add the action to the policy {policy} (TENANCY_OPERATIONS §3.3)",
       "erasure_not_needed": "The identity provider keeps no identities the platform erases.",
       "erasure_ready": "Erasure can find an identity by its subject and delete it.",
       "erasure_not_ready": "Erasure cannot delete identities: {reason}.",
@@ -1457,6 +1471,13 @@
         "prompt_cache_enabled": "Whether a request may use Anthropic's prompt cache. Both this and the request's own promptCache flag must be on, and only a fixed, tenant-free cacheablePrefix is ever cached."
       },
       "auth": {
+        "session": {
+          "guest_absolute_seconds": "Seconds a guest's session lasts from its start (TASK-214); a guest's session has no idle limit. Default 24 hours.",
+          "staff_absolute_seconds": "Seconds a staff member's session lasts from sign-in, however it is used (TASK-214). Default 12 hours.",
+          "staff_idle_seconds": "Seconds a staff member's session lasts without a request before it ends (TASK-214). Default 30 minutes.",
+          "user_absolute_seconds": "Seconds a signed-in user's session lasts from sign-in, however it is used (TASK-214). Default 30 days.",
+          "user_idle_seconds": "Seconds a signed-in user's session lasts without a request before it ends (TASK-214). Default 7 days."
+        },
         "staff_mfa_required": "Staff (anyone using an administrative permission) must sign in with a second factor. Turning it off needs a second operator.",
         "token_cache_seconds": "Seconds a verified access token is answered from the shared cache instead of asking the identity provider again (at most 60, never past the token's expiry; 0: always ask). Sign-out, account and role or MFA changes void it at once.",
         "token_stale_grace_seconds": "When the identity provider cannot answer (throttled, down), seconds past its fresh window an ordinary route may still accept a token it verified (never past the token's expiry or a revocation). Privileged routes never do: they answer 503. 0 turns it off."
@@ -1595,6 +1616,7 @@
         "agent_budgets_days": "Days an agent's daily budget counters are kept after their day (TASK-203).",
         "ai_metrics_days": "Days an AI call's metrics are kept before they are deleted (TASK-203).",
         "app_sessions_days": "Days an app session is kept after it was last updated (TASK-203).",
+        "auth_sessions_days": "Days a sign-in session's record is kept after it was last used or ended (TASK-214). Never less than the longest idle lifetime (30 days).",
         "content_safety_audit_days": "Days a content-safety decision is kept before it is deleted; one a strike names is kept with the account (TASK-203).",
         "effect_ledger_days": "Days a resolved external effect (confirmed or failed) is kept in the effect ledger; pending and indeterminate ones stay until resolved (TASK-203).",
         "guest_usage_days": "Days a guest's usage count is kept after the guest was last seen (TASK-203).",
@@ -1848,6 +1870,16 @@
       "title": "Your account",
       "guest": "A guest session has no account, so no decision is recorded against it. Sign in to see the decisions about your content.",
       "sign_in": "Sign in",
+      "sessions": {
+        "title": "Signed-in devices",
+        "explainer": "If you signed in on a device you no longer use, or think someone else is in your account, sign out everywhere. Every device is signed out at once, this one too, and each signs in again.",
+        "action": "Sign out everywhere",
+        "confirm_question": "Sign out of every device, including this one?",
+        "confirm": "Yes, sign out everywhere",
+        "working": "Signing out…",
+        "cancel": "Cancel",
+        "failed": "We could not sign you out everywhere. You are still signed in here. Check your connection and try again."
+      },
       "decisions": {
         "title": "Decisions about your content",
         "explainer": "When our screening blocks something you submitted, it is listed here. You can ask a moderator to review a decision within {hours, plural, one {# hour} other {# hours}} of it.",

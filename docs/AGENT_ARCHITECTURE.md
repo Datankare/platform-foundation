@@ -330,11 +330,14 @@ Agent identity matured through two rungs:
 
 - **Rung 1 (superseded):** an agent was named by an `x-agent-role` header and checked against a
   hard-coded allowlist. A bare, unverified claim.
-- **Rung 2 (current):** an agent presents a **short-lived, RS256-signed delegation token** in
-  the `x-agent-delegation` header, obtained through an OAuth 2.1 / PKCE consent flow in which
-  the user explicitly authorizes the agent for a specific scope. Verification checks the
-  signature, expiry, audience, the `onBehalfOf` binding (the token must attest _this_
-  authenticated user delegated to the agent — the anti-impersonation core), and replay. The
+- **Rung 2 (current):** an agent presents a **short-lived, RS256-signed delegation token** as
+  `Authorization: Bearer`, obtained through an OAuth 2.1 / PKCE consent flow in which
+  the user explicitly authorizes the agent for a specific scope. The agent holds nothing of the
+  user's (ADR-057 D8; ADR-033's TASK-214 addendum): it asks and exchanges with its own client
+  credential, and the user's consent — in their own signed-in browser — binds the request to
+  them. Verification checks the signature, expiry, audience and replay; the user is the token's
+  `onBehalfOf` (the one who consented — the anti-impersonation core: nothing else in the request
+  names a user), whose standing is checked at every use. The
   rung-1 header path is retired: a signed token is the only thing that resolves an agent
   identity.
 

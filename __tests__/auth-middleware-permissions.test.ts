@@ -7,6 +7,7 @@
  */
 
 import { NextRequest } from "next/server";
+import { sessionHeadersFor } from "@/__tests__/helpers/session";
 
 jest.mock("@/lib/logger", () => ({
   logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn() },
@@ -28,9 +29,10 @@ import { hasCachedPermission } from "@/platform/auth/permissions-cache";
 const mockGetAuthProvider = getAuthProvider as jest.Mock;
 const mockHasCachedPermission = hasCachedPermission as jest.Mock;
 
-function makeRequest(token?: string): NextRequest {
-  const headers: Record<string, string> = {};
-  if (token) headers["authorization"] = `Bearer ${token}`;
+/** A request from a browser whose session (of `SUBJECT`) holds `token` (ADR-057). */
+const SUBJECT = "sub-of-the-session";
+async function makeRequest(token?: string): Promise<NextRequest> {
+  const headers = token ? await sessionHeadersFor(token, { subject: SUBJECT }) : {};
   return new NextRequest("http://localhost/api/test", { headers });
 }
 
@@ -40,7 +42,7 @@ describe("requireAuth — error handling", () => {
       verifyToken: jest.fn().mockRejectedValue(new Error("JWT decode failed")),
     });
 
-    const result = await requireAuth(makeRequest("bad-token"));
+    const result = await requireAuth(await makeRequest("bad-token"));
     expect(result.error).toBeDefined();
     expect(result.error!.status).toBe(401);
 
@@ -53,7 +55,7 @@ describe("requireAuth — error handling", () => {
       verifyToken: jest.fn().mockResolvedValue(null),
     });
 
-    const result = await requireAuth(makeRequest("expired-token"));
+    const result = await requireAuth(await makeRequest("expired-token"));
     expect(result.error).toBeDefined();
     expect(result.error!.status).toBe(401);
 

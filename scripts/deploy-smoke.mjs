@@ -18,8 +18,15 @@
  *   2. features  GET  /api/features    — 200, a feature list
  *   3. refused   POST translate path   — no credentials → 401 with a registered error code
  *                                        (the error contract, ADR-051, is live)
- *   4. guest     POST /api/auth/guest  — a signed guest token (ADR-050 D4)
- *   5. translate POST translate path   — as that guest, a real translation comes back (D5);
+ *   4. guest     POST /api/auth/guest  — a guest session (ADR-050 D4, ADR-057): the answer
+ *                                        carries no token; the session cookie is HttpOnly (and,
+ *                                        on https, `__Host-pf_session`, Secure, SameSite=Lax);
+ *                                        GET /api/auth/session then names the guest and gives
+ *                                        the session's forgery token. A state-changing request
+ *                                        without that token is refused (auth.csrf_failed)
+ *   5. translate POST translate path   — as that guest (the cookie, this origin and the
+ *                                        token — what a browser sends), a real translation
+ *                                        comes back (D5);
  *                                        uses one unit of a fresh guest's allowance. Skipped,
  *                                        and said so, with SMOKE_SKIP_TRANSLATE=1 — for a CI run
  *                                        of the image that has no AI credentials (Guardian
@@ -42,7 +49,7 @@
  *                          translated text; default `text` (PF's /api/process). An app whose
  *                          translate route answers in its own shape names its field here.
  *   SMOKE_TIMEOUT_MS       optional — per request (default 30000)
- *   SMOKE_SKIP_TRANSLATE   optional — "1": stop after the guest token (CI without AI credentials)
+ *   SMOKE_SKIP_TRANSLATE   optional — "1": stop after the guest session (CI without AI credentials)
  *   SMOKE_SESSION_PATH     optional — with SMOKE_DISPATCH_PATH: the session-open route (step 6)
  *   SMOKE_DISPATCH_PATH    optional — with SMOKE_SESSION_PATH: the route an intent is sent to
  *   SMOKE_HEALTHY_PROBES   optional — comma-separated readiness checks that must be healthy, not
@@ -188,9 +195,19 @@ export function hasRealTranslation(body, field = "text") {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function call(settings, method, path, { token, body } = {}) {
+/**
+ * One request. `session` — a guest session this run started — is sent as a browser sends it: the
+ * session cookie, this origin, and the session's forgery token (ADR-057 D4). No credential is
+ * ever sent as an Authorization header: a user route would not read it.
+ */
+async function call(settings, method, path, { session, body } = {}) {
   const headers = { accept: "application/json" };
-  if (token) headers.authorization = `Bearer ${token}`;
+  if (method !== "GET") headers.origin = settings.base;
+  if (session) {
+    headers.cookie = session.cookie;
+    if (method !== "GET" && session.csrfToken)
+      headers["x-csrf-token"] = session.csrfToken;
+  }
   if (body !== undefined) headers["content-type"] = "application/json";
   const res = await fetch(`${settings.base}${path}`, {
     method,
@@ -205,13 +222,101 @@ async function call(settings, method, path, { token, body } = {}) {
   } catch {
     // Not JSON — reported by the step that expected JSON.
   }
-  return { status: res.status, json };
+  return { status: res.status, json, setCookies: res.headers.getSetCookie?.() ?? [] };
+}
+
+export const SESSION_COOKIE_NAMES = ["__Host-pf_session", "pf_session"];
+
+/** The session cookie among a response's Set-Cookie lines: its `name=value` and attributes. */
+export function sessionCookieFrom(setCookies) {
+  for (const line of setCookies ?? []) {
+    const [pair, ...attributes] = String(line).split(";");
+    const eq = pair.indexOf("=");
+    const name = pair.slice(0, eq).trim();
+    const value = pair.slice(eq + 1).trim();
+    if (!SESSION_COOKIE_NAMES.includes(name) || value === "") continue;
+    const flags = new Map(
+      attributes.map((a) => {
+        const [k, ...v] = a.trim().split("=");
+        return [k.toLowerCase(), v.join("=").toLowerCase()];
+      })
+    );
+    return {
+      name,
+      pair: `${name}=${value}`,
+      httpOnly: flags.has("httponly"),
+      secure: flags.has("secure"),
+      sameSite: flags.get("samesite") ?? "",
+      path: flags.get("path") ?? "",
+      domain: flags.has("domain"),
+    };
+  }
+  return null;
+}
+
+/** The property names of a JSON answer, at any depth, that look like a token (ADR-057 D1). */
+export function tokenFields(json, path = "") {
+  if (json === null || typeof json !== "object") return [];
+  return Object.entries(json).flatMap(([k, v]) => {
+    const here = path ? `${path}.${k}` : k;
+    const named = /^(?:token|bearer|(?:access|refresh|id)_?token)$/i.test(k);
+    return [...(named ? [here] : []), ...tokenFields(v, here)];
+  });
+}
+
+/** What is wrong with a deployed session cookie; none when it is as ADR-057 D1 requires. */
+export function cookieProblems(cookie, base) {
+  const problems = [];
+  if (!cookie.httpOnly) problems.push("not HttpOnly");
+  if (cookie.domain) problems.push("has a Domain");
+  if (cookie.path !== "/") problems.push("Path is not /");
+  if (cookie.sameSite !== "lax" && cookie.sameSite !== "strict")
+    problems.push("no SameSite=Lax");
+  // Over https — every deployment — the cookie is the __Host- one, Secure.
+  if (base.startsWith("https://")) {
+    if (cookie.name !== "__Host-pf_session") problems.push("not __Host-pf_session");
+    if (!cookie.secure) problems.push("not Secure");
+  }
+  return problems;
 }
 
 class StepFailure extends Error {}
 const fail = (msg) => {
   throw new StepFailure(msg);
 };
+
+/**
+ * Start a guest session as a browser does: no token in the answer, an HttpOnly session cookie,
+ * and the session's own status naming a guest with its forgery token.
+ */
+async function guestSession(settings, step) {
+  const started = await call(settings, "POST", "/api/auth/guest");
+  if (started.status !== 200) fail(`${step}: ${started.status}, no guest session`);
+  const leaked = tokenFields(started.json);
+  if (leaked.length) {
+    fail(
+      `${step}: the answer carries a token (${leaked.join(", ")}) — none may reach the browser`
+    );
+  }
+  const cookie = sessionCookieFrom(started.setCookies);
+  if (!cookie) fail(`${step}: 200, no session cookie`);
+  const problems = cookieProblems(cookie, settings.base);
+  if (problems.length) fail(`${step}: the session cookie is ${problems.join(", ")}`);
+  const status = await call(settings, "GET", "/api/auth/session", {
+    session: { cookie: cookie.pair },
+  });
+  const csrfToken = status.json?.csrfToken;
+  if (
+    status.status !== 200 ||
+    status.json?.authenticated !== true ||
+    status.json?.user?.isGuest !== true ||
+    typeof csrfToken !== "string" ||
+    csrfToken === ""
+  ) {
+    fail(`${step}: the session is not a guest's (${status.status})`);
+  }
+  return { cookie: cookie.pair, csrfToken };
+}
 
 /** The names among `required` that the readiness answer does not report healthy. */
 export function unhealthyRequired(res, required) {
@@ -305,13 +410,21 @@ export async function runSmoke(settings, log = console.log) {
   }
   log(`✓ anonymous request refused (${anon.json.code})`);
 
-  // 4 — a signed guest token
-  const guest = await call(settings, "POST", "/api/auth/guest");
-  const token = guest.json?.token;
-  if (guest.status !== 200 || typeof token !== "string" || !token.startsWith("guest.")) {
-    fail(`guest: ${guest.status}, no signed guest token`);
+  // 4 — a guest session: an HttpOnly cookie, no token in the answer
+  const guest = await guestSession(settings, "guest");
+  log("✓ guest session started (HttpOnly cookie, no token in the answer)");
+
+  // A state-changing request with the cookie but without the session's token is refused: the
+  // forgery defence is live (ADR-057 D4).
+  const forged = await call(settings, "POST", "/api/auth/session", {
+    session: { cookie: guest.cookie },
+  });
+  if (forged.status !== 403 || forged.json?.code !== "auth.csrf_failed") {
+    fail(
+      `forgery: expected 403 auth.csrf_failed without the session's token, got ${forged.status}`
+    );
   }
-  log("✓ guest token issued (signed)");
+  log("✓ a request without the session's token refused (auth.csrf_failed)");
 
   // 5 — a real translation, as that guest (one retry on a transient 503/429)
   if (settings.skipTranslate) {
@@ -322,13 +435,13 @@ export async function runSmoke(settings, log = console.log) {
     return;
   }
   let tr = await call(settings, "POST", settings.translatePath, {
-    token,
+    session: guest,
     body: { text: "Good morning" },
   });
   if (tr.status === 503 || tr.status === 429) {
     await sleep(5_000);
     tr = await call(settings, "POST", settings.translatePath, {
-      token,
+      session: guest,
       body: { text: "Good morning" },
     });
   }
@@ -343,13 +456,9 @@ export async function runSmoke(settings, log = console.log) {
   if (settings.session) {
     const { sessionPath, dispatchPath, intent } = settings.session;
     // A fresh guest, so this step holds even when the governed allowance is 1.
-    const second = await call(settings, "POST", "/api/auth/guest");
-    const sessionToken = second.json?.token;
-    if (second.status !== 200 || typeof sessionToken !== "string") {
-      fail(`session: guest ${second.status}, no second guest token`);
-    }
+    const second = await guestSession(settings, "session: guest");
     const opened = await call(settings, "POST", sessionPath, {
-      token: sessionToken,
+      session: second,
       body: {},
     });
     const sessionId = opened.json?.sessionId;
@@ -360,13 +469,13 @@ export async function runSmoke(settings, log = console.log) {
     }
     log(`✓ session opened (${sessionPath})`);
     let sent = await call(settings, "POST", dispatchPath, {
-      token: sessionToken,
+      session: second,
       body: { sessionId, intent },
     });
     if (sent.status === 503 || sent.status === 429) {
       await sleep(5_000);
       sent = await call(settings, "POST", dispatchPath, {
-        token: sessionToken,
+        session: second,
         body: { sessionId, intent },
       });
     }

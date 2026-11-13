@@ -25,6 +25,7 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: () => "req-subject-sub",
 }));
 
+import { sessionHeadersFor } from "../helpers/session";
 import { randomInt, randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { getCache } from "@/platform/cache";
@@ -149,7 +150,16 @@ class CognitoStandIn {
       const u = this.byAdminName(name);
       if (!u) return [400, { __type: "UserNotFoundException" }];
       if (action === "AdminGetUser")
-        return [200, { Username: u.username, UserAttributes: this.attributes(u) }];
+        return [
+          200,
+          {
+            Username: u.username,
+            Enabled: true,
+            UserAttributes: this.attributes(u),
+            // As GetUser's: a second factor, so what is compared is the binding alone.
+            UserMFASettingList: ["SOFTWARE_TOKEN_MFA"],
+          },
+        ];
       const attrs = body.UserAttributes as { Name: string; Value: string }[];
       u.tenantId = attrs.find((a) => a.Name === TENANT_ATTRIBUTE)?.Value;
       return [200, {}];
@@ -199,9 +209,16 @@ const tokenFor = (u: PoolUser) =>
     jti: randomUUID(),
   });
 
-const httpRequest = (path: string, token: string) =>
+/** A request from a browser whose session holds `token` (ADR-057), in the deployment's tenant. */
+const httpRequest = async (path: string, token: string) =>
   new NextRequest(`http://localhost${path}`, {
-    headers: { authorization: `Bearer ${token}`, "x-forwarded-for": "203.0.113.77" },
+    headers: {
+      ...(await sessionHeadersFor(token, {
+        tenantId: process.env.TENANT_ID,
+        subject: tokenSubject(token) ?? undefined,
+      })),
+      "x-forwarded-for": "203.0.113.77",
+    },
   });
 
 const saved = { mode: process.env.TENANCY_MODE, tenant: process.env.TENANT_ID };
@@ -243,18 +260,18 @@ async function makeStaff(id: string): Promise<void> {
 /** Everything a request with `token` reaches in `t` (single mode). */
 async function reach(t: TestTenant, token: string) {
   return asSingle(t, async () => {
-    const actor = await requireActor(httpRequest("/api/x", token), {
+    const actor = await requireActor(await httpRequest("/api/x", token), {
       allowGuests: false,
     });
     const guarded = await requireActorWithStatus(
-      httpRequest("/api/x", token),
+      await httpRequest("/api/x", token),
       "translate",
       {
         allowGuests: false,
       }
     );
     const admin = await requireAdmin(
-      httpRequest("/api/admin/config", token),
+      await httpRequest("/api/admin/config", token),
       "can_access_admin"
     );
     return { actor, guarded, admin };
@@ -378,7 +395,9 @@ dbDescribe("TASK-177: the subject is the sub — native and federated users alik
         )
       ).resolves.toEqual({ ok: true });
       // Addressed as Cognito requires: a federated user's sub would name nobody.
+      // The token's user is read with the administrative key (ADR-057 D7), then assigned.
       expect(pool.adminCalls).toEqual([
+        { action: "AdminGetUser", username: u.username },
         { action: "AdminUpdateUserAttributes", username: u.username },
       ]);
       expect(u.tenantId).toBe(t.id);
@@ -419,7 +438,13 @@ dbDescribe("TASK-177: the subject is the sub — native and federated users alik
     await fresh.verifyToken(tokenFor(g));
     await expect(fresh.assignTenant(g.sub, tenant)).resolves.toEqual({ success: true });
     expect(g.tenantId).toBe(tenant);
-    expect(pool.adminCalls.map((c) => c.username)).toEqual([g.sub, g.username]);
+    // The refused assignment by sub; the verification's own read (AdminGetUser, ADR-057 D7) and
+    // the assignment, both by the username the signed token named.
+    expect(pool.adminCalls).toEqual([
+      { action: "AdminUpdateUserAttributes", username: g.sub },
+      { action: "AdminGetUser", username: g.username },
+      { action: "AdminUpdateUserAttributes", username: g.username },
+    ]);
   });
 
   it.each(KINDS)(

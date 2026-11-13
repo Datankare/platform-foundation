@@ -570,6 +570,71 @@ BEGIN
 END $$;
 SQL
 
+step "070: sign-in sessions are tenant-owned (another tenant's id finds no row), keep no raw id, end by revocation, and the migration applied twice changes nothing"
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/070_auth_sessions.sql" >/dev/null
+"${PSQL[@]}" -At <<'SQL'
+DO $$
+DECLARE
+  t1 uuid; t2 uuid; n integer; refused boolean;
+  h text := repeat('a', 64);
+  csrf text := repeat('c', 43);
+BEGIN
+  SELECT id INTO t1 FROM public.tenants ORDER BY created_at, id LIMIT 1;
+  t2 := '07000000-0000-4000-8000-000000000001';
+  INSERT INTO public.tenants (id, slug, name) VALUES (t2, 'replay-070', 'Replay 070');
+  IF (SELECT count(*) FROM public.platform_config
+       WHERE key LIKE 'auth.session.%' AND permission_tier = 'safety' AND NOT tenant_overridable) <> 5 THEN
+    RAISE EXCEPTION '070: the five session lifetimes are not all seeded in the safety tier';
+  END IF;
+  IF has_table_privilege('anon', 'public.auth_sessions', 'SELECT')
+     OR has_table_privilege('authenticated', 'public.auth_sessions', 'SELECT') THEN
+    RAISE EXCEPTION '070: a public role reads auth_sessions';
+  END IF;
+  SET LOCAL ROLE app_tenant;
+  PERFORM set_config('app.tenant_id', t1::text, true);
+  INSERT INTO public.auth_sessions (id_hash, kind, subject, method, csrf_token, sealed_tokens)
+  VALUES (h, 'user', 'replay-070-user', 'password', csrf, 'v1.replay.sealed');
+  PERFORM set_config('app.tenant_id', t2::text, true);
+  SELECT count(*) INTO n FROM public.auth_sessions WHERE id_hash = h;
+  IF n <> 0 THEN RAISE EXCEPTION '070: another tenant reads the session'; END IF;
+  UPDATE public.auth_sessions SET revoked_at = now(), revoked_reason = 'sign_out' WHERE id_hash = h;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION '070: another tenant ended the session'; END IF;
+  refused := false;
+  BEGIN
+    INSERT INTO public.auth_sessions (tenant_id, id_hash, kind, subject, method, csrf_token, sealed_tokens)
+    VALUES (t1, repeat('b', 64), 'user', 'replay-070-user', 'password', csrf, 'v1.replay.sealed');
+  EXCEPTION WHEN insufficient_privilege THEN refused := true;
+  END;
+  IF NOT refused THEN RAISE EXCEPTION '070: a session was written into another tenant'; END IF;
+  PERFORM set_config('app.tenant_id', t1::text, true);
+  refused := false;
+  BEGIN
+    INSERT INTO public.auth_sessions (id_hash, kind, subject, method, csrf_token, sealed_tokens)
+    VALUES ('not-a-hash', 'user', 'replay-070-user', 'password', csrf, 'v1.replay.sealed');
+  EXCEPTION WHEN check_violation THEN refused := true;
+  END;
+  IF NOT refused THEN RAISE EXCEPTION '070: an id that is not a SHA-256 was stored'; END IF;
+  refused := false;
+  BEGIN
+    UPDATE public.auth_sessions SET revoked_at = now() WHERE id_hash = h;
+  EXCEPTION WHEN check_violation THEN refused := true;
+  END;
+  IF NOT refused THEN RAISE EXCEPTION '070: a session was ended without a reason'; END IF;
+  UPDATE public.auth_sessions SET revoked_at = now(), revoked_reason = 'sign_out' WHERE id_hash = h;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION '070: the owning tenant could not end its session'; END IF;
+  DELETE FROM public.auth_sessions WHERE subject = 'replay-070-user';
+  RESET ROLE;
+  DELETE FROM public.tenants WHERE id = t2;
+END $$;
+SQL
+"${PSQL[@]}" -c "UPDATE public.platform_config SET value = '1200' WHERE key = 'auth.session.staff_idle_seconds'" >/dev/null
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/070_auth_sessions.sql" >/dev/null
+[ "$("${PSQL[@]}" -At -c "SELECT value FROM public.platform_config WHERE key = 'auth.session.staff_idle_seconds'")" = "1200" ] \
+  || { echo "✗ 070 applied again replaced an operator's session lifetime"; exit 1; }
+"${PSQL[@]}" -c "UPDATE public.platform_config SET value = default_value WHERE key = 'auth.session.staff_idle_seconds'" >/dev/null
+
 step "checks"
 "${PSQL[@]}" -At <<'SQL'
 DO $$
@@ -587,7 +652,7 @@ BEGIN
     'agent_trajectories','proposals','effect_ledger','app_sessions','document_embeddings',
     'rate_limit_events','applied_migrations','ai_metrics','tenants','tenant_domains',
     'tenant_config_overrides','tenant_lifecycle_requests','jobs','job_schedules',
-    'config_dual_control_seeded','provider_usage'
+    'config_dual_control_seeded','provider_usage','auth_sessions'
   ]) AS t WHERE to_regclass('public.' || t) IS NULL;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'missing tables: %', missing; END IF;
   SELECT string_agg(f, ', ') INTO missing FROM unnest(ARRAY[
@@ -817,7 +882,7 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
       AND c.relname NOT IN ('permissions','roles','role_permissions','role_inheritance','entitlement_groups',
         'entitlement_permissions','deletion_manifest','platform_config','applied_migrations','tenants',
-        'job_schedules','config_dual_control_seeded','provider_usage');
+        'job_schedules','config_dual_control_seeded','provider_usage','auth_sessions');
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'tables with no tenant_id that are not platform-owned: %', missing; END IF;
   SELECT string_agg(c.relname, ', ') INTO missing FROM pg_class c
     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped

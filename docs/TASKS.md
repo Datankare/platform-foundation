@@ -7,6 +7,230 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-214 — Server-side sessions: the browser holds no token (S9, SEC-016)
+
+| Field        | Detail                                                                                                |
+| ------------ | ----------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-214                                                                                              |
+| **Type**     | Security — session token exposure (authentication)                                                    |
+| **Severity** | Medium (SEC-016), with one defect found on the way (a promotion's sessions ended in the wrong tenant) |
+| **Phase**    | Phase 5                                                                                               |
+| **Target**   | v6.0.0 (RC)                                                                                           |
+| **Status**   | Fixed on develop (batch 56b, S9 of the sweep)                                                         |
+| **Logged**   | 2026-11-12 (register N-30; `docs/SECURITY_DEBT.md` SEC-016; ADR-057)                                  |
+
+Batch 56b, in both repositories (Playform: its TASK-5015). The decision, its alternatives and its
+credits are [ADR-057](adr/ADR-057-server-side-sessions.md); the three choices the owner made on
+2026-11-12 are recorded there (the server-held token, "option A"; user routes accept only the
+cookie session; the session lifetimes).
+
+**What was wrong.** A signed-in browser kept the identity provider's access token in
+`localStorage` and sent it as `Authorization: Bearer`. Any script in the page could read it and
+use it elsewhere, and a Cognito token from a password sign-in carries the
+`aws.cognito.signin.user.admin` scope, so the thief could call Cognito's own user API with it
+and go round the app's step-up (SEC-016).
+
+**What it is now.**
+
+- **The session is a server-side record** (`auth_sessions`, migration 070: tenant-owned, forced
+  row-level security, through the data layer) and the browser holds one cookie,
+  `__Host-pf_session`: HttpOnly, Secure, SameSite=Lax, `Path=/`, no `Domain`; 256 random bits,
+  stored only as a SHA-256 (`platform/auth/session.ts`, `session-store.ts`,
+  `session-cookie.ts`). No token is in a response body, in storage or in a script-readable
+  cookie.
+- **The provider's tokens are sealed at rest behind one module**
+  (`platform/auth/session-vault.ts`): AES-256-GCM under a key derived from the new
+  `SESSION_ENCRYPTION_KEY`, bound to the session's row; `SESSION_ENCRYPTION_KEY_PREVIOUS`
+  opens what the old key sealed, so a rotation signs nobody out.
+- **Forgery** — three defences, each for what the others do not cover (ADR-057 D4): the cookie's
+  `SameSite` and `__Host-`; an origin check on every state-changing API request (`proxy.ts`, and
+  again with the session); a per-session token sent back as `x-csrf-token`
+  (`platform/auth/api-fetch.ts` sends it). Refused as the new code `auth.csrf_failed` (403).
+- **Lifetimes are governed, bounded settings** (safety tier): users 7 days idle / 30 days
+  absolute; staff 30 minutes / 12 hours; guests 24 hours. Enforced on the server at each request;
+  an expired session's record is ended with why. A staff member is warned two minutes before an
+  idle sign-out and can stay signed in without leaving the page
+  (`components/auth/SessionIdleWarning.tsx`).
+- **The id changes when the authority does, and the session ends when the standing does**: a new
+  id at every sign-in (never one presented before it) and at a factor change; sign-out ends the
+  record first, then revokes the refresh token; `POST /api/auth/sign-out-everywhere` — on the
+  account page (`components/account/SignOutEverywhere.tsx`) — ends every session of the user;
+  a password reset, a role change (the console, the command bar, an operator's promotion), a
+  suspension or ban, and erasure end every session of the account.
+- **The server renews** a session itself (`renewSession`; concurrent requests make one exchange,
+  one result is stored — compare-and-set on `token_version`). `/api/auth/refresh` is gone.
+- **A user route accepts only the cookie session.** The guards never read `Authorization`; the
+  jobs tick's `CRON_SECRET` is the platform's one bearer credential, registered with the page
+  proxy's presence check in `client-credential-register.json` (`bearerReaders`). An app's agents
+  hold nothing of a user's: ADR-033 gains an addendum with the rule an issuer follows (the
+  agent's own credential on its own steps; the user's consent binds the request; the delegation
+  token is the agent's credential at use, and the user's standing is judged by the same rules —
+  `userStandingRefusal`, exported from the actor guard for that), and AGENT_ARCHITECTURE says so.
+  `journey-coverage` counts the journeys' session helper (`sessionFetch`) as a request call.
+- **Cognito**: the session's user is read with the administrative key (`AdminGetUser`), sign-out
+  everywhere and removing a factor are `AdminUserGlobalSignOut` and `AdminSetUserMFAPreference`,
+  and single sign-on stops asking for the admin scope when the key exists. Signing one session
+  out revokes its refresh token (`RevokeToken`) and voids what was remembered of the user's
+  tokens, as before (review 7 P3) — it no longer presents the user's token to `GlobalSignOut`. The server-held token
+  of a password sign-in is used for one purpose, enrolling a TOTP factor — Cognito offers no
+  administrative form (SEC-018, the owner's decision); a single sign-on session, whose token no
+  longer carries the scope, is told enrolment is its sign-in provider's (`auth.mfa_sso_managed`,
+  403 — never an invalid-session answer, which would sign the page out). The IAM policy grows by two actions
+  (TENANCY_OPERATIONS §3.3, with a policy-simulator check); without them sign-in works and
+  operator readiness reports `sessions` not ready, naming the action.
+- **Signed-in users are moved, not signed out**: the page deletes what its storage held, unread,
+  and `POST /api/auth/session/migrate` exchanges the legacy httpOnly refresh cookie (MAC-checked
+  as before) for a session. The page stays "loading" meanwhile — no sign-in form flashes.
+
+**Found on the way, and fixed.**
+
+- **An operator's promotion ended the new administrator's sessions in the operator's tenant, not
+  the account's** (`makeTenantAdmin` runs in the operator's tenant; the sessions are the other
+  tenant's rows): the role changed and the old session carried on. It now ends them in the
+  account's tenant (`db/tenant-lifecycle.db`, which fails without the fix: "role_changed" expected,
+  "live" received).
+- **"Sign out everywhere" claimed success whatever the server answered.** The page now signs out
+  only when the server did it, and says so when it could not.
+- **TENANCY_OPERATIONS said the erasure attestation has no console screen** (it has had one since
+  TASK-202) and told operators to copy their access token into a terminal; the agent kill-switch
+  runbook did the same. Both now use the console, and — by hand — the signed-in browser itself:
+  there is no token to copy.
+- **RELEASE_NOTES' deploy paragraph listed migrations to 064** (there are 070) and eleven
+  consumer rows.
+- The staff idle notice's countdown was a live region read out every second; it is announced once.
+
+- **The page's read of its session was counted per address with the other session routes (30 a
+  minute).** Every page load reads `GET /api/auth/session` once — before this task a page read
+  its token from storage and asked nothing — so forty signed-in people behind one address would
+  have refused each other, and the E2E suite (one address) met the limit. The read has its own
+  rule, `AUTH_SESSION_STATUS` (120 a minute), counted for the session the cookie names (its hash)
+  and for the address only when it names none; and a first read the server cannot answer for the
+  moment is asked again twice (250 ms, 750 ms) before the page shows itself signed out. Found by
+  the E2E run on Playform's larger suite.
+
+**Guards (each with self-tests).** `no-client-tokens` (no credential in `localStorage`,
+`sessionStorage`, `indexedDB` or `document.cookie`; no token property or bearer in client code;
+no route answers one; every cookie the server sets is HttpOnly — with a register of what an app
+legitimately keeps); `user-route-credentials` (no production source reads an `Authorization`
+header but a registered machine-credential reader); `session-token-confinement` (only the vault
+opens a token; each place one can leave it is listed, with why).
+
+**Tests.** `session-hostile` (a stolen id at another tenant; a replayed id after sign-out and
+after sign-out everywhere; a fixed id; a cross-site POST without the token, with the wrong one,
+with another session's, from another origin; an expired idle and absolute session, staff and
+user; a user banned, erased, given another role or deleted at the provider mid-session;
+concurrent renewal; a bearer on a user route; a tampered record); `auth-sessions`,
+`session-vault`, `session-store` (+ the contract kit on memory and Postgres),
+`session-lifetimes`, `session-idle-warning`, `cognito-sessions`, `r17-hostile-signout`,
+`api-fetch`, `auth-context`, `account-page`, `proxy`; on Postgres:
+`db/session-store.db` (the kit, tenant isolation, the guard with a stolen cross-tenant id),
+`db/moderation-account-status.db` (a suspension and a ban end the account's sessions),
+`db/permission-cache-invalidation.db` (erasure does), `db/admin-tenant-data.db` and
+`db/tenant-lifecycle.db` (a role change does, in the account's tenant); the replay's 070 step
+(isolation, shapes, applied twice keeping an operator's value). E2E `e2e/session.spec.ts`:
+sign-in through the form and as a guest (no token in the answer, storage or a readable cookie),
+a change with and without the session's token and from another origin, sign-out and the replayed
+cookie, sign out everywhere from the account page, an idle session expired, and a browser signed
+in before ADR-057 moved over. The deploy smoke test and the monkey start cookie sessions as a
+browser does; the smoke test fails a deployment whose guest answer carries a token or whose
+cookie is script-readable, and the monkey gains invariant I7 (a session's cookie and token from
+another origin never change anything).
+
+**Design check**
+
+- **Reach:** every route guard and so every route; the page's auth context and `apiFetch`, so
+  every screen; the auth provider interface (Cognito, the mock, the browser provider, the contract
+  kit); the page proxy; a new table with its migration, replay step, retention rule, user-data
+  and erasure registration; the environment contract (`SESSION_ENCRYPTION_KEY`), the Cognito
+  admin action list, operator readiness; the E2E helpers, the smoke test, the monkey, three
+  workflows' harness settings; ADR-057 and the operator documents.
+- **Races:** concurrent renewal of one session (single flight in a process; compare-and-set across
+  processes — exactly one stored, tested on Postgres); a session ended while its renewal is in
+  flight (stays ended: a revoked row takes no tokens); sign-in while another session is presented
+  (the old one is ended, the new id is always new); two "touches" in one minute (idempotent
+  forward-only write).
+- **Dependencies down:** the database down → no session can be read: the guards answer
+  `service.unavailable`, never "signed out" and never "signed in"; the identity provider down at
+  renewal → 503, the session kept; refusing the refresh token → the session ended; the provider
+  down at sign-out → the session ended in its record regardless; the administrative key missing
+  or under-privileged → sign-in still works (GetUser as before), the two administrative
+  operations answer a coded 503 or `providerSignedOut: false`, readiness says which action.
+- **Erasure leftovers:** `auth_sessions` is in the platform's deletion manifest and the user-data
+  register (by `subject`): erased with the account; ended rows are deleted by the retention job
+  after `retention.auth_sessions_days` (45).
+- **Screens × responses:** every screen's calls go through `apiFetch`: a 401
+  `auth.token_invalid`/`auth.required` marks the page signed out (it goes to sign-in); a 403
+  `auth.csrf_failed` re-reads the session's token once and retries — handled in transport, no
+  screen shows it; the account page's new section shows the sign-out-everywhere failure; the staff
+  idle notice. The route fixtures were regenerated from the real handlers.
+- **Journeys touched:** every E2E journey signs in through the one helper
+  (`e2e/helpers/session.ts`) — each person once per run: the run keeps its sessions (the test
+  double's cookie and forgery token, in the run's own temporary directory), so a worker restarted
+  after a failed test joins them instead of signing in again, and the sign-in limit is never
+  raised for the harness; `e2e/session.spec.ts` is new; five journey exemptions are removed
+  (`/auth`, sign-in, sign-out, guest, the deleted refresh route), none added.
+- **Weakens a tenant's protection?** No: a session is its tenant's row under row-level security —
+  an id presented at another tenant's address finds nothing (tested through the guard on
+  Postgres) — and the one cross-tenant act, an operator's promotion, now ends the promoted
+  account's sessions in that account's tenant.
+
+**Threat model**
+
+- **Boundary:** the browser ↔ server credential (the cookie), the server ↔ Cognito credential
+  (the sealed tokens, the administrative key), and the new `auth_sessions` table.
+- **Actors that exist today:** (1) a script running in a signed-in user's page — an XSS, a
+  browser extension, a compromised dependency: the actor of SEC-016. It can no longer read or
+  carry away a credential; while the page is open it can still make the page's own requests
+  (RFC 10017 §5.1.4), which the content-security policy exists to prevent. (2) Another website
+  the user visits while signed in: its requests carry no cookie on a cross-site POST, name its
+  own origin, and lack the session's token — refused three ways. (3) Someone with a copied
+  session id (a shared machine, a proxy log): it works only at its tenant's address, only until
+  sign-out, expiry or any revocation, and "sign out everywhere" is the user's remedy. (4) A
+  signed-in user of tenant A probing tenant B with their own cookie: no row. (5) A suspended,
+  banned or erased user, or a demoted administrator, holding an open session: ended at once.
+  (6) Whoever can read the database but not the application's environment: session rows hold a
+  hash and ciphertext. Pre-launch there are no external users yet; staff and the owner are the
+  accounts that exist, and the staff lifetimes are the short ones.
+- **Bypasses:** a bearer header on a user route (not read — tested per route family and by a
+  guard); a session id supplied before sign-in (never adopted); a state-changing GET (none
+  exists — the route checks); a request with no `Origin` and no `Referer` (allowed only with the
+  session's token; a route with no session yet — sign-in, a guest's start — is refused only when
+  it names another origin, so a non-browser client can still sign in, which forges nobody's
+  session); the forwarded host a client sets (a forging page cannot set it).
+- **Forgeries:** a made-up or edited session id (no row); sealed tokens copied between rows (do
+  not open: the row's hash is authenticated data); a renewal answering another user (not used);
+  a legacy refresh cookie forged or edited (its MAC fails; a renewal naming another user than the
+  cookie's is not used); the session's token of one session with another's cookie (refused).
+- **Legitimate flows:** sign-in by password, with a second factor, with a new-password challenge,
+  by single sign-on, as a guest; many tabs and devices; a link followed from an email while
+  signed in (`SameSite=Lax`); a staff member mid-form at the idle limit (warned, continues); the
+  jobs tick and an app's agents with their own credentials; a browser signed in before the deploy.
+- **Agreed before code:** the owner's brief for batch 56b; the owner's three decisions of
+  2026-11-12 (ADR-057 D1 `SameSite`, D5, D7, D8).
+
+**Self-review**
+
+- **Consumers checked:** every caller of `requireAuth`, `requireActor`, `requireAdmin`,
+  `optionalAuth` and of the removed `accessToken` on their results (the MFA routes, the guest
+  route, sign-out); every caller of `apiFetch` and of `useAuth()` (`signOut`, `signOutEverywhere`
+  now answers whether it was done, `session`); every implementer of `AuthProvider` (Cognito, the
+  mock, the browser provider, the test doubles in the suites) for `renewSession`,
+  `signOutEverywhere`, `disableMfa(userId)`, `confirmCurrentFactor(userId, …)`,
+  `confirmForgotPassword` → `userId`; every reader of `REFRESH_COOKIE_KEY` and of the Cognito
+  admin action list (the contract, the readiness checks, ENV_REFERENCE, TENANCY_OPERATIONS —
+  held equal by `cognito-admin-actions`, the policy-simulator command included); every place a
+  role, a status or an account's existence changes (searched by `invalidatePermissions` and
+  `revokeTokenVerification`, which already marked them); every script and workflow that sent a
+  bearer (the E2E specs, the smoke test, the monkey; the k6 scripts send none).
+- **Hostile re-read:** the cookie name in a non-production build (`pf_session`, never accepted by
+  a production build, which reads only the `__Host-` name); a session row whose `kind` is `guest`
+  presented to a user route; lifetimes of 0, negative, NaN or 1e15 in the settings (clamped to
+  the bounds); permissions unreadable while choosing an audience (staff limits); `x-csrf-token`
+  of the right length and wrong value (constant-time compare); `Origin: null`; an `Origin` that
+  only starts with this origin; a sign-out replayed (records and revokes once); a promotion
+  across tenants (the defect above); a countdown that reaches zero while "Stay signed in" is in
+  flight (the server's answer decides).
+
 ### TASK-213 — Batch 56a: the tests' shell proven on macOS (bash 3.2, BSD tools), and the open Dependabot bumps taken on develop
 
 | Field        | Detail                                                                                         |
@@ -1927,9 +2151,11 @@ script sends no auth header, so every live request 401s at the guard before reac
 moderation, translate/classify, or the orchestrator. A live run today costs ~$0 and
 measures only 401-rejection latency.
 
-**Resolution:** add auth to the k6 script — acquire a test-user JWT (sign in via
-`/api/auth/sign-in` or mint a token) and send it as `Authorization: Bearer …` on the
-`/process` and `/stream` calls. Then run `DRY_RUN=0` against **staging** for the first real
+**Resolution:** add auth to the k6 script — since TASK-214 (ADR-057) a user route takes only the
+cookie session, so: sign in once per virtual user (`POST /api/auth/sign-in`, k6's cookie jar keeps
+the session cookie), read the session's forgery token (`GET /api/auth/session`, `csrfToken`), and
+send it as `x-csrf-token` with the deployment's own `Origin` on the `/process` and `/stream`
+calls (never an `Authorization: Bearer` header — no route reads one from a user). Then run `DRY_RUN=0` against **staging** for the first real
 moderation + agent latency baseline. Phase-exit expectation — do not close Phase 5 without it.
 
 **Dry baseline (Phase 5 Sprint 0, for reference):** prod, 10 VUs, 1221 reqs, 0% errors;

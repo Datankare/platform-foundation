@@ -295,6 +295,12 @@ export const PLATFORM_ERROR_CODES = {
     params: [],
     action: "Restart the challenge.",
   },
+  "auth.csrf_failed": {
+    status: 403,
+    params: [],
+    action:
+      "Read the session again (GET /api/auth/session) for its current token, send it in x-csrf-token from this origin, and retry once; else ask the user to reload.",
+  },
   "auth.code_expired": {
     status: 400,
     params: [],
@@ -358,6 +364,12 @@ export const PLATFORM_ERROR_CODES = {
     action:
       'The account signs in through a federated provider (SSO) and its proof of the current factor could not be made with a pool password (TASK-194): tell the user to check the password if they set one, or else to ask an operator for the recorded, operator-assisted two-step verification reset (docs/TENANCY_OPERATIONS.md, "Resetting two-step verification"). The factor is unchanged.',
   },
+  "auth.mfa_sso_managed": {
+    status: 403,
+    params: [],
+    action:
+      "The session was started by single sign-on (ADR-057 D7): the identity provider applies no second factor of its own to a federated sign-in, and the session's token cannot enrol one. Tell the user two-step verification is set with their sign-in provider; nothing was changed. An account that also has a password here can sign in with it and enrol.",
+  },
   "auth.password_policy": {
     status: 400,
     params: [{ name: "rules", kind: "list", optional: true }],
@@ -407,7 +419,7 @@ export const PLATFORM_ERROR_CODES = {
   "auth.token_invalid": {
     status: 401,
     params: [],
-    action: "Refresh the token, else show sign-in.",
+    action: "Show sign-in: the session has ended (signed out, expired or revoked).",
   },
   "auth.too_many_attempts": {
     status: 429,

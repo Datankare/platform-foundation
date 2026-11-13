@@ -92,6 +92,11 @@ beforeEach(() => {
 // ============================================================
 // POST /api/auth/sign-in
 // ============================================================
+// hostile:role n/a: these routes are public by design: signing in, signing up and resetting a password need no role
+// hostile:self n/a: no route here names another account: each acts on the credentials or the session presented
+// hostile:store-down n/a: the session store failing at sign-in and at sign-out is auth-sessions.test's case, the provider failing is tested here as a coded 500
+// hostile:id-spelling n/a: no account id is read from a request here: the provider names the user
+
 describe("POST /api/auth/sign-in", () => {
   let handler: (req: NextRequest) => Promise<Response>;
 
@@ -100,7 +105,7 @@ describe("POST /api/auth/sign-in", () => {
     handler = mod.POST;
   });
 
-  it("returns success with tokens on valid sign-in", async () => {
+  it("returns success, and no token, on a valid sign-in", async () => {
     mockProvider.signIn.mockResolvedValue({
       success: true,
       userId: "user-123",
@@ -114,13 +119,15 @@ describe("POST /api/auth/sign-in", () => {
     );
     const body = await res.json();
 
-    expect(body.success).toBe(true);
-    expect(body.accessToken).toBe("tok");
+    expect(body).toEqual({ success: true, userId: "user-123" });
+    // The tokens stay on the server (ADR-057): none in the body.
+    expect(JSON.stringify(body)).not.toMatch(/tok|ref/);
   });
 
   it("sets session cookie on successful sign-in", async () => {
     mockProvider.signIn.mockResolvedValue({
       success: true,
+      userId: "user-123",
       accessToken: "tok",
       expiresIn: 3600,
     });
@@ -130,7 +137,11 @@ describe("POST /api/auth/sign-in", () => {
     );
     const setCookie = res.headers.get("set-cookie");
 
-    expect(setCookie).toContain("pf_has_session=true");
+    // The HttpOnly session cookie (ADR-057); the old script-readable indicator is only cleared.
+    expect(setCookie).toMatch(
+      /pf_session=[\w-]{43}; Path=\/; Expires=[^;]+; Max-Age=\d+; HttpOnly/i
+    );
+    expect(setCookie).not.toContain("pf_has_session=true");
   });
 
   it("returns 400 when email missing", async () => {
@@ -264,13 +275,12 @@ describe("POST /api/auth/sign-out", () => {
   it("clears session cookie", async () => {
     mockProvider.signOut.mockResolvedValue(undefined);
 
-    const res = await handler(makeEmptyRequest({ authorization: "Bearer test-token" }));
+    const res = await handler(makeEmptyRequest());
     const body = await res.json();
     const setCookie = res.headers.get("set-cookie");
 
     expect(body.success).toBe(true);
-    expect(setCookie).toContain("pf_has_session=");
-    expect(setCookie).toContain("Max-Age=0");
+    expect(setCookie).toMatch(/pf_session=;[^,]*Max-Age=0/);
   });
 
   it("succeeds even without token", async () => {
@@ -403,6 +413,7 @@ describe("POST /api/auth/mfa-challenge", () => {
   it("responds to MFA challenge", async () => {
     mockProvider.respondToMfaChallenge.mockResolvedValue({
       success: true,
+      userId: "user-123",
       accessToken: "mfa-tok",
     });
 
@@ -434,6 +445,7 @@ describe("POST /api/auth/new-password-challenge", () => {
   it("responds to new-password challenge", async () => {
     mockProvider.respondToNewPasswordChallenge.mockResolvedValue({
       success: true,
+      userId: "user-123",
       accessToken: "new-pass-tok",
     });
 
@@ -466,21 +478,37 @@ describe("POST /api/auth/guest", () => {
     handler = mod.POST;
   });
 
-  it("mints a platform-signed guest token, whatever the auth provider", async () => {
+  it("starts a guest session holding a platform-signed guest token, whatever the auth provider", async () => {
     const res = await handler(
       new NextRequest("http://localhost/api/auth/guest", { method: "POST" })
     );
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
-    expect(body.token).toMatch(/^guest\./);
+    // The token stays on the server (ADR-057): the body names the guest, and no more.
+    expect(body.token).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain("guest.");
     // Never the provider: guests are the platform's (ADR-050 D4).
     expect(mockProvider.createGuestToken).not.toHaveBeenCalled();
+    const id = /pf_session=([\w-]{43});/.exec(res.headers.get("set-cookie") ?? "")?.[1];
+    expect(id).toBeDefined();
+    const { hashSessionId } = await import("@/platform/auth/session");
+    const { getSessionStore } = await import("@/platform/auth/session-store");
+    const { openIdentity } = await import("@/platform/auth/session-vault");
+    const { DEFAULT_TENANT_ID, runWithTenant } =
+      await import("@/platform/tenancy/context");
+    const idHash = hashSessionId(id as string);
+    const record = await runWithTenant(
+      { tenantId: DEFAULT_TENANT_ID, mode: "single" },
+      () => getSessionStore().find(idHash)
+    );
+    expect(record).toMatchObject({ kind: "guest", subject: body.guestId });
     const { verifyGuestToken } = await import("@/platform/auth/guest-token");
-    await expect(verifyGuestToken(body.token)).resolves.toMatchObject({
+    if (!record) throw new Error("the guest session was not recorded");
+    const held = openIdentity(record.sealedTokens, idHash);
+    await expect(verifyGuestToken(held.token)).resolves.toMatchObject({
       valid: true,
       guestId: body.guestId,
     });
-    expect(res.headers.get("set-cookie")).toContain("pf_has_session=true");
   });
 });

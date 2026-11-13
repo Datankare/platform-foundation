@@ -25,6 +25,7 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: () => "req-relink-r16",
 }));
 
+import { sessionHeadersFor } from "../helpers/session";
 import { randomInt, randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { withOwnerTx } from "@/platform/data";
@@ -221,9 +222,13 @@ function signInAs(subject: string, over: Partial<TokenPayload> = {}): string {
   });
   return token;
 }
-const httpRequest = (path: string, token: string) =>
+/** A request from a browser whose session holds `token` (ADR-057), in the deployment's tenant. */
+const httpRequest = async (path: string, token: string) =>
   new NextRequest(`http://localhost${path}`, {
-    headers: { authorization: `Bearer ${token}`, "x-forwarded-for": "203.0.113.16" },
+    headers: {
+      ...(await sessionHeadersFor(token, { tenantId: process.env.TENANT_ID })),
+      "x-forwarded-for": "203.0.113.16",
+    },
   });
 
 const saved = { mode: process.env.TENANCY_MODE, tenant: process.env.TENANT_ID };
@@ -271,18 +276,18 @@ async function signedIn(t: TestTenant, subject: string) {
   const perms = await t.run(() => resolvePermissions(subject));
   return asSingle(t, async () => {
     const token = signInAs(subject);
-    const actor = await requireActor(httpRequest("/api/x", token), {
+    const actor = await requireActor(await httpRequest("/api/x", token), {
       allowGuests: false,
     });
     const guarded = await requireActorWithStatus(
-      httpRequest("/api/x", token),
+      await httpRequest("/api/x", token),
       "translate",
       {
         allowGuests: false,
       }
     );
     const admin = await requireAdmin(
-      httpRequest("/api/admin/config", token),
+      await httpRequest("/api/admin/config", token),
       "can_access_admin"
     );
     const cached = await getCachedPermissions(subject);
@@ -357,19 +362,22 @@ dbDescribe(
       const id = await staff(t, email);
       const g = pool.google(email);
       await relinkIdentities(request({ email, tenantId: t.id, apply: true }), deps());
-      const refused = await asSingle(t, () =>
+      const refused = await asSingle(t, async () =>
         requireAdmin(
-          httpRequest("/api/admin/config", signInAs(g.sub, { mfaEnabled: false })),
+          await httpRequest("/api/admin/config", signInAs(g.sub, { mfaEnabled: false })),
           "can_access_admin"
         )
       );
       expect(refused.error?.status).toBe(403);
       expect(await refused.error?.json()).toMatchObject({ code: "auth.mfa_required" });
       // The account itself is reached: an ordinary route serves it.
-      const actor = await asSingle(t, () =>
-        requireActor(httpRequest("/api/x", signInAs(g.sub, { mfaEnabled: false })), {
-          allowGuests: false,
-        })
+      const actor = await asSingle(t, async () =>
+        requireActor(
+          await httpRequest("/api/x", signInAs(g.sub, { mfaEnabled: false })),
+          {
+            allowGuests: false,
+          }
+        )
       );
       expect(actor.actor).toMatchObject({ kind: "user", id });
     });

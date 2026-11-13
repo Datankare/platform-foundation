@@ -16,6 +16,7 @@ import { useSsoProviders } from "@/components/auth/useSsoProviders";
 import { useReturnError } from "@/components/auth/useReturnError";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { readRefusal } from "@/platform/errors/refusal";
+import { apiFetch } from "@/platform/auth/api-fetch";
 
 /** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
 const t = (key: string, values?: MessageValues) =>
@@ -30,34 +31,16 @@ type AuthView =
   | "email-verification";
 
 /**
- * A guest session (ADR-050 D4): guest tokens are the platform's, minted and signed on the server —
- * never by an auth provider in the browser, which has no signing secret. A refusal answers its
- * own message (TASK-181: a rate limit, an unavailable service or tenant).
+ * A guest session (ADR-050 D4): the server mints the guest's token, keeps it in a server-side
+ * session and sets the session cookie (ADR-057) — the page receives no token. A refusal answers
+ * its own message (TASK-181: a rate limit, an unavailable service or tenant).
  */
-async function startGuestSession(): Promise<
-  { session: Parameters<ReturnType<typeof useAuth>["setSession"]>[0] } | { error: string }
-> {
-  const res = await fetch("/api/auth/guest", {
-    method: "POST",
-    credentials: "same-origin",
-  });
+async function startGuestSession(): Promise<{ started: true } | { error: string }> {
+  const res = await apiFetch("/api/auth/guest", { method: "POST" });
   if (!res.ok) return { error: (await readRefusal(res)).message };
-  const result = (await res.json().catch(() => ({}))) as {
-    token?: unknown;
-    guestId?: unknown;
-  };
-  if (typeof result.token !== "string" || typeof result.guestId !== "string") {
-    return { error: t("guest_access_failed") };
-  }
-  return {
-    session: {
-      accessToken: result.token,
-      userId: result.guestId,
-      email: "",
-      emailVerified: false,
-      isGuest: true,
-    },
-  };
+  const result = (await res.json().catch(() => ({}))) as { guestId?: unknown };
+  if (typeof result.guestId !== "string") return { error: t("guest_access_failed") };
+  return { started: true };
 }
 
 /**
@@ -82,16 +65,12 @@ export default function AuthPage() {
   // Asked before the account form (COPPA, audit X-16); the server checks and records it.
   const [dateOfBirth, setDateOfBirth] = useState<string | null>(null);
   const ssoProviders = useSsoProviders();
-  const { setSession } = useAuth();
-  // A completed sign-in; the refresh token stays in the server's httpOnly cookie (audit X-17).
-  const signIn = (r: { accessToken?: string; userId?: string }, address: string) => {
-    if (r.accessToken && r.userId) {
-      setSession({
-        accessToken: r.accessToken,
-        userId: r.userId,
-        email: address,
-        emailVerified: true,
-      });
+  const { sessionStarted } = useAuth();
+  // A completed sign-in: the server set the session cookie and kept the provider's tokens
+  // (ADR-057); the page reads who is signed in from the server.
+  const signIn = async (r: { success?: boolean; userId?: string }) => {
+    if (r.success && r.userId && !(await sessionStarted())) {
+      setError(t("an_unexpected_error_occurred_please"));
     }
   };
 
@@ -139,7 +118,7 @@ export default function AuthPage() {
         return;
       }
 
-      signIn(result, email);
+      await signIn(result);
     } catch {
       /* justified */
       // Auth errors shown to user via setError
@@ -287,7 +266,7 @@ export default function AuthPage() {
         return;
       }
 
-      signIn(result, pendingEmail);
+      await signIn(result);
     } catch {
       /* justified */
       // Auth errors shown to user via setError
@@ -314,7 +293,7 @@ export default function AuthPage() {
     try {
       const guest = await startGuestSession();
       if ("error" in guest) setError(guest.error);
-      else setSession(guest.session);
+      else if (!(await sessionStarted())) setError(t("guest_access_failed"));
     } catch {
       /* justified */
       // Auth errors shown to user via setError
@@ -340,7 +319,7 @@ export default function AuthPage() {
         return;
       }
 
-      signIn(result, pendingEmail);
+      await signIn(result);
     } catch {
       /* justified */
       // Auth errors shown to user via setError

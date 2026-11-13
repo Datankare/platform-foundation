@@ -168,7 +168,8 @@ describe("an attribute change voids remembered verifications (review 8 M1)", () 
     });
     expect(call(2).action).toBe("AdminGetUser");
     expect((await p.verifyToken(token))?.emailVerified).toBe(true);
-    expect(call(3).action).toBe("GetUser");
+    // The user a token names is read with the administrative key (ADR-057 D7), not the token.
+    expect(call(3).action).toBe("AdminGetUser");
   });
 
   it("a lookup that fails is logged; the verification still succeeds", async () => {

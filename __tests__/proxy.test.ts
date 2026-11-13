@@ -9,7 +9,8 @@ import { contentSecurityPolicy } from "@/platform/security/csp";
 function req(path: string, init: { auth?: boolean; cookie?: boolean } = {}) {
   const headers = new Headers();
   if (init.auth) headers.set("authorization", "Bearer t");
-  if (init.cookie) headers.set("cookie", "pf_has_session=true");
+  // The session cookie's name in this (non-production) build; the proxy never reads its value.
+  if (init.cookie) headers.set("cookie", `pf_session=${"s".repeat(43)}`);
   return new NextRequest(`https://app.example${path}`, { headers });
 }
 
@@ -27,6 +28,21 @@ describe("proxy", () => {
     const body = await res.json();
     expect(body.code).toBe("auth.required");
     expect(typeof body.message).toBe("string");
+  });
+
+  it("a machine's credential of any scheme passes to its route; an empty Authorization header is none", () => {
+    const withAuthorization = (value: string) =>
+      proxy(
+        new NextRequest("http://localhost/api/agent/delegation/token", {
+          method: "POST",
+          headers: { authorization: value },
+        })
+      ).status;
+    // An agent's client credential at its token endpoint (RFC 6749 §2.3.1), a bearer.
+    expect(withAuthorization("Basic YWdlbnQ6c2VjcmV0")).toBe(200);
+    expect(withAuthorization("Bearer t")).toBe(200);
+    // Nothing presented: refused before any route.
+    expect(withAuthorization("   ")).toBe(401);
   });
 
   it("lets an API call with a bearer token or session cookie through to the route", () => {
@@ -51,6 +67,124 @@ describe("proxy", () => {
       proxy(req("/profile", { cookie: true })).headers.get("x-middleware-next")
     ).toBe("1");
   });
+
+  it("the old indicator cookie is no session: a page is sent to sign-in, an API call refused (ADR-057)", async () => {
+    const headers = { cookie: "pf_has_session=true" };
+    expect(
+      proxy(new NextRequest("https://app.example/profile", { headers })).status
+    ).toBe(307);
+    expect(
+      proxy(new NextRequest("https://app.example/api/process", { headers })).status
+    ).toBe(401);
+  });
+
+  describe("in a production build the cookie is __Host-pf_session", () => {
+    const saved = process.env.NODE_ENV;
+    const setNodeEnv = (value: string | undefined) =>
+      Object.defineProperty(process.env, "NODE_ENV", {
+        value,
+        configurable: true,
+        writable: true,
+        enumerable: true,
+      });
+    afterEach(() => setNodeEnv(saved));
+
+    it("serves a page with it, and not with the local name", () => {
+      setNodeEnv("production");
+      const page = (cookie: string) =>
+        proxy(new NextRequest("https://app.example/profile", { headers: { cookie } }));
+      expect(
+        page(`__Host-pf_session=${"s".repeat(43)}`).headers.get("x-middleware-next")
+      ).toBe("1");
+      expect(page(`pf_session=${"s".repeat(43)}`).status).toBe(307);
+    });
+  });
+});
+
+describe("a state-changing API request from another origin (ADR-057 D4)", () => {
+  const post = (path: string, headers: Record<string, string>, method = "POST") =>
+    proxy(new NextRequest(`https://app.example${path}`, { method, headers }));
+
+  it.each([
+    ["/api/auth/sign-in", "POST"],
+    ["/api/auth/sign-up", "POST"],
+    ["/api/auth/guest", "POST"],
+    ["/api/auth/sign-out", "POST"],
+    ["/api/process", "POST"],
+    ["/api/admin/config", "PUT"],
+    ["/api/admin/users", "PATCH"],
+    ["/api/account/delete", "DELETE"],
+  ])(
+    "%s %s is refused before any route runs — auth.csrf_failed",
+    async (path, method) => {
+      for (const origin of [
+        "https://evil.example",
+        "https://app.example.evil.example",
+        "http://app.example",
+        "https://sub.app.example",
+        "null",
+      ]) {
+        const res = post(
+          path,
+          { origin, cookie: `pf_session=${"s".repeat(43)}` },
+          method
+        );
+        expect(res.status).toBe(403);
+        expect((await res.json()).code).toBe("auth.csrf_failed");
+      }
+    }
+  );
+
+  it("a cross-site Referer with no Origin is refused too", async () => {
+    const res = post("/api/auth/sign-in", { referer: "https://evil.example/page" });
+    expect(res.status).toBe(403);
+  });
+
+  it("this origin passes, and so does a request that names no origin (a machine client)", () => {
+    expect(
+      post("/api/auth/sign-in", { origin: "https://app.example" }).headers.get(
+        "x-middleware-next"
+      )
+    ).toBe("1");
+    expect(post("/api/auth/sign-in", {}).headers.get("x-middleware-next")).toBe("1");
+    expect(
+      post("/api/internal/jobs/tick", { authorization: "Bearer t" }).headers.get(
+        "x-middleware-next"
+      )
+    ).toBe("1");
+  });
+
+  it("behind a proxy that forwards the browser's host and scheme, that origin is this one", () => {
+    const res = proxy(
+      new NextRequest("http://10.0.0.5:3000/api/auth/sign-in", {
+        method: "POST",
+        headers: {
+          origin: "https://play.example",
+          "x-forwarded-host": "play.example",
+          "x-forwarded-proto": "https",
+        },
+      })
+    );
+    expect(res.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("a read from another origin is not this check's (the route and SameSite decide)", () => {
+    const res = proxy(
+      new NextRequest("https://app.example/api/health", {
+        headers: { origin: "https://evil.example" },
+      })
+    );
+    expect(res.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("a page navigation from another site is not refused (a link into the app)", () => {
+    const res = proxy(
+      new NextRequest("https://app.example/auth", {
+        headers: { origin: "https://evil.example" },
+      })
+    );
+    expect(res.headers.get("x-middleware-next")).toBe("1");
+  });
 });
 
 describe("Content Security Policy (audit G-10)", () => {
@@ -58,7 +192,7 @@ describe("Content Security Policy (audit G-10)", () => {
   const nonceOf = (policy: string) => /'nonce-([^']+)'/.exec(policy)?.[1];
 
   it.each([
-    ["a page", "/", { cookie: "pf_has_session=true" }],
+    ["a page", "/", { cookie: `pf_session=${"s".repeat(43)}` }],
     ["the sign-in page", "/auth", {}],
     ["an API call", "/api/process", { authorization: "Bearer t" }],
     ["a refused API call", "/api/process", {}],

@@ -1,26 +1,41 @@
 /**
  * platform/auth/api-fetch.ts — fetch for the platform's own API, as the signed-in user
  *
- * The server authenticates every API call by its `Authorization: Bearer` header
- * (platform/auth/middleware.ts); the browser keeps the session's access token (context.tsx). A
- * screen that called `fetch` directly sent no token, so every authenticated call from it was
- * refused with 401 — the admin console, the review dashboard, appeals and the main screen all
- * did. apiFetch is `fetch` with the token attached:
+ * The server authenticates an API call by the session cookie the browser sends with it
+ * (ADR-057) — a cookie script cannot read, so this module holds no credential. What it adds to a
+ * call to this origin:
  *
- *   - only to this origin (a relative path, or an absolute URL on window.location.origin): the
- *     token is never sent to another site, whatever URL a caller passes;
- *   - only when the caller set no Authorization header of its own;
- *   - only a live token (an expired or corrupt session attaches nothing).
+ *   - `credentials: "same-origin"`, so the cookie goes with the call (and never to another
+ *     origin, whatever URL a caller passes);
+ *   - on a state-changing call (anything but GET, HEAD, OPTIONS), the session's forgery token in
+ *     `x-csrf-token` — the server requires it (platform/auth/session.ts). A page whose session
+ *     is still being read waits for that read.
  *
- * Without a session, or on the server, it is exactly `fetch(input, init)`.
+ * To another origin, or on the server, it is exactly `fetch(input, init)`.
  *
- * An access token lives an hour; when the API answers 401 to a call that carried one, the
- * session is renewed once from the server's refresh cookie (refreshSession, audit A-14) and the
- * call made again with the new token. A body that is a stream cannot be sent twice, so such a
- * call is not retried.
+ * Two refusals are handled here, for every screen (HANDLED_CODES):
+ *   auth.csrf_failed    the token held is not the session's (it moved to a new id in another
+ *                       tab): the session is read again and the call made once more with its
+ *                       current token. A body that is a stream cannot be sent twice, so such a
+ *                       call is not retried.
+ *   auth.token_invalid, auth.required
+ *                       the session has ended (signed out elsewhere, expired, revoked) or its
+ *                       cookie is gone: the page forgets it, and the screen shows sign-in. The
+ *                       response is returned as it is, for the screen's own refusal handling.
  */
 
-import { readAccessToken, refreshSession } from "./context";
+import {
+  currentSession,
+  loadSession,
+  noteSessionEnded,
+  pendingSessionLoad,
+} from "./context";
+
+/** The refusals this transport handles itself, for every caller (refusal-coverage.test.ts). */
+export const HANDLED_CODES = ["auth.csrf_failed"] as const;
+
+const CSRF_HEADER = "x-csrf-token";
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 const isRequest = (input: unknown): input is Request =>
   typeof Request !== "undefined" && input instanceof Request;
@@ -41,16 +56,34 @@ function isSameOrigin(input: RequestInfo | URL): boolean {
   }
 }
 
-function withToken(
+function methodOf(input: RequestInfo | URL, init?: RequestInit): string {
+  return (init?.method ?? (isRequest(input) ? input.method : "GET")).toUpperCase();
+}
+
+/** The caller's options with the cookie sent and, when there is one, the forgery token added. */
+function withSession(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
-  token: string
+  csrfToken: string | null
 ): RequestInit {
-  const headers = new Headers(
-    init?.headers ?? (isRequest(input) ? input.headers : undefined)
-  );
-  headers.set("Authorization", `Bearer ${token}`);
-  return { ...init, headers };
+  const own = init?.headers ?? (isRequest(input) ? input.headers : undefined);
+  if (!csrfToken) {
+    return { ...init, ...(own ? { headers: own } : {}), credentials: "same-origin" };
+  }
+  // A plain record stays one (what most callers pass); anything else becomes Headers.
+  if (own && !(own instanceof Headers) && !Array.isArray(own)) {
+    const kept = Object.fromEntries(
+      Object.entries(own).filter(([name]) => name.toLowerCase() !== CSRF_HEADER)
+    );
+    return {
+      ...init,
+      headers: { ...kept, [CSRF_HEADER]: csrfToken },
+      credentials: "same-origin",
+    };
+  }
+  const headers = new Headers(own);
+  headers.set(CSRF_HEADER, csrfToken);
+  return { ...init, headers, credentials: "same-origin" };
 }
 
 /** Whether `init` can be sent again (a stream body is consumed by the first send). */
@@ -69,19 +102,56 @@ function replayable(input: RequestInfo | URL, init?: RequestInit): boolean {
   );
 }
 
+/** The refusal code of a response, read from a copy (the caller still reads the body). */
+async function refusalCode(response: Response): Promise<string | null> {
+  try {
+    const data = (await response.clone().json()) as { code?: unknown };
+    return typeof data.code === "string" ? data.code : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface ApiFetchOptions {
+  /**
+   * What to do when the server says the session has ended. "note" (the default): the page
+   * forgets it, so its screens show sign-in. "leave": the response is only returned — for a
+   * caller that can start the session again itself and make the call once more (an app's guest
+   * screen, which starts a new guest session), and that calls noteSessionEnded() when it cannot.
+   */
+  readonly onSessionEnded?: "note" | "leave";
+}
+
 export async function apiFetch(
   input: RequestInfo | URL,
-  init?: RequestInit
+  init?: RequestInit,
+  options: ApiFetchOptions = {}
 ): Promise<Response> {
-  const token = isSameOrigin(input) ? readAccessToken() : null;
-  if (!token) return fetch(input, init);
-  const own = new Headers(
-    init?.headers ?? (isRequest(input) ? input.headers : undefined)
-  );
-  if (own.has("authorization")) return fetch(input, init);
-  const response = await fetch(input, withToken(input, init, token));
-  if (response.status !== 401 || !replayable(input, init)) return response;
-  const renewed = await refreshSession();
-  if (!renewed || renewed === token) return response;
-  return fetch(input, withToken(input, init, renewed));
+  if (!isSameOrigin(input)) return fetch(input, init);
+  const changing = !SAFE_METHODS.has(methodOf(input, init));
+  // A state-changing call waits for the page's read of its session, if one is under way. This
+  // never starts a read: the provider does, when it mounts. A call made with no token yet (no
+  // provider, or a read that failed) is refused by the server with auth.csrf_failed, and
+  // answered below by reading the session and making the call again.
+  if (changing && currentSession().status === "loading") {
+    const reading = pendingSessionLoad();
+    if (reading) await reading;
+  }
+  const held = currentSession();
+  const token = changing && held.status === "signed-in" ? held.csrfToken : null;
+  const response = await fetch(input, withSession(input, init, token));
+  if (response.status !== 401 && response.status !== 403) return response;
+  const code = await refusalCode(response);
+  if (
+    response.status === 401 &&
+    (code === "auth.token_invalid" || code === "auth.required")
+  ) {
+    if (options.onSessionEnded !== "leave") noteSessionEnded();
+    return response;
+  }
+  if (code !== "auth.csrf_failed" || !changing || !replayable(input, init))
+    return response;
+  const renewed = await loadSession();
+  if (renewed.status !== "signed-in" || renewed.csrfToken === token) return response;
+  return fetch(input, withSession(input, init, renewed.csrfToken));
 }

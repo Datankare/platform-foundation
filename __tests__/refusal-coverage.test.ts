@@ -23,7 +23,11 @@
  *            handler (it calls handleRefusal or readRefusal — platform/errors/refusal.ts) and the
  *            code is a platform code (REFUSAL_HANDLERS decides every one), or when the caller
  *            lists the code in its own `HANDLED_CODES` array (an app code, or a code the screen
- *            treats itself).
+ *            treats itself), or when the caller makes its calls through apiFetch and the code is
+ *            one apiFetch handles for every caller — platform/auth/api-fetch.ts's own
+ *            `HANDLED_CODES` (ADR-057: `auth.csrf_failed`, answered by reading the session again
+ *            and making the call once more with its current token; a screen sees it only when
+ *            that fails too, as the server's message).
  *
  * The pairs not covered today are listed in refusal-coverage-baseline.json (repository root, per
  * repository — a consumer keeps its own; it is not synced). The list may only shrink: a new gap
@@ -194,6 +198,17 @@ export function usesSharedHandler(text: string): boolean {
   return /\b(?:handleRefusal|readRefusal)\(/.test(text);
 }
 
+/** The transport every screen calls the API through, and the refusals it handles itself. */
+const TRANSPORT_FILE = "platform/auth/api-fetch.ts";
+export function transportCodes(): string[] {
+  return handledCodes(read(join(ROOT, TRANSPORT_FILE)));
+}
+
+/** Whether a caller makes its API calls through the transport (and no other way). */
+export function usesTransportOnly(text: string): boolean {
+  return /\bapiFetch\(/.test(text) && !/(?<![\w.])fetch\(/.test(text);
+}
+
 function callerFiles(): string[] {
   return [
     ...walk(join(ROOT, "app"), isSource).filter((f) => !rel(f).startsWith("app/api/")),
@@ -202,12 +217,20 @@ function callerFiles(): string[] {
 }
 
 /** The (caller, route, code) pairs one caller leaves unhandled. */
-export function callerGaps(path: string, text: string, all: readonly Route[]): string[] {
+export function callerGaps(
+  path: string,
+  text: string,
+  all: readonly Route[],
+  transport: readonly string[] = []
+): string[] {
   const out = new Set<string>();
   const literals = apiLiterals(text, path);
   if (literals.length === 0) return [];
   const shared = usesSharedHandler(text);
-  const own = new Set(handledCodes(text));
+  const own = new Set([
+    ...handledCodes(text),
+    ...(usesTransportOnly(text) ? transport : []),
+  ]);
   for (const literal of literals) {
     const route = matchRoute(literal, all);
     if (!route) continue;
@@ -223,8 +246,9 @@ export function callerGaps(path: string, text: string, all: readonly Route[]): s
 
 export function gaps(): string[] {
   const all = routes(guardTable(guardModules()));
+  const transport = transportCodes();
   return [
-    ...new Set(callerFiles().flatMap((f) => callerGaps(rel(f), read(f), all))),
+    ...new Set(callerFiles().flatMap((f) => callerGaps(rel(f), read(f), all, transport))),
   ].sort();
 }
 
@@ -360,6 +384,29 @@ describe("refusal coverage (TASK-181)", () => {
     ]);
     const listed = `${shared} const HANDLED_CODES = ["app.planted.refused"];`;
     expect(callerGaps("components/Planted.tsx", listed, [route])).toEqual([]);
+  });
+
+  it("[self-test] a code the transport handles is covered only for a caller that calls through it, and only that code", () => {
+    const route: Route = {
+      path: "/api/planted",
+      segments: ["api", "planted"],
+      codes: ["auth.csrf_failed", "auth.permission_denied"],
+    };
+    expect(transportCodes()).toEqual(["auth.csrf_failed"]);
+    const through = 'const r = await apiFetch("/api/planted", { method: "POST" });';
+    expect(
+      callerGaps("components/P.tsx", through, [route], ["auth.csrf_failed"])
+    ).toEqual(["components/P.tsx -> /api/planted : auth.permission_denied"]);
+    // A plain fetch sends no session token and is not retried: the code is the screen's to handle.
+    const plain = 'const r = await fetch("/api/planted", { method: "POST" });';
+    expect(callerGaps("components/P.tsx", plain, [route], ["auth.csrf_failed"])).toEqual([
+      "components/P.tsx -> /api/planted : auth.csrf_failed",
+      "components/P.tsx -> /api/planted : auth.permission_denied",
+    ]);
+    // …and so is a caller that mixes the two.
+    expect(
+      callerGaps("components/P.tsx", `${through} ${plain}`, [route], ["auth.csrf_failed"])
+    ).toHaveLength(2);
   });
 
   it("[self-test] recognises the banned pattern", () => {

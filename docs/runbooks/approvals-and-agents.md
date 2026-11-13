@@ -217,25 +217,39 @@ the pending holds withdrawn, and — when none was active — whether every inst
 drop its cached registry (`republished`; "did not go through" is `config.invalidation_unpublished`,
 below). "Unavailable" (503) means nothing was suspended: try again, or use the API.
 
-**Every agent of a tenant at once** (operators, `platform_operate`):
+**By hand, when the console cannot be used.** A person's session is a cookie the browser holds
+(ADR-057): there is no token to copy into a terminal. Signed in to the admin console, open the
+browser's developer console on that page and run one of these.
 
-```bash
-curl -sS -X POST "https://$HOST/api/operator/tenants/$TENANT_ID/agents/suspend" \
-  -H "authorization: Bearer $OPERATOR_TOKEN" -H "content-type: application/json" \
-  -d '{"reason": "incident 2026-10-24: agent:x looping"}'
-# → {"suspended": ["agent:x", "agent:y"], "withdrawn": ["<hold id>", …]}
+Every agent of a tenant at once (operators, `platform_operate`; replace the tenant's id):
+
+```js
+const { csrfToken } = await (await fetch("/api/auth/session")).json();
+const r = await fetch("/api/operator/tenants/TENANT_ID/agents/suspend", {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+  body: JSON.stringify({ reason: "incident 2026-10-24: agent:x looping" }),
+});
+console.log(r.status, await r.json());
 ```
 
-**Every agent of the current tenant, in any deployment mode** (review 12 L7) — a single-tenant
+It answers `{"suspended": ["agent:x", "agent:y"], "withdrawn": ["<hold id>", …]}`.
+
+Every agent of the current tenant, in any deployment mode (review 12 L7) — a single-tenant
 deployment's own administrators, who hold `config_manage_safety` but not `platform_operate`:
 
-```bash
-curl -sS -X POST "https://$HOST/api/admin/agents/suspend" \
-  -H "authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" \
-  -d '{"reason": "incident 2026-10-24: agent:x looping"}'
-# → {"suspended": ["agent:x", "agent:y"], "withdrawn": ["<hold id>", …]}
-# every agent already suspended → {"suspended": [], "withdrawn": [], "republished": true}
+```js
+const { csrfToken } = await (await fetch("/api/auth/session")).json();
+const r = await fetch("/api/admin/agents/suspend", {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+  body: JSON.stringify({ reason: "incident 2026-10-24: agent:x looping" }),
+});
+console.log(r.status, await r.json());
 ```
+
+It answers the same; when every agent was already suspended,
+`{"suspended": [], "withdrawn": [], "republished": true}`.
 
 In a single-tenant deployment it suspends the deployment's agents (the platform default); in a
 shared one, the tenant's own registry where the caller may change it (an operator; else refused —

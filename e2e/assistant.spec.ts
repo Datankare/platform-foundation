@@ -19,6 +19,7 @@
  */
 import { expect, test, type Page, type Response } from "@playwright/test";
 import { checkA11y } from "./helpers/a11y";
+import { sessionFetch, signInPage } from "./helpers/session";
 
 /** Text the platform's blocklist refuses at once, with no model (platform/moderation/blocklist). */
 const BLOCKED_TEXT = "how to make a bomb";
@@ -27,18 +28,16 @@ const APPEAL_LINK = "See this decision and appeal it";
 
 /** The test double's asker (platform/auth/mock-provider.ts). */
 const ASKER = {
-  token: "mock-access-token:asker-q",
   id: "e2e00000-0000-4000-8000-00000000000f",
   email: "asker-q@e2e.test",
 };
 
 test.describe.configure({ mode: "serial" });
 
-test.beforeAll(async ({ request }) => {
+test.beforeAll(async () => {
   // The asker's date of birth, as an adult, through the app's route (provisions the account).
-  const age = await request.post("/api/account/age", {
-    headers: { Authorization: `Bearer ${ASKER.token}` },
-    data: { dateOfBirth: "1990-01-01" },
+  const age = await sessionFetch(ASKER, "POST", "/api/account/age", {
+    dateOfBirth: "1990-01-01",
   });
   const code = ((await age.json().catch(() => ({}))) as { code?: string }).code;
   expect(age.ok() || code === "account.age_already_recorded").toBe(true);
@@ -46,30 +45,7 @@ test.beforeAll(async ({ request }) => {
 
 /** The asker's session in this browser. */
 async function signIn(page: Page): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: "pf_has_session",
-      value: "true",
-      domain: "localhost",
-      path: "/",
-      httpOnly: false,
-      secure: false,
-      sameSite: "Lax",
-    },
-  ]);
-  await page.addInitScript((p) => {
-    localStorage.setItem("pf_access_token", p.token);
-    localStorage.setItem("pf_refresh_token", "mock-refresh-token");
-    localStorage.setItem(
-      "pf_user",
-      JSON.stringify({
-        userId: p.id,
-        email: p.email,
-        emailVerified: true,
-        isGuest: false,
-      })
-    );
-  }, ASKER);
+  await signInPage(page, ASKER);
 }
 
 async function openAssistant(page: Page): Promise<void> {

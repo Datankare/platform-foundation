@@ -144,7 +144,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Database (Supabase)
 
-- ✅ 70 migrations (001–069), tracked in `applied_migrations`; new databases start from the schema
+- ✅ 71 migrations (001–070), tracked in `applied_migrations`; new databases start from the schema
   baseline
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Forced row-level security on every tenant-owned table; every server query runs through `platform/data` as `app_tenant`, which cannot bypass it (ADR-053)
@@ -154,7 +154,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 | Document                                      | Purpose                                                                                   |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `docs/adr/ADR-001–056`                        | 56 Architecture Decision Records                                                          |
+| `docs/adr/ADR-001–057`                        | 57 Architecture Decision Records                                                          |
 | `docs/TAD.md`                                 | Technical Architecture Document                                                           |
 | `docs/ROADMAP.md`                             | 10-phase product roadmap with versioned changelog                                         |
 | `docs/GENAI_ROADMAP.md`                       | GenAI-native capability map — accomplished and forthcoming                                |
@@ -216,8 +216,8 @@ platform-foundation/
 ├── hooks/                  ← React hooks (the assistant's stream)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 26 abstractions (ADR-027)
-├── supabase/migrations/    ← 70 database migrations
-├── docs/adr/               ← 56 ADRs
+├── supabase/migrations/    ← 71 database migrations
+├── docs/adr/               ← 57 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
 ```
@@ -286,7 +286,7 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v4.1.0 — Datankare_
-_Phase 5 Sprint 7R · 270 suites · 3,474 tests · 92.18% statement coverage · 56 ADRs · 18 GenAI principles · 27 conformance kits · 21 provider slots_
+_Phase 5 Sprint 7R · 270 suites · 3,474 tests · 92.18% statement coverage · 57 ADRs · 18 GenAI principles · 27 conformance kits · 21 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
 _Last updated: September 24, 2026 (v2.5.0 — Phase 5 Sprint 6 close: multimodal AI — multimodal provider interface (ADR-044), screenModality safety seam (ADR-046), screened multimodal input, governed image generation (ADR-045), and provenance + synthetic-media detection (ADR-047); all fail-closed on one shared substrate, with L21 conformance kits)_

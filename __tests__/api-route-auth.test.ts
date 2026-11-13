@@ -57,9 +57,9 @@ const PLATFORM_PUBLIC: Readonly<Record<string, string>> = {
   "app/api/auth/sign-in/route.ts POST": "Establishes the session.",
   "app/api/auth/sign-up/route.ts POST": "Creates the account.",
   "app/api/auth/sign-out/route.ts POST":
-    "Ends the session; revokes only the tokens it is given (bearer and refresh cookie).",
-  "app/api/auth/refresh/route.ts POST":
-    "Renews the session; the httpOnly refresh cookie is the credential, checked by the provider.",
+    "Ends the session the cookie names (resolveSession: this origin, the session's token); without one there is nothing to end.",
+  "app/api/auth/session/migrate/route.ts POST":
+    "Moves a pre-ADR-057 browser onto a server-side session; the httpOnly legacy cookie (MAC-checked) is the credential, exchanged with the provider.",
   "app/api/auth/guest/route.ts POST": "Mints a signed guest token (ADR-050 D4).",
   "app/api/auth/forgot-password/route.ts POST": "Account recovery before sign-in.",
   "app/api/auth/confirm-forgot-password/route.ts POST":

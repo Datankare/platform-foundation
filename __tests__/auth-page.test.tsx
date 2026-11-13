@@ -9,18 +9,21 @@ import { registerAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
 import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 
-// Mock the auth context
-const mockSetSession = jest.fn();
+// Mock the auth context: after a sign-in step the page asks it to read the new session from the
+// server (ADR-057 — the page receives no token to keep).
+const mockSessionStarted = jest.fn(async () => true);
 jest.mock("@/platform/auth/context", () => ({
+  ...jest.requireActual("@/platform/auth/context"),
   useAuth: () => ({
-    setSession: mockSetSession,
+    sessionStarted: mockSessionStarted,
     user: null,
-    accessToken: null,
     isLoading: false,
     isAuthenticated: false,
     isGuest: false,
+    session: { status: "signed-out" },
     signOut: jest.fn(),
-    getAccessToken: () => null,
+    signOutEverywhere: jest.fn(),
+    staySignedIn: jest.fn(),
   }),
 }));
 
@@ -152,19 +155,13 @@ describe("AuthPage", () => {
     expect(screen.getByText("Continue as Guest")).toBeDefined();
   });
 
-  it("starts a guest session with a server-minted token (ADR-050 D4)", async () => {
+  it("starts a guest session on the server and reads it back — no token reaches the page (ADR-050 D4, ADR-057)", async () => {
     guest = "POST /api/auth/guest — started";
+    // The route's own answer carries no token for the page to keep.
+    expect(JSON.stringify(routeAnswer(guest)[1])).not.toMatch(/token/i);
     render(<AuthPage />);
     fireEvent.click(screen.getByText("Continue as Guest"));
-    await waitFor(() =>
-      expect(mockSetSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          accessToken: "guest.p.m",
-          userId: "guest_abc",
-          isGuest: true,
-        })
-      )
-    );
+    await waitFor(() => expect(mockSessionStarted).toHaveBeenCalledTimes(1));
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/auth/guest",
       expect.objectContaining({ method: "POST" })
@@ -177,7 +174,7 @@ describe("AuthPage", () => {
     fireEvent.click(screen.getByText("Continue as Guest"));
     const { message } = routeAnswer(guest)[1] as { message: string };
     expect(await screen.findByText(message)).toBeDefined();
-    expect(mockSetSession).not.toHaveBeenCalled();
+    expect(mockSessionStarted).not.toHaveBeenCalled();
   });
 
   it("offers only the SSO providers /api/features reports available", async () => {

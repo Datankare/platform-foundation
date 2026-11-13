@@ -3,12 +3,13 @@
  *
  * @guard a browser call to the API that bypasses apiFetch
  *
- * Every authenticated route reads the caller from `Authorization: Bearer` (platform/auth/
- * middleware.ts). A screen that called `fetch("/api/…")` sent no token and was refused with 401 —
- * the whole admin console, the review dashboard, appeals and the main screen did, until
- * apiFetch (platform/auth/api-fetch.ts). This keeps it so: browser code reaches the platform's
- * API through apiFetch, except the listed calls that run before there is a session or set the
- * header themselves.
+ * Every authenticated route reads the caller from the server-side session its cookie names, and
+ * a state-changing call must carry that session's forgery token (platform/auth/middleware.ts,
+ * session.ts; ADR-057). A screen that called `fetch("/api/…")` itself sent no forgery token — and
+ * before apiFetch (platform/auth/api-fetch.ts) no credential at all: the whole admin console, the
+ * review dashboard, appeals and the main screen were refused. This keeps it so: browser code
+ * reaches the platform's API through apiFetch, except the listed calls that run before there is
+ * a session or are the session's own read.
  */
 
 import { productionSources, read } from "./helpers/route-policy";
@@ -17,11 +18,8 @@ import { APP_ROUTE_POLICY } from "@/platform/route-policy/app-route-policy";
 /** The platform's direct fetch calls, and why. A new one is a reviewed change. */
 const PLATFORM_DIRECT: Readonly<Record<string, string>> = {
   "components/auth/useSsoProviders.ts": "/api/features — public, read before sign-in",
-  "components/auth/AuthPage.tsx": "/api/auth/guest — creates the session",
-  "app/auth/callback/SsoCallbackClient.tsx":
-    "/api/auth/sso/callback — creates the session",
   "platform/auth/context.tsx":
-    "/api/auth/refresh (the httpOnly refresh cookie is the credential) and /api/auth/sign-out (sets the Authorization header itself)",
+    "/api/auth/session (the page's own read of its session — what apiFetch takes the forgery token from), /api/auth/session/migrate (before there is a session), and the two sign-outs (they send the token the context holds)",
 };
 
 /** With the app's own, declared in app-route-policy.ts (directFetch). */

@@ -11,48 +11,12 @@
 
 import React from "react";
 import { renderToString } from "react-dom/server";
-import { act, renderHook, waitFor } from "@testing-library/react";
 import { AuthContextProvider, useAuth } from "@/platform/auth/context";
-
-describe("AuthContextProvider after a restore", () => {
-  it("a new sign-in replaces the restored session, and sign-out clears both", async () => {
-    localStorage.setItem("pf_access_token", "guest_old_" + Date.now());
-    localStorage.setItem(
-      "pf_user",
-      JSON.stringify({ userId: "old", email: "", emailVerified: false, isGuest: true })
-    );
-    const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <AuthContextProvider>{children}</AuthContextProvider>
-    );
-    const { result } = renderHook(() => useAuth(), { wrapper });
-    await waitFor(() => expect(result.current.user?.userId).toBe("old"));
-
-    act(() =>
-      result.current.setSession({
-        accessToken: "new-token",
-        userId: "new",
-        email: "n@x.y",
-        emailVerified: true,
-      })
-    );
-    expect(result.current.user?.userId).toBe("new");
-    expect(result.current.getAccessToken()).toBe("new-token");
-    expect(localStorage.getItem("pf_access_token")).toBe("new-token");
-
-    global.fetch = jest.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
-    await act(async () => {
-      await result.current.signOut();
-    });
-    expect(result.current.user).toBeNull();
-    expect(result.current.getAccessToken()).toBeNull();
-    expect(localStorage.getItem("pf_access_token")).toBeNull();
-    expect(localStorage.getItem("pf_user")).toBeNull();
-  });
-});
 
 describe("AuthContextProvider on the server", () => {
   it("renders loading and reads no storage, so hydration agrees", () => {
     const getItem = jest.spyOn(Storage.prototype, "getItem");
+    // What a sign-in before ADR-057 left in storage: read by no render, server or client.
     localStorage.setItem("pf_access_token", "guest_x_" + Date.now());
     localStorage.setItem(
       "pf_user",

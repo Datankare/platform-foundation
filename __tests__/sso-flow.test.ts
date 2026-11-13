@@ -37,7 +37,6 @@ import {
   ssoRedirectUri,
 } from "@/platform/auth/sso";
 import { GET as start } from "@/app/api/auth/sso/[provider]/route";
-import { readRefreshCookie } from "@/platform/auth/auth-response";
 import { POST as callback } from "@/app/api/auth/sso/callback/route";
 
 const ORIGIN = "https://staging.example.com";
@@ -63,6 +62,10 @@ function b64url(o: unknown): string {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
+
+// hostile:role n/a: hosted sign-in is public by design: no role is needed to start or finish it
+// hostile:self n/a: no route here names an account: the callback signs in whoever the provider answers for
+// hostile:id-spelling n/a: no account id is read: the state and the verifier are compared exactly ('sameState is exact')
 
 describe("sso helpers", () => {
   it("randomToken is 43 base64url characters and unique", () => {
@@ -238,30 +241,26 @@ describe("POST /api/auth/sso/callback", () => {
     expect(body).toEqual({
       success: true,
       userId: "u-1",
-      accessToken: "access",
-      expiresIn: 3600,
       email: "r@x.com",
       emailVerified: true,
     });
-    // The refresh token is never in the body: an httpOnly cookie for the auth routes (X-17).
-    const refresh = res.cookies.get("pf_refresh");
-    // `<user id>.<mac>.<token>`, the MAC binding the id to the token (review 17 M1).
-    expect(readRefreshCookie(refresh?.value)).toEqual({
-      userId: "u-1",
-      refreshToken: "refresh",
-    });
-    expect(refresh).toMatchObject({
+    // No token reaches the browser (ADR-057): not in the body, not in a cookie. The session
+    // cookie carries an opaque id, HttpOnly, and the old refresh cookie is only ever cleared.
+    const raw = res.headers.get("set-cookie") ?? "";
+    expect(JSON.stringify(body) + raw).not.toMatch(/access|refresh"|h\.[\w-]+\.s/);
+    expect(res.cookies.get("pf_session")).toMatchObject({
       httpOnly: true,
-      sameSite: "strict",
-      path: "/api/auth",
+      sameSite: "lax",
+      path: "/",
     });
+    expect(res.cookies.get("pf_session")?.value).toMatch(/^[\w-]{43}$/);
+    expect(res.cookies.get("pf_refresh")?.value ?? "").toBe("");
     expect(mockProvider.handleSsoCallback).toHaveBeenCalledWith(
       "google",
       "the-code",
       `${ORIGIN}/auth/callback`,
       { codeVerifier: verifier }
     );
-    expect(res.cookies.get("pf_has_session")?.value).toBe("true");
     expect(cleared(res)).toBe(true);
   });
 
@@ -307,17 +306,17 @@ describe("POST /api/auth/sso/callback", () => {
     const res = await callbackReq({ code: "c", state }, cookie);
     expect(res.status).toBe(401);
     expect((await res.json()).code).toBe("auth.sso_failed");
-    expect(res.cookies.get("pf_has_session")).toBeUndefined();
+    expect(res.cookies.get("pf_session")).toBeUndefined();
     expect(cleared(res)).toBe(true);
   });
 
-  it("answers a provider that throws as a coded 500 and ends the attempt (PR-16)", async () => {
+  it("[hostile:store-down] answers a provider that throws as a coded 500 and ends the attempt (PR-16)", async () => {
     const { state, cookie } = attemptCookie();
     mockProvider.handleSsoCallback.mockRejectedValue(new Error("network"));
     const res = await callbackReq({ code: "c", state }, cookie);
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBe("internal.error");
-    expect(res.cookies.get("pf_has_session")).toBeUndefined();
+    expect(res.cookies.get("pf_session")).toBeUndefined();
     expect(cleared(res)).toBe(true);
   });
 });

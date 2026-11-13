@@ -179,14 +179,17 @@ The operator console's readiness check (section 4) verifies all three.
 
 ### 3.3 The IAM key
 
-The platform sets a new user's tenant (AdminUpdateUserAttributes), deletes an erased account's
+The platform reads the user a session belongs to (AdminGetUser — every authenticated request's
+check that the account still exists and is enabled; ADR-057 D7), signs a user out everywhere
+(AdminUserGlobalSignOut), removes a second factor after a step-up (AdminSetUserMFAPreference),
+sets a new user's tenant (AdminUpdateUserAttributes), deletes an erased account's
 identity (ListUsers finds the pool user by its subject — a federated user's username is not its
 subject — then AdminDeleteUser; DescribeUserPool confirms the pool before a "not found" counts as
 erased: TASK-193 — without them every erasure's identity step stays pending and alerts
 `gdpr.external_erasure_pending`) and checks the pool's setup. **Every Cognito deployment needs
 this key, in either tenancy mode** — a single deployment erases identities with it too; without
 it the operator readiness check `erasure` reports not ready. Create an IAM user for this alone,
-with this inline policy, named `cognito-tenancy-and-erasure` — exactly these eight actions, on
+with this inline policy, named `cognito-tenancy-and-erasure` — exactly these ten actions, on
 the one pool (replace region, account and pool id; `COGNITO_ADMIN_ACTIONS` in
 `platform/providers/environment-contract.ts` is the same list, and a test holds the two equal):
 
@@ -200,6 +203,8 @@ the one pool (replace region, account and pool id; `COGNITO_ADMIN_ACTIONS` in
         "cognito-idp:AdminUpdateUserAttributes",
         "cognito-idp:AdminGetUser",
         "cognito-idp:AdminDeleteUser",
+        "cognito-idp:AdminUserGlobalSignOut",
+        "cognito-idp:AdminSetUserMFAPreference",
         "cognito-idp:ListUsers",
         "cognito-idp:DescribeUserPool",
         "cognito-idp:ListUserPoolClients",
@@ -214,6 +219,28 @@ the one pool (replace region, account and pool id; `COGNITO_ADMIN_ACTIONS` in
 
 Create an access key for it and paste the two values straight into the host's environment
 settings (never into a chat or a file).
+
+**Check the policy** with IAM's policy simulator, as an administrator of the account (it needs
+`iam:SimulatePrincipalPolicy`; replace the account, the IAM user's name, the region and the pool
+id). It prints every action the key is **not** allowed — nothing printed means all ten are:
+
+```bash
+aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::ACCOUNT:user/IAM_USER_NAME --resource-arns arn:aws:cognito-idp:REGION:ACCOUNT:userpool/POOL_ID --action-names cognito-idp:AdminUpdateUserAttributes cognito-idp:AdminGetUser cognito-idp:AdminDeleteUser cognito-idp:AdminUserGlobalSignOut cognito-idp:AdminSetUserMFAPreference cognito-idp:ListUsers cognito-idp:DescribeUserPool cognito-idp:ListUserPoolClients cognito-idp:DescribeUserPoolClient cognito-idp:DescribeIdentityProvider --query 'EvaluationResults[?EvalDecision!=`allowed`].EvalActionName' --output text
+```
+
+The running deployment checks the same from the inside: **Admin → Tenants (operators) → Check**
+lists `sessions` ready when the key may read a user, sign one out everywhere and remove a factor,
+and otherwise names the action that was refused.
+
+**A deployment whose policy still has the eight actions of before ADR-057** (no
+AdminUserGlobalSignOut, no AdminSetUserMFAPreference) keeps signing users in: sessions, sign-out
+and every revocation work from the session records. Until the two actions are added, "sign out
+everywhere" ends every session here and revokes each one's refresh token, but cannot ask Cognito
+to end tokens the platform never held (its answer says `providerSignedOut: false`); removing a
+second factor answers `service.unavailable`; and the readiness
+check reports `sessions` not ready, naming the missing action. Add the two actions to the inline
+policy (IAM → Users → the user → Permissions → `cognito-tenancy-and-erasure` → Edit), run the
+simulator command above, then **Check** again.
 
 ### 3.4 How users join a tenant
 
@@ -294,11 +321,14 @@ operators attest it erased. Only such a step can be attested; the reason is one 
 `pool_decommissioned`, `deleted_in_old_pool`, `identity_never_existed`; the note (3–500
 characters) is kept only in the audit record. One operator asks, a different one approves within 7
 days; the step is then recorded done and `attested` (who asked, who approved, when, why) and the
-next gdpr.retention-purge run completes the erasure. There is no console screen: call the route
-with your own access token (copy it from the `Authorization: Bearer …` header of any `/api/admin`
-request in the browser's network tab while signed in to the console).
+next gdpr.retention-purge run completes the erasure.
 
-Find the step (SQL Editor):
+**In the console** (TASK-202): **Admin → Erasures** lists every open erasure and each step; on a
+step that can be attested the first operator chooses **Ask for attestation** (the reason and the
+note), and a different operator, signed in as themselves, chooses **Approve attestation** (or
+either rejects). The screen says so when no second operator exists.
+
+To find the step in the database instead (SQL Editor, read-only):
 
 ```sql
 select tenant_id, user_id, external_erasures -> 'identity-provider' as step
@@ -306,19 +336,34 @@ select tenant_id, user_id, external_erasures -> 'identity-provider' as step
  where external_erasures -> 'identity-provider' ->> 'poolUnverified' = 'true';
 ```
 
-Ask (first operator), then approve (second operator) — set the two ids from that query:
+**By hand, when the console cannot be used** — as the signed-in operator, from the browser: a
+person's session is a cookie the browser holds (ADR-057), so there is no token to copy into a
+terminal, and none should be. Signed in to the admin console, open the browser's developer
+console on that page and run (replace the two ids; the first operator asks):
 
-```bash
-export HOST=https://<host> TENANT_ID=<tenant_id> USER_ID=<user_id>
-read -rs "T?Paste your access token (hidden): "; echo
-curl -s -X POST "$HOST/api/operator/tenants/$TENANT_ID/erasures/$USER_ID/attestation" -H "Authorization: Bearer $T" -H "content-type: application/json" -d '{"reason":"deleted_in_old_pool","note":"deleted in the old pool by <name> on <date>"}'; echo
-unset T
+```js
+const { csrfToken } = await (await fetch("/api/auth/session")).json();
+const r = await fetch("/api/operator/tenants/TENANT_ID/erasures/USER_ID/attestation", {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+  body: JSON.stringify({
+    reason: "deleted_in_old_pool",
+    note: "deleted in the old pool by NAME on DATE",
+  }),
+});
+console.log(r.status, await r.json());
 ```
 
-```bash
-read -rs "T?Paste your access token (hidden): "; echo
-curl -s -X POST "$HOST/api/operator/tenants/$TENANT_ID/erasures/$USER_ID/attestation" -H "Authorization: Bearer $T" -H "content-type: application/json" -d '{"decision":"approve","note":"checked"}'; echo
-unset T
+The second operator, signed in as themselves in their own browser, approves:
+
+```js
+const { csrfToken } = await (await fetch("/api/auth/session")).json();
+const r = await fetch("/api/operator/tenants/TENANT_ID/erasures/USER_ID/attestation", {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+  body: JSON.stringify({ decision: "approve", note: "checked" }),
+});
+console.log(r.status, await r.json());
 ```
 
 The first answers `201` with the step's `attestationRequest`; the second `200` with `doneAt` and

@@ -51,6 +51,7 @@ export interface ReadinessCheck {
     | "directory"
     | "identity"
     | "erasure"
+    | "sessions"
     | "client_secret"
     | "dual_control";
   readonly state: CheckState;
@@ -141,6 +142,37 @@ async function erasureCheck(provider: AuthProvider | undefined): Promise<Readine
     name: "erasure",
     state: r.state === "unknown" ? "unknown" : "not_ready",
     detail: shown("screens.readiness.erasure_not_ready", { reason: r.reason }),
+  };
+}
+
+/**
+ * Whether the provider's administrative key can do what server-side sessions ask of it (ADR-057
+ * D7): read a user, sign one out everywhere, turn a second factor off. Not ready is a degraded
+ * deployment, not a broken one — sign-in and sign-out still work — and the detail names the
+ * missing action or key.
+ */
+async function sessionsCheck(
+  provider: AuthProvider | undefined
+): Promise<ReadinessCheck> {
+  if (!provider?.checkSessionAccess) {
+    return {
+      name: "sessions",
+      state: "not_needed",
+      detail: shown("screens.readiness.sessions_not_needed"),
+    };
+  }
+  const r = await provider.checkSessionAccess();
+  if (r.state === "ready") {
+    return {
+      name: "sessions",
+      state: "ready",
+      detail: shown("screens.readiness.sessions_ready"),
+    };
+  }
+  return {
+    name: "sessions",
+    state: r.state === "unknown" ? "unknown" : "not_ready",
+    detail: shown("screens.readiness.sessions_not_ready", { reason: r.reason }),
   };
 }
 
@@ -267,12 +299,13 @@ export async function checkTenancyReadiness(
   }
 
   const provider = providerOrNone();
-  const [erasure, clientSecret, dual] = await Promise.all([
+  const [erasure, sessions, clientSecret, dual] = await Promise.all([
     erasureCheck(provider),
+    sessionsCheck(provider),
     clientSecretCheck(provider),
     checkDualControlReadiness(options.heldActions),
   ]);
-  checks.push(erasure, clientSecret, {
+  checks.push(erasure, sessions, clientSecret, {
     name: "dual_control",
     state: dual.state,
     detail: dual.detail,

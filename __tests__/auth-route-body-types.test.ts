@@ -184,22 +184,31 @@ describe("a server whose providers cannot be initialised", () => {
 });
 
 describe("POST /api/auth/sign-out with a provider that throws", () => {
-  it("answers a coded 500 rather than reporting the session ended", async () => {
+  it("ends the session in its record all the same: the record, not the provider, refuses the id from then on (ADR-057 D6)", async () => {
     const signOut = jest.fn().mockRejectedValue(new Error("provider down"));
     Object.assign(provider, { signOut });
     const { POST } = (await import("@/app/api/auth/sign-out/route")) as {
       POST: (r: NextRequest) => Promise<Response>;
     };
+    const { startTestSession } = await import("./helpers/session");
+    const { getSessionStore } = await import("@/platform/auth/session-store");
+    const { DEFAULT_TENANT_ID, runWithTenant } =
+      await import("@/platform/tenancy/context");
+    const session = await startTestSession({ refreshToken: "refresh-1" });
     const res = await POST(
       new NextRequest("http://localhost/api/auth/sign-out", {
         method: "POST",
-        headers: { authorization: "Bearer t", "x-forwarded-for": "203.0.113.9" },
+        headers: { ...session.headers, "x-forwarded-for": "203.0.113.9" },
       })
     );
-    expect(res.status).toBe(500);
-    expect((await res.json()).code).toBe("internal.error");
-    expect(signOut).toHaveBeenCalledWith("t", undefined);
-    // The browser still stops claiming a session.
-    expect(res.headers.get("set-cookie")).toMatch(/pf_has_session=;.*Max-Age=0/i);
+    expect(res.status).toBe(200);
+    expect(signOut).toHaveBeenCalledWith("", "refresh-1");
+    const record = await runWithTenant(
+      { tenantId: DEFAULT_TENANT_ID, mode: "single" },
+      () => getSessionStore().find(session.idHash)
+    );
+    expect(record?.revokedReason).toBe("sign_out");
+    // The browser stops claiming a session.
+    expect(res.headers.get("set-cookie")).toMatch(/pf_session=;.*Max-Age=0/i);
   });
 });

@@ -17,6 +17,7 @@
  */
 
 import { readdirSync, statSync } from "node:fs";
+import { sessionHeadersFor } from "@/__tests__/helpers/session";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 
@@ -73,12 +74,13 @@ const CHANGE: Record<string, jest.Mock> = {
   "app/api/auth/mfa/disable/route.ts": provider.disableMfa,
 };
 
-function req(path: string, body?: unknown): NextRequest {
+/** A POST from the browser whose session (USER's) holds the token "access-1" (ADR-057). */
+async function req(path: string, body?: unknown): Promise<NextRequest> {
   return new NextRequest(`http://localhost${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      authorization: "Bearer access-1",
+      ...(await sessionHeadersFor("access-1", { subject: USER })),
       "x-forwarded-for": "203.0.113.7",
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -155,7 +157,7 @@ describe("every MFA route is classified (self-test of the list)", () => {
 });
 
 describe.each(Object.keys(FACTOR_CHANGING_ROUTES))("%s (factor-changing)", (route) => {
-  const call = (body?: unknown) => ROUTES[route](req(`/${route}`, body));
+  const call = async (body?: unknown) => ROUTES[route](await req(`/${route}`, body));
 
   it.each([
     ["no body", undefined],
@@ -195,15 +197,15 @@ describe.each(Object.keys(FACTOR_CHANGING_ROUTES))("%s (factor-changing)", (rout
     expect(kept.details).toMatchObject({ code: "auth.code_invalid" });
   });
 
-  it("asks the provider for proof of the token's own factor, and then makes the change", async () => {
+  it("asks the provider for proof of the session's own user's factor, and then makes the change", async () => {
     const res = await call({ password: "right", currentCode: "123456" });
     expect(res.status).toBe(200);
-    expect(provider.confirmCurrentFactor).toHaveBeenCalledWith(
-      "access-1",
-      "right",
-      "123456"
+    expect(provider.confirmCurrentFactor).toHaveBeenCalledWith(USER, "right", "123456");
+    // Removal is an administrative call, by the session's subject; enrolment is the one call
+    // made with the session's own access token (ADR-057 D7).
+    expect(CHANGE[route]).toHaveBeenCalledWith(
+      route.includes("/disable/") ? USER : "access-1"
     );
-    expect(CHANGE[route]).toHaveBeenCalledWith("access-1");
   });
 
   it("[hostile:store-down] the identity provider failing during the step-up: coded, nothing changed", async () => {
@@ -240,7 +242,7 @@ describe.each(Object.keys(FACTOR_CHANGING_ROUTES))("%s (factor-changing)", (rout
 
 describe("disable records the change with its step-up", () => {
   it("records mfa_disabled after the proof", async () => {
-    await disable(req("/x", { password: "right", currentCode: "123456" }));
+    await disable(await req("/x", { password: "right", currentCode: "123456" }));
     expect(mockRecordAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "mfa_disabled",
@@ -252,10 +254,10 @@ describe("disable records the change with its step-up", () => {
 
 // TASK-194 round 1, B1: the step-up other routes reuse (the delegation consent).
 describe("confirmStepUp, reused", () => {
-  const caller = { sub: USER, accessToken: "access-1" };
-  const call = (over: Record<string, unknown>) =>
+  const caller = { sub: USER };
+  const call = async (over: Record<string, unknown>) =>
     confirmStepUp({
-      request: req("/api/agent/delegation/authorize"),
+      request: await req("/api/agent/delegation/authorize"),
       caller,
       purpose: "agent-consent",
       password: "pw",
@@ -275,7 +277,7 @@ describe("confirmStepUp, reused", () => {
   it("allowPasswordOnly: a password alone is put to the provider with no code", async () => {
     provider.confirmCurrentFactor.mockResolvedValue({ success: true });
     expect(await call({ allowPasswordOnly: true })).toEqual({ ok: true });
-    expect(provider.confirmCurrentFactor).toHaveBeenCalledWith("access-1", "pw", null);
+    expect(provider.confirmCurrentFactor).toHaveBeenCalledWith(USER, "pw", null);
   });
 
   it("a code, when given, must be six digits, and is passed on", async () => {
@@ -285,11 +287,7 @@ describe("confirmStepUp, reused", () => {
     expect(await call({ allowPasswordOnly: true, currentCode: "123456" })).toEqual({
       ok: true,
     });
-    expect(provider.confirmCurrentFactor).toHaveBeenCalledWith(
-      "access-1",
-      "pw",
-      "123456"
-    );
+    expect(provider.confirmCurrentFactor).toHaveBeenCalledWith(USER, "pw", "123456");
   });
 
   it("[hostile:role] no password, or no bearer: refused before the provider", async () => {
@@ -300,15 +298,15 @@ describe("confirmStepUp, reused", () => {
       const r = await call(over);
       expect(r.ok).toBe(false);
     }
-    const noBearer = await confirmStepUp({
-      request: req("/x"),
-      caller: { sub: USER, accessToken: "" },
+    const noSubject = await confirmStepUp({
+      request: await req("/x"),
+      caller: { sub: "" },
       purpose: "agent-consent",
       password: "pw",
       currentCode: undefined,
       allowPasswordOnly: true,
     });
-    expect(noBearer.ok).toBe(false);
+    expect(noSubject.ok).toBe(false);
     expect(provider.confirmCurrentFactor).not.toHaveBeenCalled();
   });
 });

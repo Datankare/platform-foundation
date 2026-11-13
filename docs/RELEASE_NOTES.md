@@ -21,10 +21,31 @@ command bar's search limited to what the admin pages show (TASK-189), and one li
 screen (TASK-190), and roles and permissions in a logical order (TASK-192), and every lifecycle
 closed and every erasure completed (TASK-193), and the sweep's access-control batch (TASK-194),
 and external dependency failures coded, probed and alerted (TASK-197), and the engineering process
-enforced in CI (TASK-200), and erasure, retention and dual-control readiness (TASK-203). Deploy:
-migrations 053, 054, 055, 056, 057, 058, 059, 060, 061, 062, 063 and 064 in the SQL Editor
-([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
-code. Consumer steps: §1b, the eleven "Release candidate" rows.
+enforced in CI (TASK-200), and erasure, retention and dual-control readiness (TASK-203), and
+server-side sessions (TASK-214). Deploy: every migration from 053 to 070, in order, in the SQL
+Editor ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2 lists each with its check), set
+`SESSION_ENCRYPTION_KEY` (a deployment that already ran an earlier candidate keeps its
+`REFRESH_COOKIE_KEY` for 30 days more), then the code. Consumer steps: §1b, the twelve "Release
+candidate" rows.
+
+- **Server-side sessions: the browser holds no token (TASK-214, ADR-057, SEC-016).** A sign-in is
+  a server-side record (`auth_sessions`, migration 070) behind one HttpOnly, Secure, SameSite=Lax
+  cookie, `__Host-pf_session`; the identity provider's tokens stay on the server, encrypted under
+  the new required `SESSION_ENCRYPTION_KEY` (rotation: `_PREVIOUS`). No route answers a token and
+  no client code stores one (`no-client-tokens`). Every state-changing request must come from this
+  origin with the session's own token (`x-csrf-token`; `apiFetch` sends it): `auth.csrf_failed`
+  otherwise. Session lifetimes are governed, bounded settings (users 7 days idle / 30 days; staff
+  30 minutes / 12 hours, warned before an idle sign-out; guests 24 hours). Sign-out ends the
+  session on the server; **sign out everywhere** is on the account page; a password reset, a
+  ban, a role change and erasure end every session of the account at once. **A user route no
+  longer accepts `Authorization: Bearer`** — a bearer is a machine's credential (the jobs tick, an
+  agent's own). With Cognito the session's user is read with the administrative key, single
+  sign-on stops asking for the `aws.cognito.signin.user.admin` scope, and the key's policy gains
+  `AdminUserGlobalSignOut` and `AdminSetUserMFAPreference` (operator readiness: `sessions`).
+  Browsers signed in before are moved over without a new sign-in. **MUST:** apply migration 070
+  before the code; set `SESSION_ENCRYPTION_KEY`; add the two IAM actions; move your own client
+  code and tests off bearer tokens ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1b, "server-side
+  sessions").
 
 - **Erasure, retention and dual-control readiness (TASK-203).** A dual-controlled request no one
   else could approve is refused up front (`approvals.no_eligible_approver`), never held to lapse;

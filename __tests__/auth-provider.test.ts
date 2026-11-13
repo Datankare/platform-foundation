@@ -21,6 +21,7 @@ import { createMockAuthProvider } from "@/platform/auth/mock-provider";
 const mockFixtures: AuthContractFixtures = {
   makeProvider: () => createMockAuthProvider(),
   validAccessToken: "mock-access-token",
+  validUserId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   invalidAccessToken: "invalid-token",
   validRefreshToken: "mock-refresh-token",
   mfaSession: "mock-mfa-session",

@@ -25,7 +25,13 @@ const REQUEST_ID = /^req_[0-9a-f]{16}$/;
  */
 export const FIXTURE_NOW = "2026-01-01T00:00:00.000Z";
 
-/** A body with its volatile values fixed: every generated request id (alone or quoted). */
+/** What a fixture holds where a session's forgery token was. Not a credential. */
+export const CSRF_TOKEN = "csrf-token-of-the-session";
+
+/**
+ * A body with its volatile values fixed: every generated request id (alone or quoted), and a
+ * session's forgery token.
+ */
 export function normaliseBody(value: unknown): unknown {
   if (typeof value === "string") {
     if (REQUEST_ID.test(value)) return "req_0000000000000000";
@@ -37,7 +43,8 @@ export function normaliseBody(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([k, v]) => [
         k,
-        normaliseBody(v),
+        // A session's forgery token is random per session (ADR-057): fixed, as a request id is.
+        k === "csrfToken" && typeof v === "string" ? CSRF_TOKEN : normaliseBody(v),
       ])
     );
   return value;

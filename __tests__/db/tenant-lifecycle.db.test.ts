@@ -7,6 +7,9 @@
  * audit log first, in the operator's own tenant.
  */
 
+import { getSessionStore } from "@/platform/auth/session-store";
+import { startTestSession } from "../helpers/session";
+import { runWithTenant } from "@/platform/tenancy/context";
 import { randomUUID } from "node:crypto";
 import { ROLE_PERMISSIONS } from "../helpers/test-identities";
 import { Client } from "pg";
@@ -46,6 +49,13 @@ let op2: Operator;
 const slug = () => `lc-${randomUUID().slice(0, 8)}`;
 const host = () => `${randomUUID().slice(0, 8)}.lifecycle.test.example`;
 const asOp = <T>(fn: () => Promise<T>) => home.run(fn);
+/** A session's state in its tenant: "live", or why it was ended. */
+const sessionState = async (tenantId: string, idHash: string) =>
+  (
+    await runWithTenant({ tenantId, mode: "single" }, () =>
+      getSessionStore().find(idHash)
+    )
+  )?.revokedReason ?? "live";
 
 async function provision(domains: string[] = []) {
   const r = await asOp(() =>
@@ -335,12 +345,19 @@ dbDescribe("tenant lifecycle (ADR-053 D7)", () => {
         [uid, t.id]
       )
     );
+    const promoted = await startTestSession({ subject: uid, tenantId: t.id });
+    const elsewhere = await startTestSession({ subject: uid, tenantId: home.id });
     await expect(
       asOp(() => makeTenantAdmin(op1, t.id, "first.admin@example.com"))
     ).resolves.toEqual({
       ok: true,
       value: { userId: uid },
     });
+    // ADR-057 D6: the promoted account's sessions — rows of ITS tenant, not the operator's —
+    // ended with the role change; an operator's own session, with the same subject text in the
+    // operator's tenant, is not the account's and stays.
+    expect(await sessionState(t.id, promoted.idHash)).toBe("role_changed");
+    expect(await sessionState(home.id, elsewhere.idHash)).toBe("live");
     // The same email in another tenant is not this tenant's user.
     const other = await provision();
     await expect(

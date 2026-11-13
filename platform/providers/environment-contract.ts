@@ -37,8 +37,12 @@ export type EnvSource = Readonly<Record<string, string | undefined>>;
  * DescribeUserPool proves the pool before a "not found" counts as erased); a shared deployment
  * also assigns each user's tenant (AdminUpdateUserAttributes) and its readiness reads the pool's
  * setup (DescribeUserPool, ListUserPoolClients, DescribeUserPoolClient, DescribeIdentityProvider);
- * AdminGetUser reads one user (the tenant, the address's subject). Without the key no identity is
- * ever erased (readiness says so: platform/tenancy/readiness.ts, the "erasure" check).
+ * AdminGetUser reads one user (the tenant, the address's subject — and, ADR-057 D7, the user a
+ * session's token names on every verification, so the token itself is never sent to Cognito);
+ * AdminUserGlobalSignOut ends every token of a user (sign-out everywhere, a password change, a
+ * restriction, erasure) and AdminSetUserMFAPreference turns a second factor off — the two calls
+ * that replaced the user token's own GlobalSignOut and SetUserMFAPreference. Without the key no
+ * identity is ever erased (readiness says so: platform/tenancy/readiness.ts, the "erasure" check).
  * `__tests__/cognito-admin-actions.test.ts` fails when the provider signs an action not listed
  * here, or the docs list another set (N-23).
  */
@@ -46,6 +50,8 @@ export const COGNITO_ADMIN_ACTIONS: readonly string[] = [
   "AdminUpdateUserAttributes",
   "AdminGetUser",
   "AdminDeleteUser",
+  "AdminUserGlobalSignOut",
+  "AdminSetUserMFAPreference",
   "ListUsers",
   "DescribeUserPool",
   "ListUserPoolClients",
@@ -357,14 +363,28 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     aliases: [],
     shape: /^[\w+/=.~-]{32,512}$/,
     shapeHint:
-      "at least 32 random characters, e.g. openssl rand -hex 32 — the key of the HMAC that makes the refresh cookie tamper-evident (review 17 M1); to rotate it, move the old value to REFRESH_COOKIE_KEY_PREVIOUS",
+      "at least 32 random characters — the key of the HMAC on the refresh cookie browsers held before ADR-057 (review 17 M1). Optional now: it only verifies those cookies, once, to move their browsers onto a server-side session without a new sign-in; nothing is signed with it. Remove it (and REFRESH_COOKIE_KEY_PREVIOUS) 30 days after the ADR-057 deploy",
   },
   {
     name: "REFRESH_COOKIE_KEY_PREVIOUS",
     aliases: [],
     shape: /^[\w+/=.~-]{32,512}$/,
     shapeHint:
-      "the refresh-cookie key before the current one (rotation, review 17 M1): cookies it signed are still accepted; nothing new is signed with it — remove it once the refresh-token lifetime (30 days) has passed",
+      "the refresh-cookie key before the current one (rotation, review 17 M1): legacy cookies it signed still verify for the ADR-057 migration; nothing is signed with it — remove it with REFRESH_COOKIE_KEY, 30 days after the ADR-057 deploy",
+  },
+  {
+    name: "SESSION_ENCRYPTION_KEY",
+    aliases: [],
+    shape: /^[\w+/=.~-]{32,512}$/,
+    shapeHint:
+      "at least 32 random characters, e.g. openssl rand -hex 32 — the key a sign-in session's provider tokens are encrypted with before they are stored (AES-256-GCM, ADR-057 D2); to rotate it, move the old value to SESSION_ENCRYPTION_KEY_PREVIOUS",
+  },
+  {
+    name: "SESSION_ENCRYPTION_KEY_PREVIOUS",
+    aliases: [],
+    shape: /^[\w+/=.~-]{32,512}$/,
+    shapeHint:
+      "the session-encryption key before the current one (rotation, ADR-057 D2): sessions it sealed are still opened, and each is sealed again under the current key when it is next renewed; nothing new is sealed with it — remove it once the longest session lifetime (auth.session.user_absolute_seconds, at most 90 days) has passed",
   },
   {
     name: "PROVENANCE_SIGNING_KEY",
@@ -514,6 +534,20 @@ export function getPreviousRefreshCookieKey(
   env: EnvSource = process.env
 ): string | undefined {
   return resolveSetting("REFRESH_COOKIE_KEY_PREVIOUS", env);
+}
+
+/** ADR-057 D2: the key a session's provider tokens are sealed with; undefined when not set. */
+export function getSessionEncryptionKey(
+  env: EnvSource = process.env
+): string | undefined {
+  return resolveSetting("SESSION_ENCRYPTION_KEY", env);
+}
+
+/** The session-encryption key before the current one (rotation): opens, never seals. */
+export function getPreviousSessionEncryptionKey(
+  env: EnvSource = process.env
+): string | undefined {
+  return resolveSetting("SESSION_ENCRYPTION_KEY_PREVIOUS", env);
 }
 
 /** ADR-050 D4: the guest-token signing secret. */
@@ -887,6 +921,46 @@ export function allowsHarnessSwitches(env: EnvSource = process.env): boolean {
   return host !== undefined && NON_DEPLOYMENT_HOSTS.has(host);
 }
 
+/** The session-encryption key and the legacy refresh-cookie key: what is wrong with them. */
+function sessionKeyViolations(env: EnvSource, auth: string): string[] {
+  const violations: string[] = [];
+  // Review 17 M1, ADR-057: nothing sets the refresh cookie any more. REFRESH_COOKIE_KEY only
+  // verifies the cookies of browsers signed in before ADR-057, once, to move them onto a
+  // server-side session (POST /api/auth/session/migrate); it is optional — without it those
+  // browsers sign in again — and is removed 30 days after the deploy.
+  const cookieKey = getRefreshCookieKey(env);
+  if (cookieKey !== undefined && cookieKey === getPreviousRefreshCookieKey(env)) {
+    violations.push(
+      "REFRESH_COOKIE_KEY_PREVIOUS is the same as REFRESH_COOKIE_KEY — set it to the key before the current one, or unset it"
+    );
+  }
+  if (getPreviousRefreshCookieKey(env) !== undefined && cookieKey === undefined) {
+    violations.push(
+      "REFRESH_COOKIE_KEY_PREVIOUS is set without REFRESH_COOKIE_KEY — rotation keeps the old key beside a new one"
+    );
+  }
+
+  // ADR-057 D2: a session's provider tokens are stored encrypted under this key, and nothing is
+  // stored without it. Required with a real auth provider, as the refresh-cookie key was.
+  const sessionKey = getSessionEncryptionKey(env);
+  if (!TEST_DOUBLE_AUTH_PROVIDERS.has(auth) && sessionKey === undefined) {
+    violations.push(
+      `SESSION_ENCRYPTION_KEY is required by AUTH_PROVIDER=${auth} (a session's tokens are encrypted before they are stored)`
+    );
+  }
+  if (sessionKey !== undefined && sessionKey === getPreviousSessionEncryptionKey(env)) {
+    violations.push(
+      "SESSION_ENCRYPTION_KEY_PREVIOUS is the same as SESSION_ENCRYPTION_KEY — set it to the key before the current one, or unset it"
+    );
+  }
+  if (getPreviousSessionEncryptionKey(env) !== undefined && sessionKey === undefined) {
+    violations.push(
+      "SESSION_ENCRYPTION_KEY_PREVIOUS is set without SESSION_ENCRYPTION_KEY — rotation keeps the old key beside a new one"
+    );
+  }
+  return violations;
+}
+
 /**
  * Every contract violation in `env`, as messages naming the setting. Pure — callers decide
  * whether the context is one the contract applies to (see assertEnvironmentContract).
@@ -976,25 +1050,7 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
     );
   }
 
-  // Review 17 M1: the refresh cookie (`<user id>.<mac>.<refresh token>`) is an HMAC under this
-  // key, so a cookie naming another user than the one it was issued to is refused. Required with
-  // a real auth provider, as the guest secret is.
-  if (!TEST_DOUBLE_AUTH_PROVIDERS.has(auth) && getRefreshCookieKey(env) === undefined) {
-    violations.push(
-      `REFRESH_COOKIE_KEY is required by AUTH_PROVIDER=${auth} (the refresh cookie's HMAC)`
-    );
-  }
-  const cookieKey = getRefreshCookieKey(env);
-  if (cookieKey !== undefined && cookieKey === getPreviousRefreshCookieKey(env)) {
-    violations.push(
-      "REFRESH_COOKIE_KEY_PREVIOUS is the same as REFRESH_COOKIE_KEY — set it to the key before the current one, or unset it"
-    );
-  }
-  if (getPreviousRefreshCookieKey(env) !== undefined && cookieKey === undefined) {
-    violations.push(
-      "REFRESH_COOKIE_KEY_PREVIOUS is set without REFRESH_COOKIE_KEY — rotation keeps the old key beside a new one"
-    );
-  }
+  violations.push(...sessionKeyViolations(env, auth));
 
   // Provider-specific requirements.
   if (auth === "cognito") {

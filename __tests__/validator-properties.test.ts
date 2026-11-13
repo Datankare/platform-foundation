@@ -25,7 +25,8 @@ import {
 import { isTenantId } from "@/platform/providers/environment-contract";
 import { sanitizeLanguageCode } from "@/lib/sanitize";
 import { validateStreamRequest } from "@/platform/ai/stream-policy";
-import { readRefreshCookie } from "@/platform/auth/auth-response";
+import { readLegacyRefreshCookie } from "@/platform/auth/auth-response";
+import { presentedSessionId } from "@/platform/auth/session";
 import { readJsonObject, requireTextFields } from "@/platform/errors/request-body";
 import { avatarUrlRefusal } from "@/platform/auth/profile-screening";
 import { addressBucket } from "@/platform/rate-limit/client-ip";
@@ -200,15 +201,36 @@ describe("validators never throw, and accept only what callers rely on", () => {
     );
   });
 
-  it("readRefreshCookie: a bounded id and a token, or nothing", () => {
+  it("readLegacyRefreshCookie: a bounded id and a token, or nothing", () => {
     fc.assert(
       fc.property(
         fc.oneof(fc.string({ maxLength: 9000 }), fc.string({ unit: "binary" })),
         (v) => {
-          const r = readRefreshCookie(v);
+          const r = readLegacyRefreshCookie(v);
           return (
             r === null || (/^[\w-]{1,128}$/.test(r.userId) && r.refreshToken.length > 0)
           );
+        }
+      )
+    );
+  });
+
+  it("presentedSessionId: exactly 43 base64url characters, or nothing — whatever the cookie holds (ADR-057)", () => {
+    const request = (value: string) => ({
+      headers: new Headers(),
+      cookies: { get: (name: string) => (name === "pf_session" ? { value } : undefined) },
+      nextUrl: { pathname: "/", origin: "http://localhost", protocol: "http:" },
+    });
+    fc.assert(
+      fc.property(
+        fc.oneof(
+          fc.string({ maxLength: 200 }),
+          fc.string({ unit: "binary", maxLength: 200 }),
+          fc.stringMatching(/^[\w-]{40,46}$/)
+        ),
+        (v) => {
+          const id = presentedSessionId(request(v));
+          return id === null ? !/^[\w-]{43}$/.test(v) : id === v && id.length === 43;
         }
       )
     );

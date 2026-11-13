@@ -1,4 +1,5 @@
 import { POST } from "@/app/api/process/route";
+import { sessionHeadersFor } from "@/__tests__/helpers/session";
 import { NextRequest } from "next/server";
 import { registerAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
@@ -72,9 +73,15 @@ beforeEach(() => {
   (checkSafety as jest.Mock).mockClear();
 });
 
-function makeRequest(body: unknown, token: string | null = userToken): NextRequest {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers.authorization = `Bearer ${token}`;
+/** A POST from a browser whose session holds `token` (ADR-057); null: no session. */
+async function makeRequest(
+  body: unknown,
+  token: string | null = userToken
+): Promise<NextRequest> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(token ? await sessionHeadersFor(token, { origin: "http://localhost:3000" }) : {}),
+  };
   return new NextRequest("http://localhost:3000/api/process", {
     method: "POST",
     headers,
@@ -98,7 +105,7 @@ describe("POST /api/process", () => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            authorization: `Bearer ${userToken}`,
+            ...(await sessionHeadersFor(userToken, { origin: "http://localhost:3000" })),
           },
           body: raw,
         })
@@ -110,22 +117,22 @@ describe("POST /api/process", () => {
   );
 
   it("returns 400 for missing text", async () => {
-    const res = await POST(makeRequest({}));
+    const res = await POST(await makeRequest({}));
     expect(res.status).toBe(400);
   });
 
   it("returns 400 for empty text", async () => {
-    const res = await POST(makeRequest({ text: "   " }));
+    const res = await POST(await makeRequest({ text: "   " }));
     expect(res.status).toBe(400);
   });
 
   it("returns 400 for text over 100 chars", async () => {
-    const res = await POST(makeRequest({ text: "a".repeat(101) }));
+    const res = await POST(await makeRequest({ text: "a".repeat(101) }));
     expect(res.status).toBe(400);
   });
 
   it("returns 200 with translations for valid text", async () => {
-    const res = await POST(makeRequest({ text: "hello world" }));
+    const res = await POST(await makeRequest({ text: "hello world" }));
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.success).toBe(true);
@@ -139,7 +146,7 @@ describe("POST /api/process", () => {
       reason: "inappropriate content",
       decision: "block",
     });
-    const res = await POST(makeRequest({ text: "unsafe content" }));
+    const res = await POST(await makeRequest({ text: "unsafe content" }));
     expect(res.status).toBe(422);
     const data = await res.json();
     expect(data.code).toBe("content.rejected");
@@ -154,7 +161,7 @@ describe("POST /api/process", () => {
     "input screened %s: %d %s, nothing translated",
     async (decision, status, expected) => {
       (checkSafety as jest.Mock).mockResolvedValueOnce({ safe: false, decision });
-      const res = await POST(makeRequest({ text: "held content" }));
+      const res = await POST(await makeRequest({ text: "held content" }));
       expect(res.status).toBe(status);
       expect((await res.json()).code).toBe(expected);
     }
@@ -164,7 +171,7 @@ describe("POST /api/process", () => {
   it("screens the translations once, before any speech is made", async () => {
     (checkOutputSafety as jest.Mock).mockClear();
     (textToSpeech as jest.Mock).mockClear();
-    const res = await POST(makeRequest({ text: "hello" }));
+    const res = await POST(await makeRequest({ text: "hello" }));
     expect(res.status).toBe(200);
     expect(checkOutputSafety).toHaveBeenCalledTimes(1);
     expect((checkOutputSafety as jest.Mock).mock.calls[0][0]).toBe(
@@ -181,7 +188,7 @@ describe("POST /api/process", () => {
       reason: "slur x",
     });
     (textToSpeech as jest.Mock).mockClear();
-    const res = await POST(makeRequest({ text: "hello" }));
+    const res = await POST(await makeRequest({ text: "hello" }));
     expect(res.status).toBe(422);
     const body = await res.json();
     // The model's output, not the user's content: withheld, nothing to appeal (TASK-211).
@@ -193,13 +200,13 @@ describe("POST /api/process", () => {
 
   it("[hostile:store-down] withholds when the output screen cannot run (fail closed)", async () => {
     (checkOutputSafety as jest.Mock).mockRejectedValueOnce(new Error("classifier down"));
-    const res = await POST(makeRequest({ text: "hello" }));
+    const res = await POST(await makeRequest({ text: "hello" }));
     expect(res.status).toBe(422);
     expect((await res.json()).code).toBe("content.withheld");
   });
 
   it("returns translations with audio", async () => {
-    const res = await POST(makeRequest({ text: "hello" }));
+    const res = await POST(await makeRequest({ text: "hello" }));
     const data = await res.json();
     data.translations.forEach((t: { audioBase64: string }) => {
       expect(t.audioBase64).toBe("base64audio==");
@@ -209,7 +216,7 @@ describe("POST /api/process", () => {
 
 describe("POST /api/process — actors and the guest allowance (ADR-050 D4)", () => {
   it("[hostile:role] refuses an anonymous request before any paid call", async () => {
-    const res = await POST(makeRequest({ text: "hello" }, null));
+    const res = await POST(await makeRequest({ text: "hello" }, null));
     expect(res.status).toBe(401);
     expect((await res.json()).code).toBe("auth.required");
     expect(checkSafety).not.toHaveBeenCalled();
@@ -219,16 +226,16 @@ describe("POST /api/process — actors and the guest allowance (ADR-050 D4)", ()
     settings(2);
     const { token } = await mintGuestToken();
 
-    const first = await POST(makeRequest({ text: "hello" }, token));
+    const first = await POST(await makeRequest({ text: "hello" }, token));
     expect(first.status).toBe(200);
     expect(first.headers.get("X-Guest-Translations-Remaining")).toBe("1");
 
-    const second = await POST(makeRequest({ text: "hello" }, token));
+    const second = await POST(await makeRequest({ text: "hello" }, token));
     expect(second.status).toBe(200);
     expect(second.headers.get("X-Guest-Translations-Remaining")).toBe("0");
 
     (checkSafety as jest.Mock).mockClear();
-    const third = await POST(makeRequest({ text: "hello" }, token));
+    const third = await POST(await makeRequest({ text: "hello" }, token));
     expect(third.status).toBe(403);
     const body = await third.json();
     expect(body.code).toBe("guest.allowance_exhausted");
@@ -242,21 +249,21 @@ describe("POST /api/process — actors and the guest allowance (ADR-050 D4)", ()
   it("an invalid request does not spend the allowance", async () => {
     settings(1);
     const { token } = await mintGuestToken();
-    expect((await POST(makeRequest({ text: "   " }, token))).status).toBe(400);
-    expect((await POST(makeRequest({ text: "hello" }, token))).status).toBe(200);
+    expect((await POST(await makeRequest({ text: "   " }, token))).status).toBe(400);
+    expect((await POST(await makeRequest({ text: "hello" }, token))).status).toBe(200);
   });
 
   it("clamps a governed value outside 1–10", async () => {
     settings(0);
     const { token } = await mintGuestToken();
-    expect((await POST(makeRequest({ text: "hello" }, token))).status).toBe(200);
-    expect((await POST(makeRequest({ text: "hello" }, token))).status).toBe(403);
+    expect((await POST(await makeRequest({ text: "hello" }, token))).status).toBe(200);
+    expect((await POST(await makeRequest({ text: "hello" }, token))).status).toBe(403);
   });
 
   it("users are not limited", async () => {
     settings(1);
     for (let i = 0; i < 3; i++) {
-      expect((await POST(makeRequest({ text: "hello" }))).status).toBe(200);
+      expect((await POST(await makeRequest({ text: "hello" }))).status).toBe(200);
     }
   });
 
@@ -268,7 +275,7 @@ describe("POST /api/process — actors and the guest allowance (ADR-050 D4)", ()
     };
     setGuestUsageStore(broken);
     const { token } = await mintGuestToken();
-    const res = await POST(makeRequest({ text: "hello" }, token));
+    const res = await POST(await makeRequest({ text: "hello" }, token));
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBe("internal.error");
     expect(checkSafety).not.toHaveBeenCalled();
@@ -279,10 +286,10 @@ describe("POST /api/process — daily paid-request quota (audit X-12)", () => {
   it("refuses a user past the daily quota with 429, before any paid call", async () => {
     settings(5, 2);
     for (let i = 0; i < 2; i++) {
-      expect((await POST(makeRequest({ text: "hello" }))).status).toBe(200);
+      expect((await POST(await makeRequest({ text: "hello" }))).status).toBe(200);
     }
     (checkSafety as jest.Mock).mockClear();
-    const res = await POST(makeRequest({ text: "hello" }));
+    const res = await POST(await makeRequest({ text: "hello" }));
     expect(res.status).toBe(429);
     expect((await res.json()).code).toBe("rate.limited");
     expect(checkSafety).not.toHaveBeenCalled();
@@ -290,7 +297,7 @@ describe("POST /api/process — daily paid-request quota (audit X-12)", () => {
 
   it("does not count a request refused by validation", async () => {
     settings(5, 1);
-    expect((await POST(makeRequest({ text: "   " }))).status).toBe(400);
-    expect((await POST(makeRequest({ text: "hello" }))).status).toBe(200);
+    expect((await POST(await makeRequest({ text: "   " }))).status).toBe(400);
+    expect((await POST(await makeRequest({ text: "hello" }))).status).toBe(200);
   });
 });

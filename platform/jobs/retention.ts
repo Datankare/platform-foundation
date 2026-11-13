@@ -98,6 +98,11 @@ export const RETENTION_REGISTER: Readonly<Record<string, RetentionEntry>> = {
     rule: "a guest's count deleted retention.guest_usage_days after the guest was last seen",
     by: "data.retention",
   },
+  auth_sessions: {
+    kind: "rule",
+    rule: "a sign-in session's record deleted retention.auth_sessions_days after it was last used or ended (never sooner than the longest idle lifetime, so no live session is deleted)",
+    by: "data.retention",
+  },
   app_sessions: {
     kind: "rule",
     rule: "deleted retention.app_sessions_days after the session was last updated",
@@ -280,6 +285,19 @@ export const RETENTION_RULES: readonly RetentionRule[] = [
     sql: `delete from guest_usage
            where ctid in (select ctid from guest_usage
                            where coalesce(last_used_at, first_used_at) < $1 limit $2)`,
+  },
+  {
+    table: "auth_sessions",
+    setting: "retention.auth_sessions_days",
+    defaultDays: 45,
+    // Above the longest idle lifetime (30 days, session-lifetimes.ts): a session not used for
+    // this long has ended under every allowed setting.
+    minDays: 31,
+    maxDays: 400,
+    sql: `delete from auth_sessions
+           where ctid in (select ctid from auth_sessions
+                           where greatest(last_seen_at, coalesce(revoked_at, last_seen_at)) < $1
+                           limit $2)`,
   },
   {
     table: "app_sessions",

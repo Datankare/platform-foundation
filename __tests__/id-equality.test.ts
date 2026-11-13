@@ -70,8 +70,6 @@ const ALLOWED: Readonly<Record<string, string>> = {
     "a budget row against the tenant-total sentinel row's fixed key: which row it is, no access decided",
   "platform/auth/user-provisioning.ts row.key !== current.keyId":
     "a banned-address hash's key id against the current hashing key's id: which key made the hash, no account compared and no access decided",
-  "platform/auth/context.tsx data.userId === user.userId":
-    "the browser keeps a refreshed token only for the account it holds: both ids are the server's own answers, and an inequality only drops the token — no access decided",
   "platform/auth/identity-relink.ts a.accountId === b.accountId":
     "samePlan: two re-link plans built by the server from the same rows compared for drift — equality of snapshots, no access decided",
   "platform/auth/identity-relink.ts a.merge?.accountId === b.merge?.accountId":

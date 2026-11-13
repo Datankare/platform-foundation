@@ -122,6 +122,9 @@ export const PLATFORM_AUDIT_DETAIL_KINDS: Readonly<Record<string, DetailKind>> =
   cause: "text",
   holdIds: "list",
   count: "number",
+  // logout (ADR-057 D6): whether every session was ended, and how many were.
+  everywhere: "boolean",
+  sessions: "number",
   status: "code",
   tool: "code",
   approvalKept: "boolean",
@@ -214,7 +217,7 @@ export const PLATFORM_AUDIT_DETAILS_SCHEMA: DetailsSchema = {
   gdpr_purge_dry_run: ["purgeReason"],
   login_success: ["method"],
   login_failed: ["method", "code", "purpose"],
-  logout: [],
+  logout: ["everywhere", "sessions"],
   mfa_enabled: ["factor", "replaced"],
   mfa_disabled: ["factor", "stepUp"],
   data_exported: ["moduleCount"],

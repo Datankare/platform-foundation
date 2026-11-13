@@ -2,203 +2,317 @@
  * @jest-environment jsdom
  */
 /**
- * apiFetch — the signed-in user's token goes with every call to this origin's API, and nowhere
- * else (platform/auth/api-fetch.ts).
+ * apiFetch — the session cookie goes with every call to this origin's API (and to no other),
+ * a state-changing call carries the session's forgery token, and the page holds no credential
+ * (platform/auth/api-fetch.ts, ADR-057).
+ *
+ * Hostile: a URL that only looks same-origin; a token that must never reach another origin; a
+ * call that would carry a token or an Authorization header of its own; a forged-request refusal
+ * answered by one retry, never a loop.
  */
-import { apiFetch } from "@/platform/auth/api-fetch";
+import { apiFetch, HANDLED_CODES } from "@/platform/auth/api-fetch";
+import {
+  currentSession,
+  loadSession,
+  resetSessionStateForTests,
+} from "@/platform/auth/context";
 
-const fetchMock = jest.fn(async () => ({ ok: true }) as Response);
-/** jsdom has no Request; a minimal one, as the browser's carries url and headers. */
+type Answer = { status: number; body?: unknown };
+const answers: Answer[] = [];
+const fetchMock = jest.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+  const next = answers.shift() ?? { status: 200, body: {} };
+  return {
+    ok: next.status < 400,
+    status: next.status,
+    json: async () => next.body,
+    clone() {
+      return this;
+    },
+  } as unknown as Response;
+});
+
+/** jsdom has no Request; a minimal one, as the browser's carries url, method and headers. */
 class FakeRequest {
   readonly headers: Headers;
+  readonly method: string;
   constructor(
     readonly url: string,
-    init?: { headers?: Record<string, string> }
+    init?: { headers?: Record<string, string>; method?: string }
   ) {
     this.headers = new Headers(init?.headers);
+    this.method = init?.method ?? "GET";
   }
 }
+
+const session = (csrfToken: string) => ({
+  status: 200,
+  body: {
+    authenticated: true,
+    user: { userId: "u1", email: "a@b.c", emailVerified: true, isGuest: false },
+    csrfToken,
+    audience: "user",
+    idleExpiresAt: Date.now() + 60_000,
+    absoluteExpiresAt: Date.now() + 600_000,
+    idleWarningSeconds: 120,
+  },
+});
+
+/** The page's session, as the provider's read leaves it. */
+async function signedIn(csrfToken = "csrf-1"): Promise<void> {
+  answers.push(session(csrfToken));
+  await loadSession();
+  fetchMock.mockClear();
+}
+
+const sent = (i = 0) => {
+  const [input, init] = fetchMock.mock.calls[i];
+  return { input, init, headers: new Headers(init?.headers) };
+};
+
 beforeAll(() => {
   global.fetch = fetchMock as unknown as typeof fetch;
   (global as unknown as { Request: unknown }).Request = FakeRequest;
 });
 beforeEach(() => {
+  answers.length = 0;
   fetchMock.mockClear();
+  resetSessionStateForTests();
   localStorage.clear();
 });
 
-/** A JWT-shaped token whose exp is `secondsFromNow` away. */
-function jwt(secondsFromNow: number): string {
-  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
-  return `${b64({ alg: "RS256" })}.${b64({ exp: Math.floor(Date.now() / 1000) + secondsFromNow })}.sig`;
-}
-function signIn(token: string) {
-  localStorage.setItem("pf_access_token", token);
-  localStorage.setItem(
-    "pf_user",
-    JSON.stringify({ userId: "u1", email: "a@b.c", emailVerified: true, isGuest: false })
-  );
-}
-const sentHeaders = (n = 0) =>
-  new Headers((fetchMock.mock.calls[n] as unknown as [unknown, RequestInit])[1]?.headers);
-
 describe("apiFetch", () => {
-  it("without a session it is plain fetch, the arguments untouched", async () => {
-    const init = { method: "POST", headers: { "Content-Type": "application/json" } };
-    await apiFetch("/api/admin/users", init);
-    expect(fetchMock).toHaveBeenCalledWith("/api/admin/users", init);
+  it("a read of this origin sends the cookie and no token of any kind", async () => {
+    await signedIn();
+    await apiFetch("/api/things", { headers: { "X-Mine": "1" } });
+    const { input, init, headers } = sent();
+    expect(input).toBe("/api/things");
+    expect(init?.credentials).toBe("same-origin");
+    expect(headers.get("x-mine")).toBe("1");
+    expect(headers.get("x-csrf-token")).toBeNull();
+    expect(headers.get("authorization")).toBeNull();
   });
 
-  it("attaches the token to a same-origin path, keeping the caller's headers and options", async () => {
-    const token = jwt(600);
-    signIn(token);
-    await apiFetch("/api/admin/users?x=1", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("/api/admin/users?x=1");
-    expect(init.method).toBe("PUT");
-    expect(init.body).toBe("{}");
-    expect(sentHeaders().get("authorization")).toBe(`Bearer ${token}`);
-    expect(sentHeaders().get("content-type")).toBe("application/json");
-  });
+  it.each(["POST", "PUT", "PATCH", "DELETE", "post"])(
+    "a %s to this origin carries the session's forgery token, keeping the caller's headers and body",
+    async (method) => {
+      await signedIn("csrf-abc");
+      await apiFetch("/api/things", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const { init, headers } = sent();
+      expect(headers.get("x-csrf-token")).toBe("csrf-abc");
+      expect(headers.get("content-type")).toBe("application/json");
+      expect(headers.get("authorization")).toBeNull();
+      expect(init?.body).toBe("{}");
+      expect(init?.credentials).toBe("same-origin");
+    }
+  );
 
-  it("attaches it to an absolute URL on this origin, and a URL object", async () => {
-    signIn(jwt(600));
-    await apiFetch(`${window.location.origin}/api/health`);
-    await apiFetch(new URL("/api/health", window.location.origin));
-    expect(sentHeaders(0).get("authorization")).toMatch(/^Bearer /);
-    expect(sentHeaders(1).get("authorization")).toMatch(/^Bearer /);
+  it("an absolute URL on this origin, and a URL object, are this origin's", async () => {
+    await signedIn();
+    await apiFetch(`${window.location.origin}/api/a`, { method: "POST" });
+    await apiFetch(new URL("/api/b", window.location.origin), { method: "POST" });
+    expect(sent(0).headers.get("x-csrf-token")).toBe("csrf-1");
+    expect(sent(1).headers.get("x-csrf-token")).toBe("csrf-1");
   });
 
   it.each([
-    "https://evil.example/api/admin/users",
-    "//evil.example/api/admin/users",
-    "/\\evil.example/api",
-    "http://localhost:9999/api/admin/users",
-    "javascript:alert(1)",
-    // The parser drops tabs and newlines, so each of these is "//evil.example".
-    "/\t/evil.example/api",
-    "/\n/evil.example/api",
-    "/\r/evil.example/api",
-    "/\r\n/evil.example/api",
-    "\t//evil.example/api",
-    "/\t\\evil.example/api",
-    "\\\\evil.example/api",
-  ])("never sends the token to another origin (%j)", async (url) => {
-    signIn(jwt(600));
-    // The premise: the browser's parser really does read it as another origin.
-    expect(new URL(url, window.location.href).origin).not.toBe(window.location.origin);
-    await apiFetch(url);
-    expect(sentHeaders().get("authorization")).toBeNull();
-  });
-
-  it.each(["%2f%2fevil.example/api", "/%2f/evil.example/api", "/%5cevil.example/api"])(
-    "an encoded slash stays a path on this origin (%j), so the token goes",
+    "https://evil.example/api/x",
+    "//evil.example/api/x",
+    "/\\evil.example/api/x",
+    "/\t/evil.example/api/x",
+    "\\\\evil.example/api/x",
+    "https://localhost.evil.example/api/x",
+    `${"http://localhost"}:9999/api/x`,
+    "https://localhost/api/x",
+  ])(
+    "hostile: %p is another origin — no token, no credentials option, the arguments untouched",
     async (url) => {
-      signIn(jwt(600));
-      expect(new URL(url, window.location.href).origin).toBe(window.location.origin);
-      await apiFetch(url);
-      expect(sentHeaders().get("authorization")).toMatch(/^Bearer /);
+      await signedIn("csrf-secret");
+      const init = { method: "POST", body: "x" };
+      await apiFetch(url, init);
+      const [input, passed] = fetchMock.mock.calls[0];
+      expect(input).toBe(url);
+      expect(passed).toBe(init);
+      expect(JSON.stringify(fetchMock.mock.calls)).not.toContain("csrf-secret");
     }
   );
 
-  it("keeps an Authorization header the caller set", async () => {
-    signIn(jwt(600));
-    await apiFetch("/api/stream", { headers: { Authorization: "Bearer other" } });
-    expect(sentHeaders().get("authorization")).toBe("Bearer other");
+  it("the page keeps nothing about the session in browser storage or a cookie", async () => {
+    await signedIn("csrf-kept-in-memory");
+    await apiFetch("/api/x", { method: "POST" });
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
+    expect(document.cookie).toBe("");
+    expect(currentSession().status).toBe("signed-in");
   });
 
-  it("sends no expired or corrupt session's token", async () => {
-    signIn(jwt(-10));
-    await apiFetch("/api/admin/users");
-    expect(sentHeaders().get("authorization")).toBeNull();
-    localStorage.setItem("pf_access_token", jwt(600));
-    localStorage.setItem("pf_user", "{not json");
-    await apiFetch("/api/admin/users");
-    expect(sentHeaders(1).get("authorization")).toBeNull();
+  it("signed out, a state-changing call goes without a token (the server refuses it)", async () => {
+    answers.push({ status: 200, body: { authenticated: false } });
+    await loadSession();
+    fetchMock.mockClear();
+    await apiFetch("/api/x", { method: "POST" });
+    expect(sent().headers.get("x-csrf-token")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("carries a Request's own headers when no init is given", async () => {
-    signIn(jwt(600));
-    await apiFetch(
-      new Request(`${window.location.origin}/api/x`, { headers: { "X-A": "1" } })
-    );
-    expect(sentHeaders().get("x-a")).toBe("1");
-    expect(sentHeaders().get("authorization")).toMatch(/^Bearer /);
+  it("with no session read under way it does not start one: one call, no token", async () => {
+    await apiFetch("/api/x", { method: "POST" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sent().input).toBe("/api/x");
+  });
+
+  it("a call made while the session is being read waits for it, and carries its token", async () => {
+    answers.push(session("csrf-late"));
+    const reading = loadSession();
+    const call = apiFetch("/api/x", { method: "POST" });
+    await Promise.all([reading, call]);
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+      "/api/auth/session",
+      "/api/x",
+    ]);
+    expect(sent(1).headers.get("x-csrf-token")).toBe("csrf-late");
+  });
+
+  it("carries a Request's own headers and method when no init is given", async () => {
+    await signedIn();
+    const request = new FakeRequest(`${window.location.origin}/api/x`, {
+      method: "POST",
+      headers: { "X-Mine": "1" },
+    });
+    await apiFetch(request as unknown as Request);
+    const { headers } = sent();
+    expect(headers.get("x-mine")).toBe("1");
+    expect(headers.get("x-csrf-token")).toBe("csrf-1");
   });
 });
 
-describe("apiFetch — an expired access token is renewed once (audit A-14)", () => {
-  const respond = (status: number, body: unknown = {}) =>
-    ({ ok: status < 400, status, json: async () => body }) as unknown as Response;
-
-  it("on 401, renews from the refresh cookie and repeats the call with the new token", async () => {
-    signIn(jwt(600));
-    const fresh = jwt(3600);
-    fetchMock
-      .mockResolvedValueOnce(respond(401))
-      .mockResolvedValueOnce(respond(200, { userId: "u1", accessToken: fresh }))
-      .mockResolvedValueOnce(respond(200));
-    const res = await apiFetch("/api/admin/users", { method: "POST", body: "{}" });
-    expect(res.status).toBe(200);
-    expect((fetchMock.mock.calls[1] as unknown as [string])[0]).toBe("/api/auth/refresh");
-    expect(sentHeaders(2).get("authorization")).toBe(`Bearer ${fresh}`);
-    expect(localStorage.getItem("pf_access_token")).toBe(fresh);
+describe("apiFetch — a forged-request refusal (auth.csrf_failed) is answered once", () => {
+  it("declares the code it handles for every caller", () => {
+    expect([...HANDLED_CODES]).toEqual(["auth.csrf_failed"]);
   });
 
-  it("returns the 401 and ends the session when the refresh is refused", async () => {
-    signIn(jwt(600));
-    fetchMock.mockResolvedValueOnce(respond(401)).mockResolvedValueOnce(respond(401));
-    const res = await apiFetch("/api/admin/users");
-    expect(res.status).toBe(401);
+  it("the session moved to a new id elsewhere: the session is read again and the call made once more with its token", async () => {
+    await signedIn("stale");
+    answers.push({ status: 403, body: { code: "auth.csrf_failed" } }, session("fresh"), {
+      status: 200,
+      body: { done: true },
+    });
+    const res = await apiFetch("/api/x", { method: "POST", body: "{}" });
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+      "/api/x",
+      "/api/auth/session",
+      "/api/x",
+    ]);
+    expect(sent(0).headers.get("x-csrf-token")).toBe("stale");
+    expect(sent(2).headers.get("x-csrf-token")).toBe("fresh");
+    expect(sent(2).init?.body).toBe("{}");
+  });
+
+  it("refused again with the fresh token: returned as it is — never a second retry", async () => {
+    await signedIn("stale");
+    answers.push({ status: 403, body: { code: "auth.csrf_failed" } }, session("fresh"), {
+      status: 403,
+      body: { code: "auth.csrf_failed" },
+    });
+    const res = await apiFetch("/api/x", { method: "POST" });
+    expect(res.status).toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("the token read again is the same one: no retry (it would be refused the same way)", async () => {
+    await signedIn("same");
+    answers.push({ status: 403, body: { code: "auth.csrf_failed" } }, session("same"));
+    const res = await apiFetch("/api/x", { method: "POST" });
+    expect(res.status).toBe(403);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(localStorage.getItem("pf_access_token")).toBeNull();
+  });
+
+  it("another 403 (a missing permission) is not retried, and the session is not read", async () => {
+    await signedIn();
+    answers.push({ status: 403, body: { code: "auth.permission_denied" } });
+    const res = await apiFetch("/api/x", { method: "POST" });
+    expect(res.status).toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry a call whose body is a stream (it cannot be sent twice)", async () => {
-    signIn(jwt(600));
-    fetchMock.mockResolvedValueOnce(respond(401));
-    // Any body that is not one of the re-sendable kinds (a stream, in a browser).
-    const body = { getReader() {} } as unknown as BodyInit;
-    const res = await apiFetch("/api/process", { method: "POST", body });
-    expect(res.status).toBe(401);
+    await signedIn("stale");
+    answers.push({ status: 403, body: { code: "auth.csrf_failed" } });
+    const body = { getReader: () => ({}) };
+    const res = await apiFetch("/api/x", {
+      method: "POST",
+      body: body as unknown as BodyInit,
+    });
+    expect(res.status).toBe(403);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("never renews for a guest", async () => {
-    localStorage.setItem("pf_access_token", jwt(600));
-    localStorage.setItem(
-      "pf_user",
-      JSON.stringify({ userId: "g", email: "", emailVerified: false, isGuest: true })
+  it("makes one read of the session for calls refused at once", async () => {
+    await signedIn("stale");
+    answers.push(
+      { status: 403, body: { code: "auth.csrf_failed" } },
+      { status: 403, body: { code: "auth.csrf_failed" } },
+      session("fresh"),
+      { status: 200 },
+      { status: 200 }
     );
-    fetchMock.mockResolvedValueOnce(respond(401));
-    await apiFetch("/api/process");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await Promise.all([
+      apiFetch("/api/a", { method: "POST" }),
+      apiFetch("/api/b", { method: "POST" }),
+    ]);
+    expect(fetchMock.mock.calls.filter((c) => c[0] === "/api/auth/session")).toHaveLength(
+      1
+    );
   });
+});
 
-  it("makes one refresh for calls that fail at once", async () => {
-    signIn(jwt(600));
-    const fresh = jwt(3600);
-    fetchMock.mockImplementation((async (url: string) =>
-      url === "/api/auth/refresh"
-        ? respond(200, { userId: "u1", accessToken: fresh })
-        : respond(sentAuth(url) === fresh ? 200 : 401)) as never);
-    function sentAuth(_url: string): string | undefined {
-      const last = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] as unknown as [
-        string,
-        RequestInit,
-      ];
-      return new Headers(last[1]?.headers).get("authorization")?.slice(7);
+describe("apiFetch — an ended session", () => {
+  it.each(["auth.token_invalid", "auth.required"])(
+    "a 401 %s forgets the session here, and the response is returned for the screen",
+    async (code) => {
+      await signedIn();
+      answers.push({ status: 401, body: { code } });
+      const res = await apiFetch("/api/x");
+      expect(res.status).toBe(401);
+      expect(currentSession().status).toBe("signed-out");
+      // Nothing is renewed from the browser: there is no token here to renew.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     }
-    await Promise.all([apiFetch("/api/a"), apiFetch("/api/b"), apiFetch("/api/c")]);
-    const refreshes = fetchMock.mock.calls.filter(
-      (c) => (c as unknown as [string])[0] === "/api/auth/refresh"
-    );
-    expect(refreshes).toHaveLength(1);
-    fetchMock.mockReset();
-    fetchMock.mockImplementation(async () => ({ ok: true }) as Response);
+  );
+
+  it("a caller that restarts the session itself can leave it: the response comes back and the page still holds the session", async () => {
+    await signedIn();
+    answers.push({ status: 401, body: { code: "auth.token_invalid" } });
+    const res = await apiFetch("/api/x", undefined, { onSessionEnded: "leave" });
+    expect(res.status).toBe(401);
+    expect((await res.json()).code).toBe("auth.token_invalid");
+    // Not forgotten here: the caller decides (and calls noteSessionEnded when it cannot go on).
+    expect(currentSession().status).toBe("signed-in");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 401 of another kind (a guest on a sign-in route) leaves the session as it is", async () => {
+    await signedIn();
+    answers.push({ status: 401, body: { code: "auth.sign_in_required" } });
+    await apiFetch("/api/x");
+    expect(currentSession().status).toBe("signed-in");
+  });
+
+  it("a response that is not JSON is returned untouched", async () => {
+    await signedIn();
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      clone() {
+        return { json: async () => Promise.reject(new SyntaxError("not json")) };
+      },
+    } as unknown as Response);
+    const res = await apiFetch("/api/x", { method: "POST" });
+    expect(res.status).toBe(403);
+    expect(currentSession().status).toBe("signed-in");
   });
 });

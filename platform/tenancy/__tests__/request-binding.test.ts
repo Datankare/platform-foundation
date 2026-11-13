@@ -9,6 +9,7 @@
  */
 
 import { NextRequest } from "next/server";
+import { sessionHeadersFor } from "@/__tests__/helpers/session";
 import { registerAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
 import { optionalAuth, requireActor, requireAuth } from "@/platform/auth/middleware";
@@ -45,13 +46,30 @@ let provider: AuthProvider;
 let directory: InMemoryTenantDirectory;
 const savedEnv = { ...process.env };
 
-function req(
+/** The tenant each test address serves (the directory below). */
+const TENANT_OF: Readonly<Record<string, string>> = {
+  "acme.example.com": A,
+  "beta.example.com": B,
+};
+
+/**
+ * A request to `host` from a browser whose session — recorded in the tenant that address serves
+ * (ADR-057: a session belongs to one tenant) — holds `token`. An address that serves no tenant
+ * presents a session recorded in A.
+ */
+async function req(
   host: string,
   token?: string,
   extra: Record<string, string> = {}
-): NextRequest {
+): Promise<NextRequest> {
   const headers = new Headers({ host, "x-forwarded-for": "203.0.113.7", ...extra });
-  if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
+  if (token !== undefined) {
+    const session = await sessionHeadersFor(token, {
+      tenantId: TENANT_OF[extra["x-forwarded-host"] ?? host] ?? A,
+      origin: `http://${host}`,
+    });
+    for (const [name, value] of Object.entries(session)) headers.set(name, value);
+  }
   return new NextRequest(`http://${host}/api/x`, { headers });
 }
 
@@ -91,7 +109,7 @@ describe("shared mode — users", () => {
   it("a user of A on A's address is bound to A for the rest of the request", async () => {
     const token = await userToken(A);
     await asRequest(async () => {
-      const r = await requireAuth(req("acme.example.com", token));
+      const r = await requireAuth(await req("acme.example.com", token));
       expect(r.tenant).toEqual({ tenantId: A, mode: "shared" });
       expect(currentTenantId()).toBe(A);
     });
@@ -100,17 +118,19 @@ describe("shared mode — users", () => {
   it("a user of A on B's address is refused tenant.mismatch", async () => {
     const token = await userToken(A);
     await asRequest(async () => {
-      const r = await requireAuth(req("beta.example.com", token));
+      const r = await requireAuth(await req("beta.example.com", token));
       expect(r.error?.status).toBe(403);
       expect((await r.error?.json()).code).toBe("tenant.mismatch");
-      expect(peekTenant()).toBeUndefined();
+      // The request is the address's tenant's — where its session was looked up (ADR-057) —
+      // never the identity's.
+      expect(currentTenantId()).toBe(B);
     });
   });
 
   it("a user without a tenant is refused tenant.missing", async () => {
     const token = await userToken();
     await asRequest(async () => {
-      const r = await requireAuth(req("acme.example.com", token));
+      const r = await requireAuth(await req("acme.example.com", token));
       expect((await r.error?.json()).code).toBe("tenant.missing");
     });
   });
@@ -118,8 +138,8 @@ describe("shared mode — users", () => {
   it("after the limiter bound the address's tenant, a token for another is refused", async () => {
     const token = await userToken(B);
     await asRequest(async () => {
-      expect(await enforceRateLimit(req("acme.example.com"), RULE)).toBeNull();
-      const r = await requireAuth(req("acme.example.com", token));
+      expect(await enforceRateLimit(await req("acme.example.com"), RULE)).toBeNull();
+      const r = await requireAuth(await req("acme.example.com", token));
       expect((await r.error?.json()).code).toBe("tenant.mismatch");
       expect(currentTenantId()).toBe(A);
     });
@@ -135,7 +155,7 @@ describe("shared mode — users", () => {
       reason: "x",
     });
     await asRequest(async () => {
-      const r = await requireAuth(req("acme.example.com", token));
+      const r = await requireAuth(await req("acme.example.com", token));
       expect(r.error?.status).toBe(403);
       expect((await r.error?.json()).code).toBe("tenant.suspended");
     });
@@ -145,7 +165,7 @@ describe("shared mode — users", () => {
     const token = await userToken(A);
     jest.spyOn(directory, "getTenant").mockRejectedValueOnce(new Error("db down"));
     await asRequest(async () => {
-      const r = await requireAuth(req("acme.example.com", token));
+      const r = await requireAuth(await req("acme.example.com", token));
       expect(r.error?.status).toBe(503);
       expect((await r.error?.json()).code).toBe("service.unavailable");
     });
@@ -156,20 +176,26 @@ describe("shared mode — guests", () => {
   it("a guest minted on A works on A and is refused on B", async () => {
     const { token } = await mintGuestToken(undefined, A);
     await asRequest(async () => {
-      const r = await requireActor(req("acme.example.com", token), { allowGuests: true });
+      const r = await requireActor(await req("acme.example.com", token), {
+        allowGuests: true,
+      });
       expect(r.actor?.tenantId).toBe(A);
     });
     await asRequest(async () => {
-      const r = await requireActor(req("beta.example.com", token), { allowGuests: true });
+      const r = await requireActor(await req("beta.example.com", token), {
+        allowGuests: true,
+      });
       expect((await r.error?.json()).code).toBe("tenant.mismatch");
     });
   });
 
   it("a guest token minted inside a request is for that request's tenant", async () => {
     await asRequest(async () => {
-      expect(await enforceRateLimit(req("beta.example.com"), RULE)).toBeNull();
+      expect(await enforceRateLimit(await req("beta.example.com"), RULE)).toBeNull();
       const { token } = await mintGuestToken();
-      const r = await requireActor(req("beta.example.com", token), { allowGuests: true });
+      const r = await requireActor(await req("beta.example.com", token), {
+        allowGuests: true,
+      });
       expect(r.actor?.tenantId).toBe(B);
     });
   });
@@ -184,7 +210,7 @@ describe("shared mode — guests", () => {
 describe("shared mode — anonymous requests and limits", () => {
   it("an unknown address is refused before any work", async () => {
     await asRequest(async () => {
-      const res = await enforceRateLimit(req("unknown.example.com"), RULE);
+      const res = await enforceRateLimit(await req("unknown.example.com"), RULE);
       expect(res?.status).toBe(404);
       expect((await res?.json()).code).toBe("tenant.unknown_host");
     });
@@ -201,7 +227,7 @@ describe("shared mode — anonymous requests and limits", () => {
     setRateLimiter(limiter);
     for (let i = 0; i < 5000; i++) {
       await asRequest(async () => {
-        const res = await enforceRateLimit(req(`p${i}.attacker.example`), RULE);
+        const res = await enforceRateLimit(await req(`p${i}.attacker.example`), RULE);
         expect(res?.status).toBe(404);
       });
     }
@@ -217,7 +243,7 @@ describe("shared mode — anonymous requests and limits", () => {
     expect(held.snapshot?.hosts.size).toBe(2);
     // A known address still works, and is counted in its tenant.
     await asRequest(async () =>
-      expect(await enforceRateLimit(req("acme.example.com"), RULE)).toBeNull()
+      expect(await enforceRateLimit(await req("acme.example.com"), RULE)).toBeNull()
     );
     expect(check).toHaveBeenCalledWith(`t:${A}:ip:203.0.113.7`, RULE);
     // 5 000 requests: 3.6 s at four workers on two cores, near jest's default 5 s (review 14
@@ -228,7 +254,7 @@ describe("shared mode — anonymous requests and limits", () => {
     setTenantDirectory(new CachedTenantDirectory(directory));
     jest.spyOn(directory, "listHosts").mockRejectedValue(new Error("db down"));
     await asRequest(async () => {
-      const res = await enforceRateLimit(req("acme.example.com"), RULE);
+      const res = await enforceRateLimit(await req("acme.example.com"), RULE);
       expect(res?.status).toBe(503);
       expect((await res?.json()).code).toBe("service.unavailable");
     });
@@ -239,7 +265,9 @@ describe("shared mode — anonymous requests and limits", () => {
     await asRequest(async () => {
       expect(
         await enforceRateLimit(
-          req("acme.example.com", undefined, { "x-forwarded-host": "beta.example.com" }),
+          await req("acme.example.com", undefined, {
+            "x-forwarded-host": "beta.example.com",
+          }),
           RULE
         )
       ).toBeNull();
@@ -249,7 +277,9 @@ describe("shared mode — anonymous requests and limits", () => {
     await asRequest(async () => {
       // The same request read the other way is beta's — which is why the setting is declared.
       await enforceRateLimit(
-        req("acme.example.com", undefined, { "x-forwarded-host": "beta.example.com" }),
+        await req("acme.example.com", undefined, {
+          "x-forwarded-host": "beta.example.com",
+        }),
         RULE
       );
       expect(currentTenantId()).toBe(B);
@@ -259,7 +289,7 @@ describe("shared mode — anonymous requests and limits", () => {
   it("without TENANT_HOST_HEADER a shared deployment cannot tell the address: 503", async () => {
     delete process.env.TENANT_HOST_HEADER;
     await asRequest(async () => {
-      const res = await enforceRateLimit(req("acme.example.com"), RULE);
+      const res = await enforceRateLimit(await req("acme.example.com"), RULE);
       expect(res?.status).toBe(503);
       expect(peekTenant()).toBeUndefined();
     });
@@ -268,26 +298,28 @@ describe("shared mode — anonymous requests and limits", () => {
   it("one tenant's traffic never uses another's allowance (same address, same rule)", async () => {
     for (let i = 0; i < 2; i++) {
       await asRequest(async () =>
-        expect(await enforceRateLimit(req("acme.example.com"), RULE)).toBeNull()
+        expect(await enforceRateLimit(await req("acme.example.com"), RULE)).toBeNull()
       );
     }
     await asRequest(async () =>
-      expect((await enforceRateLimit(req("acme.example.com"), RULE))?.status).toBe(429)
+      expect((await enforceRateLimit(await req("acme.example.com"), RULE))?.status).toBe(
+        429
+      )
     );
     await asRequest(async () =>
-      expect(await enforceRateLimit(req("beta.example.com"), RULE)).toBeNull()
+      expect(await enforceRateLimit(await req("beta.example.com"), RULE)).toBeNull()
     );
   });
 
   it("optionalAuth treats another tenant's token as no token, keeping the address's tenant", async () => {
     const token = await userToken(B);
     await asRequest(async () => {
-      const r = await optionalAuth(req("acme.example.com", token));
+      const r = await optionalAuth(await req("acme.example.com", token));
       expect(r.user).toBeNull();
       expect(r.tenant).toEqual({ tenantId: A, mode: "shared" });
     });
     await asRequest(async () => {
-      const r = await optionalAuth(req("unknown.example.com"));
+      const r = await optionalAuth(await req("unknown.example.com"));
       expect(r.tenant).toBeNull();
     });
   });
@@ -302,7 +334,7 @@ describe("single mode", () => {
   it("a user without a tenant attribute is the deployment's tenant on any address", async () => {
     const token = await userToken();
     await asRequest(async () => {
-      const r = await requireAuth(req("anything.example.com", token));
+      const r = await requireAuth(await req("anything.example.com", token));
       expect(r.tenant).toEqual({ tenantId: A, mode: "single" });
     });
   });
@@ -310,7 +342,7 @@ describe("single mode", () => {
   it("a user assigned to another tenant cannot use this deployment", async () => {
     const token = await userToken(B);
     await asRequest(async () => {
-      const r = await requireAuth(req("acme.example.com", token));
+      const r = await requireAuth(await req("acme.example.com", token));
       expect((await r.error?.json()).code).toBe("tenant.mismatch");
     });
   });
@@ -318,7 +350,9 @@ describe("single mode", () => {
   it("a guest token of another deployment's tenant is refused", async () => {
     const { token } = await mintGuestToken(undefined, B);
     await asRequest(async () => {
-      const r = await requireActor(req("acme.example.com", token), { allowGuests: true });
+      const r = await requireActor(await req("acme.example.com", token), {
+        allowGuests: true,
+      });
       expect((await r.error?.json()).code).toBe("tenant.mismatch");
     });
   });
@@ -332,11 +366,14 @@ describe("requests do not share a tenant", () => {
       Array.from({ length: 20 }, (_, i) =>
         asRequest(async () => {
           if (i % 2 === 0) {
-            const r = await requireAuth(req("acme.example.com", tokenA));
+            const r = await requireAuth(await req("acme.example.com", tokenA));
             await new Promise((r2) => setTimeout(r2, (i * 3) % 7));
             return [A, r.tenant?.tenantId, currentTenantId()];
           }
-          await enforceRateLimit(req("beta.example.com"), { ...RULE, maxRequests: 100 });
+          await enforceRateLimit(await req("beta.example.com"), {
+            ...RULE,
+            maxRequests: 100,
+          });
           await new Promise((r2) => setTimeout(r2, (i * 5) % 7));
           return [B, currentTenantId(), currentTenantId()];
         })

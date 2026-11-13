@@ -457,6 +457,20 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     exportReason:
       "counters of the last few minutes' requests; nothing about their content",
   },
+  // ── Sign-in sessions (ADR-057: keyed by the identity's subject — the account's cognito_sub,
+  // or its id for an account that has none) ────────────────────────────────────────────────
+  {
+    name: "signInSessions",
+    table: "auth_sessions",
+    action: "delete",
+    columns: ["auth_sessions.subject"],
+    count:
+      "select count(*)::int as n from auth_sessions where (lower(subject) = lower($1::text) or subject in (select cognito_sub from users where id = $1::uuid and cognito_sub is not null))",
+    erase:
+      "delete from auth_sessions where (lower(subject) = lower($1::text) or subject in (select cognito_sub from users where id = $1::uuid and cognito_sub is not null))",
+    exportSql:
+      "select to_jsonb(t) - '_k' as r, t._k::text as k from (select method, created_at, last_seen_at, revoked_at, revoked_reason, ctid as _k from auth_sessions where (lower(subject) = lower($1::text) or subject in (select cognito_sub from users where id = $1::uuid and cognito_sub is not null)) and ctid > $3::tid order by ctid limit $2::int) t",
+  },
   // ── App sessions (ADR-049: a session's participants are named in its meta) ──────────────
   {
     name: "appSessions",
@@ -1002,6 +1016,15 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "effect_ledger.request": "the receipt of an external call, keyed by its operation",
   "effect_ledger.status": "the receipt of an external call, keyed by its operation",
   "guest_usage.guest_id": "a guest id, which is not an account",
+  "auth_sessions.id_hash":
+    "the SHA-256 of a random session id (ADR-057); names no one, and the row goes with its subject",
+  "auth_sessions.kind": "user or guest (ADR-057)",
+  "auth_sessions.method": "how the session was obtained: a fixed code (ADR-057)",
+  "auth_sessions.csrf_token":
+    "a random forgery token (ADR-057); names no one, and the row goes with its subject",
+  "auth_sessions.sealed_tokens":
+    "the provider's tokens, encrypted by the application (ADR-057); unreadable here, and the row goes with its subject",
+  "auth_sessions.revoked_reason": "why the session ended: a fixed code (ADR-057)",
   "job_schedule_outcomes.kind": "job scheduling",
   "job_schedule_outcomes.last_error": "job scheduling",
   "job_schedule_outcomes.status": "job scheduling",

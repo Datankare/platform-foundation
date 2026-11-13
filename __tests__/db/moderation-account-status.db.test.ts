@@ -470,6 +470,35 @@ dbDescribe("moderation account-status SQL", () => {
       await expect(stamp(target)).resolves.toBeFalsy();
     });
 
+    it("ADR-057 D6: a suspension or ban ends every session of the account, in its tenant — a warning does not, and nobody else's is touched", async () => {
+      const { PostgresSessionStore, setSessionStore, getSessionStore } =
+        await import("@/platform/auth/session-store");
+      const { startTestSession } = await import("../helpers/session");
+      setSessionStore(new PostgresSessionStore());
+      const mine = () => startTestSession({ subject: target, tenantId: t.id });
+      const live = async (idHash: string) =>
+        (await inT(() => getSessionStore().find(idHash)))?.revokedReason ?? "live";
+      const [laptop, phone] = [await mine(), await mine()];
+      const bystander = await startTestSession({ subject: reviewer, tenantId: t.id });
+
+      // First block: warned — the account keeps its sessions.
+      expect((await block("s1")).newStatus).toBe("warned");
+      expect(await live(laptop.idHash)).toBe("live");
+
+      // Second: suspended — every session of the account ends, at once.
+      expect((await block("s2")).newStatus).toBe("suspended");
+      expect(await live(laptop.idHash)).toBe("account_restricted");
+      expect(await live(phone.idHash)).toBe("account_restricted");
+      expect(await live(bystander.idHash)).toBe("live");
+
+      // A session started while suspended (the account signs in to read its standing) ends
+      // again at the ban.
+      const again = await mine();
+      expect((await block("s3")).newStatus).toBe("banned");
+      expect(await live(again.idHash)).toBe("account_restricted");
+      expect(await live(bystander.idHash)).toBe("live");
+    });
+
     it("reads a user it cannot see as active", async () => {
       const res = await inT(() =>
         new Sentinel().processBlock(result(), randomUUID(), "r-unknown")

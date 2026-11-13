@@ -866,15 +866,9 @@
     }
   },
   "POST /api/auth/sign-out — the provider failing": {
-    "status": 500,
+    "status": 200,
     "body": {
-      "code": "internal.error",
-      "message": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000.",
-      "params": {
-        "requestId": "req_0000000000000000"
-      },
-      "success": false,
-      "error": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000."
+      "success": true
     }
   },
   "POST /api/admin/ai — refused (rate limited)": {
@@ -2465,7 +2459,6 @@
     "body": {
       "success": true,
       "guestId": "guest_abc",
-      "token": "guest.p.m",
       "expiresAt": 1767484800
     }
   },
@@ -2491,33 +2484,99 @@
       "error": "Email or password is incorrect."
     }
   },
-  "POST /api/auth/refresh — renewed": {
+  "POST /api/auth/sign-in — signed in": {
     "status": 200,
     "body": {
       "success": true,
-      "userId": "user-1",
-      "accessToken": "renewed-for-user-1",
-      "expiresIn": 3600
+      "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
     }
   },
-  "POST /api/auth/refresh — refused (no refresh cookie)": {
-    "status": 401,
+  "GET /api/auth/session — signed out": {
+    "status": 200,
     "body": {
-      "code": "auth.token_invalid",
-      "message": "Your session has expired. Sign in again.",
-      "params": {},
-      "success": false,
-      "error": "Your session has expired. Sign in again."
+      "authenticated": false
     }
   },
-  "POST /api/auth/refresh — refused (the provider renewed another account)": {
-    "status": 401,
+  "GET /api/auth/session — signed in": {
+    "status": 200,
     "body": {
-      "code": "auth.token_invalid",
-      "message": "Your session has expired. Sign in again.",
+      "authenticated": true,
+      "user": {
+        "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "email": "test@example.com",
+        "emailVerified": true,
+        "isGuest": false
+      },
+      "csrfToken": "csrf-token-of-the-session",
+      "audience": "user",
+      "idleExpiresAt": 1767830400000,
+      "absoluteExpiresAt": 1769817600000,
+      "idleWarningSeconds": 120
+    }
+  },
+  "GET /api/auth/session — a guest": {
+    "status": 200,
+    "body": {
+      "authenticated": true,
+      "user": {
+        "userId": "guest_abc",
+        "email": "",
+        "emailVerified": false,
+        "isGuest": true
+      },
+      "csrfToken": "csrf-token-of-the-session",
+      "audience": "guest",
+      "idleExpiresAt": null,
+      "absoluteExpiresAt": 1767312000000,
+      "idleWarningSeconds": 120
+    }
+  },
+  "GET /api/auth/session — an ended session": {
+    "status": 200,
+    "body": {
+      "authenticated": false
+    }
+  },
+  "POST /api/auth/session — stayed signed in": {
+    "status": 200,
+    "body": {
+      "authenticated": true,
+      "user": {
+        "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "email": "test@example.com",
+        "emailVerified": true,
+        "isGuest": false
+      },
+      "csrfToken": "csrf-token-of-the-session",
+      "audience": "user",
+      "idleExpiresAt": 1767830400000,
+      "absoluteExpiresAt": 1769817600000,
+      "idleWarningSeconds": 120
+    }
+  },
+  "POST /api/auth/session — refused (no session token)": {
+    "status": 403,
+    "body": {
+      "code": "auth.csrf_failed",
+      "message": "This request could not be confirmed as coming from this page. Reload the page and try again.",
       "params": {},
       "success": false,
-      "error": "Your session has expired. Sign in again."
+      "error": "This request could not be confirmed as coming from this page. Reload the page and try again."
+    }
+  },
+  "POST /api/auth/session/migrate — nothing to migrate": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "migrated": false
+    }
+  },
+  "POST /api/auth/sign-out-everywhere — signed out": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "sessionsEnded": 0,
+      "providerSignedOut": true
     }
   },
   "POST /api/stream — an answer": {
@@ -2627,7 +2686,8 @@
     "status": 200,
     "body": {
       "success": true,
-      "mfaEnabled": true
+      "mfaEnabled": true,
+      "csrfToken": "csrf-token-of-the-session"
     }
   },
   "POST /api/auth/mfa/verify — refused (the code is wrong)": {
@@ -5552,6 +5612,13 @@
           "state": "not_needed",
           "detail": {
             "key": "screens.readiness.erasure_not_needed"
+          }
+        },
+        {
+          "name": "sessions",
+          "state": "not_needed",
+          "detail": {
+            "key": "screens.readiness.sessions_not_needed"
           }
         },
         {

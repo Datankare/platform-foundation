@@ -436,7 +436,7 @@ describe("CognitoAuthProvider — resilience", () => {
 
     const provider = new CognitoAuthProvider(TEST_CONFIG);
     // R-77: the network's own text is logged, not carried by the error.
-    const err = await provider.signOut("some-token").catch((e: unknown) => e);
+    const err = await provider.signOut("", "some-refresh-token").catch((e: unknown) => e);
     expect(err).toMatchObject({
       cognitoType: "NetworkError",
       message: "Cognito could not be reached",
@@ -716,57 +716,56 @@ describe("CognitoAuthProvider — a confidential app client (audit A-7)", () => 
     ).toBeNull();
   });
 
-  it("signs out everywhere first, then revokes the refresh token with the client secret (X-17, review 17 M1)", async () => {
-    await new CognitoAuthProvider(CONFIDENTIAL).signOut("access", "refresh");
-    // GlobalSignOut first: RevokeToken would void the access token it is asked with.
-    expect(mockFetch.mock.calls[0][1].headers["X-Amz-Target"]).toMatch(/GlobalSignOut$/);
-    expect(mockFetch.mock.calls[1][1].headers["X-Amz-Target"]).toMatch(/RevokeToken$/);
-    expect(sent(1)).toEqual({
+  it("signOut revokes the refresh token with the client secret, and never sends the access token (ADR-057 D6)", async () => {
+    await new CognitoAuthProvider(CONFIDENTIAL).signOut("access-token-value", "refresh");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][1].headers["X-Amz-Target"]).toMatch(/RevokeToken$/);
+    expect(sent(0)).toEqual({
       ClientId: TEST_CONFIG.clientId,
       Token: "refresh",
       ClientSecret: SECRET,
     });
+    // GlobalSignOut needed the user's token (and its admin scope): it is no longer called.
+    const everything = JSON.stringify(mockFetch.mock.calls);
+    expect(everything).not.toContain("GlobalSignOut");
+    expect(everything).not.toContain("access-token-value");
   });
 
-  it("treats an expired access token as signed out once its refresh token is revoked", async () => {
-    mockFetch
-      .mockResolvedValueOnce(
-        cognitoError("NotAuthorizedException", "Access Token has expired")
-      )
-      .mockResolvedValueOnce(cognitoOk({}));
+  it("signOut with no refresh token calls nothing: there is nothing of this sign-in to revoke", async () => {
     await expect(
-      new CognitoAuthProvider(CONFIDENTIAL).signOut("expired", "refresh")
+      new CognitoAuthProvider(CONFIDENTIAL).signOut("access-token-value")
     ).resolves.toBeUndefined();
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it("a refresh token GlobalSignOut already voided is signed out; one that could not be revoked after an expired token is reported", async () => {
-    mockFetch
-      .mockResolvedValueOnce(cognitoOk({}))
-      .mockResolvedValueOnce(cognitoError("NotAuthorizedException", "Token revoked"));
-    await expect(
-      new CognitoAuthProvider(CONFIDENTIAL).signOut("access", "refresh")
-    ).resolves.toBeUndefined();
-    mockFetch
-      .mockResolvedValueOnce(cognitoError("NotAuthorizedException", "expired"))
-      .mockResolvedValueOnce(cognitoError("NotAuthorizedException", "Invalid token"));
-    await expect(
-      new CognitoAuthProvider(CONFIDENTIAL).signOut("expired", "refresh")
-    ).rejects.toThrow();
-    mockFetch
-      .mockResolvedValueOnce(cognitoOk({}))
-      .mockResolvedValueOnce(cognitoError("InternalErrorException", "down", 500));
-    await expect(
-      new CognitoAuthProvider(CONFIDENTIAL).signOut("access", "refresh")
-    ).rejects.toThrow();
-  });
-
-  it("reports an expired access token with no refresh token revoked", async () => {
+  it("a refresh token already void is signed out; one that could not be revoked is reported", async () => {
     mockFetch.mockResolvedValueOnce(
-      cognitoError("NotAuthorizedException", "Access Token has expired")
+      cognitoError("NotAuthorizedException", "Token revoked")
     );
     await expect(
-      new CognitoAuthProvider(CONFIDENTIAL).signOut("expired")
+      new CognitoAuthProvider(CONFIDENTIAL).signOut("", "refresh")
+    ).resolves.toBeUndefined();
+    mockFetch.mockResolvedValueOnce(cognitoError("InternalErrorException", "down", 500));
+    await expect(
+      new CognitoAuthProvider(CONFIDENTIAL).signOut("", "refresh")
+    ).rejects.toThrow();
+    mockFetch.mockResolvedValueOnce(
+      cognitoError("TooManyRequestsException", "slow", 429)
+    );
+    await expect(
+      new CognitoAuthProvider(CONFIDENTIAL).signOut("", "refresh")
+    ).rejects.toThrow();
+  });
+
+  it("a refused client secret at sign-out is the platform's failure, not a void token", async () => {
+    mockFetch.mockResolvedValueOnce(
+      cognitoError(
+        "NotAuthorizedException",
+        "Unable to verify secret hash for client test-client-id"
+      )
+    );
+    await expect(
+      new CognitoAuthProvider(CONFIDENTIAL).signOut("", "refresh")
     ).rejects.toThrow();
   });
 

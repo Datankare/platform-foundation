@@ -51,6 +51,7 @@
  * it; only the pool can answer, with operator credentials).
  */
 
+import { endSubjectSessions } from "@/platform/auth/session-revocation";
 import { NextRequest, NextResponse } from "next/server";
 import { withTenantTx } from "@/platform/data";
 import { adminGuard, requireAdmin } from "@/platform/auth/admin-guard";
@@ -444,6 +445,8 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
         };
       }
       if (target.cognitoSub) await invalidatePermissions(target.cognitoSub);
+      // A session opened under the old role does not carry on under the new one (ADR-057 D6).
+      await endSubjectSessions(target.cognitoSub, "role_changed");
       return { success: true, response: NextResponse.json({ success: true }) };
     },
     () => apiError("service.unavailable", { params: { service: "audit" }, request })

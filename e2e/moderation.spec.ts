@@ -32,18 +32,17 @@ import {
 } from "@playwright/test";
 import { Client } from "pg";
 import { checkA11y } from "./helpers/a11y";
+import { sessionFetch, signInPage } from "./helpers/session";
 
 const OWNER_URL = process.env.E2E_DATABASE_OWNER_URL;
 const TENANT = "00000000-0000-4000-8000-000000000001";
 
 /** The test double's moderator and member (platform/auth/mock-provider.ts). */
 const MODERATOR = {
-  token: "mock-access-token:moderator-m",
   id: "e2e00000-0000-4000-8000-00000000000d",
   email: "moderator-m@e2e.test",
 };
 const MEMBER = {
-  token: "mock-access-token:member-u",
   id: "e2e00000-0000-4000-8000-00000000000e",
   email: "member-u@e2e.test",
 };
@@ -85,20 +84,16 @@ async function waitOut(retryAfter: string | undefined): Promise<void> {
   await new Promise((r) => setTimeout(r, seconds * 1000));
 }
 
-/** A route called as `who`, waiting out a rate limit. */
+/** A route called as `who` (their own cookie session), waiting out a rate limit. */
 async function call(
-  api: APIRequestContext,
+  _api: APIRequestContext,
   who: Person,
   method: "GET" | "POST",
   path: string,
   data?: unknown
 ): Promise<APIResponse> {
   for (let attempt = 0; ; attempt++) {
-    const headers = { Authorization: `Bearer ${who.token}` };
-    const res =
-      method === "GET"
-        ? await api.get(path, { headers })
-        : await api.post(path, { headers, data });
+    const res = await sessionFetch(who, method, path, data);
     if (res.status() !== 429 || attempt >= 3) return res;
     await waitOut(res.headers()["retry-after"]);
   }
@@ -106,30 +101,7 @@ async function call(
 
 /** The test double's session for `who` in this browser. */
 async function signIn(page: Page, who: Person): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: "pf_has_session",
-      value: "true",
-      domain: "localhost",
-      path: "/",
-      httpOnly: false,
-      secure: false,
-      sameSite: "Lax",
-    },
-  ]);
-  await page.addInitScript((p) => {
-    localStorage.setItem("pf_access_token", p.token);
-    localStorage.setItem("pf_refresh_token", "mock-refresh-token");
-    localStorage.setItem(
-      "pf_user",
-      JSON.stringify({
-        userId: p.id,
-        email: p.email,
-        emailVerified: true,
-        isGuest: false,
-      })
-    );
-  }, who);
+  await signInPage(page, who);
 }
 
 /**

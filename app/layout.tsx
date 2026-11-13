@@ -4,6 +4,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { AuthContextProvider } from "@/platform/auth/context";
+import SessionIdleWarning from "@/components/auth/SessionIdleWarning";
 import { renderMessage } from "@/platform/errors/messages";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -21,7 +22,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en">
       <body className={inter.className}>
         <ErrorBoundary>
-          <AuthContextProvider>{children}</AuthContextProvider>
+          <AuthContextProvider>
+            {children}
+            <SessionIdleWarning />
+          </AuthContextProvider>
         </ErrorBoundary>
       </body>
     </html>

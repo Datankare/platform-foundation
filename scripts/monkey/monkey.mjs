@@ -15,7 +15,16 @@
  *   I4  every error is coded: a JSON error body carries a `code`;
  *   I5  no hang: every response within the timeout;
  *   I6  no other caller's records: a response to one caller never carries another caller's
- *       identity (the signed-in user's id in a guest's response, a guest's in the user's).
+ *       identity (the signed-in user's id in a guest's response, a guest's in the user's);
+ *   I7  no forged success (ADR-057 D4): a state-changing request that carries a live session's
+ *       cookie and token but names another origin — what a hostile page can make a browser
+ *       send, and more — never answers 2xx.
+ *
+ * Callers: anonymous; two bearer callers (a forged token, garbage) — no user route reads a
+ * bearer (ADR-057 D8), so they are anonymous with a decoy; a guest and, with MONKEY_MOCK_USER,
+ * the signed-in user — each a cookie session started as a browser starts one, sent with this
+ * origin and the session's forgery token, and started again when a step ends it (the monkey
+ * reaches the sign-out routes too); and "cross-site", the guest's session from another origin.
  *
  * Two modes (MONKEY_MODE):
  *   sweep     (default) every route and handler once per caller, then random single steps;
@@ -251,11 +260,40 @@ const callers = [
   { name: "garbage", auth: "Bearer " + "A".repeat(40) },
 ];
 
-async function mintGuest() {
+/** The session cookie (`name=value`) a response set, or null. */
+function sessionCookieOf(response) {
+  for (const line of response.headers.getSetCookie?.() ?? []) {
+    const pair = line.split(";")[0];
+    if (/^(?:__Host-)?pf_session=.+/.test(pair)) return pair;
+  }
+  return null;
+}
+
+/**
+ * Start a cookie session through `path` (the guest route, or sign-in) and read its forgery
+ * token: what a browser holds — never a token of the identity provider's.
+ */
+async function startSession(path, body) {
   try {
-    const r = await fetch(BASE + "/api/auth/guest", { method: "POST" });
+    const r = await fetch(BASE + path, {
+      method: "POST",
+      headers: {
+        origin: BASE,
+        ...(body ? { "content-type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
     const j = await r.json();
-    return typeof j.token === "string" ? j.token : null;
+    const cookie = sessionCookieOf(r);
+    if (!r.ok || !cookie) return null;
+    const status = await fetch(BASE + "/api/auth/session", { headers: { cookie } });
+    const session = await status.json();
+    if (typeof session.csrfToken !== "string") return null;
+    return {
+      cookie,
+      csrf: session.csrfToken,
+      id: j.guestId ?? j.userId ?? session.user?.userId ?? null,
+    };
   } catch {
     return null;
   }
@@ -326,6 +364,11 @@ async function send(step, caller, method, route, retried = false) {
   const path = segment(route);
   const headers = {};
   if (caller.auth) headers.authorization = caller.auth;
+  if (caller.session) {
+    headers.cookie = caller.session.cookie;
+    headers.origin = caller.origin ?? BASE;
+    headers["x-csrf-token"] = caller.session.csrf;
+  }
   const b = method === "GET" || method === "DELETE" ? undefined : body();
   if (b !== undefined) {
     headers["content-type"] = chance(0.9)
@@ -362,6 +405,22 @@ async function send(step, caller, method, route, retried = false) {
   stats.requests++;
   stats.byStatus[status] = (stats.byStatus[status] ?? 0) + 1;
   check(step, caller.name, method, path, status, text, Date.now() - started);
+  // I7: a session's cookie and token from another origin never change anything.
+  if (caller.origin && method !== "GET" && status >= 200 && status < 300) {
+    violations.push(
+      `I7 step ${step} ${caller.name} ${method} ${path} → ${status} — a state-changing request from another origin succeeded`
+    );
+  }
+  // The step ended the caller's session (a sign-out route, a rotation): start it again, as the
+  // person would sign in again — so later steps reach the routes, not the sign-in wall.
+  if (status === 401 && caller.start && !retried) {
+    const again = await caller.start();
+    if (again) {
+      caller.session = again;
+      for (const c of callers) if (c.shares === caller.name) c.session = again;
+      stats.restarted = (stats.restarted ?? 0) + 1;
+    }
+  }
   if (MODE === "sequence") {
     harvest(text);
     // Limited: wait out the limiter once, then take the step again (never around it).
@@ -381,22 +440,30 @@ if (ROUTES.length < 10) {
   process.exit(2);
 }
 
-/** The guest id inside a guest token ("guest.<payload>.<mac>"), or null. */
-function guestIdOf(token) {
-  try {
-    return (
-      JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString()).sub ?? null
-    );
-  } catch {
-    return null;
-  }
-}
-
-const guest = await mintGuest();
-if (guest) callers.push({ name: "guest", auth: `Bearer ${guest}`, id: guestIdOf(guest) });
-else console.log("note: no guest caller — the server refused to mint a guest token");
+const startGuest = () => startSession("/api/auth/guest");
+const guest = await startGuest();
+if (guest) {
+  callers.push({ name: "guest", session: guest, id: guest.id, start: startGuest });
+  // The guest's own session, as another origin would send it (I7). No id: it is the guest.
+  callers.push({
+    name: "cross-site",
+    session: guest,
+    origin: "https://cross-site.invalid",
+    shares: "guest",
+  });
+} else console.log("note: no guest caller — the server started no guest session");
 if (MOCK_USER) {
-  callers.push({ name: "user", auth: "Bearer mock-access-token", id: MOCK_USER_ID });
+  // The test double signs any address in as its own user (platform/auth/mock-provider.ts).
+  const startUser = () =>
+    startSession("/api/auth/sign-in", {
+      email: "monkey@e2e.test",
+      password: "monkey-run",
+    });
+  const user = await startUser();
+  if (user) {
+    callers.push({ name: "user", session: user, id: MOCK_USER_ID, start: startUser });
+  } else
+    console.log("note: no user caller — the server started no session for the mock user");
 }
 console.log(`mode: ${MODE}; callers: ${callers.map((c) => c.name).join(", ")}`);
 

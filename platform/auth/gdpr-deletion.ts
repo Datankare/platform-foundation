@@ -21,6 +21,7 @@
  * Sprint 5, Tasks 5.1 + 5.2
  */
 
+import { endSubjectSessions } from "@/platform/auth/session-revocation";
 import { withOwnerTx, withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
@@ -330,6 +331,9 @@ export async function softDeleteUser(
         // The deleted account's cached permissions go at once, here and on every instance
         // (review 7 M5: they were served until the cache's TTL ran out).
         if (subject) await invalidatePermissions(subject);
+        // Every session of the erased account ends now (ADR-057 D6); its session records are
+        // deleted with the account's data (platform/auth/user-data.ts, auth_sessions).
+        await endSubjectSessions(subject, "account_erased");
 
         // 2. Run soft delete on all registered modules
         for (const mod of registeredModules) {

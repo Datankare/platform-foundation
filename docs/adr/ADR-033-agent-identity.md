@@ -144,3 +144,30 @@ delegation token as any active registered agent, and `TrustedAgent.owner` was ne
 
 The platform holds no issuer, so the mechanism is the consumer's; this records the rule an issuer
 must follow. Playform's implementation: `docs/AGENT_DELEGATION_GUIDE.md`.
+
+## Addendum — TASK-214 (November 2026): an agent holds nothing of the user's
+
+ADR-057 moved every person's sign-in to a server-side session: the browser holds an opaque id in
+an `HttpOnly` cookie, no token of a user's exists outside the server, and no user route accepts a
+bearer (ADR-057 D8). The addendum above kept "every step on the user's live session" — in the
+consumer's implementation the agent sent the user's access token with its request, its exchange
+and each call. That is no longer possible, and was never right: an agent that holds a user's token
+can do anything the user can. Decided, for any issuer:
+
+- **The agent's own steps carry the agent's own credential and nothing else.** The request and the
+  exchange are authenticated by the client credential (`Authorization: Basic`, RFC 6749 §2.3.1).
+  The request names no user.
+- **The user's consent binds the request to the user.** It is given in the user's own signed-in
+  browser, on the server's record of the request, with a step-up; the first decision lands and
+  no other can. `owner` is checked there: who may delegate to the agent.
+- **The delegation token is the agent's credential at use** (`Authorization: Bearer`), single-use
+  as before. The user it acts for is the token's own claim — the one who consented — and that
+  user's standing (account status, the feature's permission, age and consent) is checked at every
+  use by the rules a signed-in user's own request is held to. Nothing else in the request names
+  a user (T9).
+- **A route that grants authority is the user's alone**: approving a held action refuses an
+  agent's token before verifying it.
+
+The routes that read an `Authorization` header are a register a guard holds to the code
+(`client-credential-register.json`, `__tests__/user-route-credentials.test.ts`). Playform's
+implementation: its TASK-5015, migration `070a`, `docs/AGENT_DELEGATION_GUIDE.md`.

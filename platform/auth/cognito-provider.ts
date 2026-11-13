@@ -30,6 +30,8 @@ import type {
   MfaVerifyResult,
   PasswordRecoveryResult,
   PasswordResetResult,
+  RenewalOutcome,
+  SignOutEverywhereResult,
   SsoCallbackOptions,
   SsoCallbackResult,
   SsoInitOptions,
@@ -64,6 +66,7 @@ import type {
   ClientSecretReadiness,
   ErasureAccessReadiness,
   PoolShapeReadiness,
+  SessionAccessReadiness,
   TenantAttributeReadiness,
 } from "@/platform/auth/provider";
 import type { ErrorCode } from "@/platform/errors/registry";
@@ -261,6 +264,38 @@ export function cognitoUnavailable(error: unknown): boolean {
     error.cognitoType === "NetworkError" ||
     error.statusCode === 429 ||
     error.statusCode >= 500
+  );
+}
+
+/**
+ * The scopes a hosted sign-in asks for (ADR-057 D7). `aws.cognito.signin.user.admin` — the scope
+ * that lets a token's bearer call Cognito's own user API — is no longer asked for: the server
+ * reads the user with its administrative key (AdminGetUser), so the token needs no such power.
+ * Only a deployment without that key still asks for it, because there the token's own GetUser is
+ * how a request is verified (audit A-13); operator readiness reports that deployment.
+ */
+export function ssoScopes(hasAdministrativeKey: boolean): string {
+  return hasAdministrativeKey
+    ? "openid email profile"
+    : "openid email profile aws.cognito.signin.user.admin";
+}
+
+/**
+ * Whether an administrative call was refused because of the key's policy (IAM's AccessDenied) —
+ * as against the pool's answer about the user (UserNotFoundException, …).
+ */
+function isKeyRefusal(type: string): boolean {
+  return type === "AccessDeniedException" || type === "UnauthorizedOperation";
+}
+
+let keyRefusalWarned = false;
+/** Once per process: the administrative key may not read users, so tokens are verified by GetUser. */
+function warnOnceKeyRefused(): void {
+  if (keyRefusalWarned) return;
+  keyRefusalWarned = true;
+  logger.error(
+    "The Cognito administrative key may not call AdminGetUser — tokens are verified with GetUser instead; add the action to the key's policy (TENANCY_OPERATIONS §3.3)",
+    { route: "platform/auth/cognito-provider" }
   );
 }
 
@@ -556,29 +591,14 @@ export class CognitoAuthProvider implements AuthProvider {
   }
 
   /**
-   * Revoke the session (audit X-17): GlobalSignOut ends every token of the user's sign-ins, and
-   * the refresh token, when the caller has it, is revoked itself (RevokeToken) so it can never
-   * mint another access token. GlobalSignOut goes first (review 17 M1): RevokeToken also voids
-   * the access tokens that refresh token issued — sign-out's own freshly refreshed one included —
-   * so asked second, GlobalSignOut would be refused and the user's other sessions kept. A
-   * failure is thrown — a sign-out that did not revoke must not be reported as one — except:
-   * an access token that cannot sign out (expired) when its refresh token is then revoked, and
-   * a refresh token already void because GlobalSignOut ended every token.
+   * End one sign-in (ADR-057 D6): the refresh token is revoked (RevokeToken — the app client's
+   * own call, no user token and no administrative key), and with it every access token it
+   * issued. The user's other sign-ins are untouched; signOutEverywhere ends them all. The access
+   * token is never sent: GlobalSignOut, which needed it (and its aws.cognito.signin.user.admin
+   * scope), is no longer called. A failure is thrown — a sign-out that did not revoke must not be
+   * reported as one — except a refresh token Cognito says is already void.
    */
   async signOut(accessToken: AuthToken, refreshToken?: AuthToken): Promise<void> {
-    const notAuthorized = (error: unknown) =>
-      error instanceof CognitoError && error.cognitoType === "NotAuthorizedException";
-    let signedOutEverywhere = false;
-    if (accessToken) {
-      try {
-        await callCognito(this.config, "GlobalSignOut", { AccessToken: accessToken });
-        signedOutEverywhere = true;
-      } catch (error) {
-        // An access token that has already expired cannot sign out; with its refresh token
-        // revoked below there is nothing left that can mint another.
-        if (!(notAuthorized(error) && refreshToken)) throw error;
-      }
-    }
     if (refreshToken) {
       try {
         await callCognito(this.config, "RevokeToken", {
@@ -587,17 +607,64 @@ export class CognitoAuthProvider implements AuthProvider {
           ...(this.config.clientSecret ? { ClientSecret: this.config.clientSecret } : {}),
         });
       } catch (error) {
-        if (!(notAuthorized(error) && signedOutEverywhere)) throw error;
+        // A refresh token Cognito says is already void is revoked; the platform's own
+        // credential refused (a rotated client secret) is not that.
+        if (
+          !(error instanceof CognitoError) ||
+          error.cognitoType !== "NotAuthorizedException" ||
+          isClientSecretRejection(error)
+        ) {
+          throw error;
+        }
       }
     }
+    // What was remembered of this user's tokens is void at once (review 7 P3), as before
+    // ADR-057: the session's record has ended, and nothing stands on an earlier verification.
+    const subject = decodeJwtPayload(accessToken)?.sub;
+    if (typeof subject === "string" && subject) await revokeTokenVerification(subject);
     logger.info("User signed out");
+  }
+
+  /**
+   * End every token Cognito issued the user (ADR-057 D6): AdminUserGlobalSignOut, signed with the
+   * administrative key — never the user's token. A user the pool no longer has is signed out.
+   * Without the key, or when its policy does not allow the action, the answer is
+   * service.unavailable (auth): the platform's own sessions are ended in its records all the
+   * same, and operator readiness names the missing action ("sessions").
+   */
+  async signOutEverywhere(userId: AuthUserId): Promise<SignOutEverywhereResult> {
+    const credentials = this.config.adminCredentials;
+    const unavailable = (error: string): SignOutEverywhereResult => ({
+      success: false,
+      error,
+      errorCode: "service.unavailable",
+    });
+    if (!credentials) return unavailable("no administrative key");
+    try {
+      await callCognito(
+        this.config,
+        "AdminUserGlobalSignOut",
+        { UserPoolId: this.config.userPoolId, Username: this.poolUsernameOf(userId) },
+        credentials
+      );
+    } catch (error) {
+      if (!(
+        error instanceof CognitoError && error.cognitoType === "UserNotFoundException"
+      )) {
+        return unavailable(error instanceof CognitoError ? error.cognitoType : "error");
+      }
+    }
+    await revokeTokenVerification(userId);
+    return { success: true };
   }
 
   // ── Token Management ──
 
   /**
-   * Verify an access token (GetUser), remembered briefly in the shared cache and revocable at
-   * once (platform/auth/token-verification.ts). Refused locally, before any call, when it is not
+   * Verify a session's access token: its signature, audience and expiry here, and the user it
+   * names with the pool by AdminGetUser — the administrative key, so the token itself is not
+   * sent to Cognito (ADR-057 D7). The answer is remembered briefly in the shared cache and
+   * revocable at once (platform/auth/token-verification.ts). Refused locally, before any call, when it is not
    * this app's or has expired. Throws TokenVerificationUnavailableError when Cognito cannot
    * answer (throttled, down) and no remembered verification may stand in — a privileged route
    * never uses one.
@@ -666,7 +733,7 @@ export class CognitoAuthProvider implements AuthProvider {
     return this.tokens.verify(
       accessToken,
       { exp: decoded.exp as number, subject },
-      () => this.askGetUser(accessToken, decoded, subject),
+      () => this.askUser(accessToken, decoded, subject),
       options
     );
   }
@@ -685,20 +752,54 @@ export class CognitoAuthProvider implements AuthProvider {
     return this.poolUsernames.get(sub) ?? sub;
   }
 
-  /** GetUser, as an outcome: valid, invalid (the token), or unavailable (Cognito). */
-  private async askGetUser(
+  /**
+   * The pool's record of the token's user, as an outcome: valid, invalid (no such user, a
+   * disabled one, another subject's record), or unavailable (Cognito). Asked with the
+   * administrative key (AdminGetUser, by the signed token's own `username`): the token is not
+   * presented. A disabled user is refused at once. Only where the key cannot make the call — none
+   * configured, or its policy refuses AdminGetUser — is the token's own GetUser used instead, as
+   * before ADR-057 (a token without the aws.cognito.signin.user.admin scope is then refused by
+   * Cognito); operator readiness reports that deployment ("sessions").
+   */
+  private async askUser(
     accessToken: AuthToken,
     decoded: Record<string, unknown>,
     subject: string
   ): Promise<ProviderOutcome> {
     let result: Record<string, unknown>;
+    const credentials = this.config.adminCredentials;
+    let administrative = false;
     try {
-      result = await callCognito(this.config, "GetUser", { AccessToken: accessToken });
+      if (credentials) {
+        try {
+          result = await callCognito(
+            this.config,
+            "AdminGetUser",
+            {
+              UserPoolId: this.config.userPoolId,
+              Username: this.poolUsernameOf(subject),
+            },
+            credentials
+          );
+          administrative = true;
+        } catch (error) {
+          if (!(error instanceof CognitoError && isKeyRefusal(error.cognitoType)))
+            throw error;
+          warnOnceKeyRefused();
+          result = await callCognito(this.config, "GetUser", {
+            AccessToken: accessToken,
+          });
+        }
+      } else {
+        result = await callCognito(this.config, "GetUser", { AccessToken: accessToken });
+      }
     } catch (error) {
       return cognitoUnavailable(error)
         ? { kind: "unavailable", reason: (error as CognitoError).cognitoType }
         : { kind: "invalid" };
     }
+    // AdminGetUser answers for a disabled user too (GetUser refused its token): never served.
+    if (administrative && result.Enabled === false) return { kind: "invalid" };
     const attrs = result.UserAttributes as Array<{ Name: string; Value: string }>;
     // The pool's record is of the token's own subject, or the token is not believed — an answer
     // without a `sub` included (review 17 L1: GetUser always lists it; one that does not cannot
@@ -770,6 +871,54 @@ export class CognitoAuthProvider implements AuthProvider {
     }
   }
 
+  /**
+   * Renew a server-side session (ADR-057 D3): refreshToken's exchange, telling Cognito's refusal
+   * (a revoked or expired refresh token, a deleted or disabled user, another user's token — the
+   * session ends) from Cognito not answering (the session is kept).
+   */
+  async renewSession(
+    refreshToken: AuthToken,
+    subject: AuthUserId
+  ): Promise<RenewalOutcome> {
+    if (!refreshToken || !subject) return { kind: "refused" };
+    try {
+      const result = await callCognito(this.config, "InitiateAuth", {
+        ClientId: this.config.clientId,
+        AuthFlow: "REFRESH_TOKEN_AUTH",
+        AuthParameters: {
+          REFRESH_TOKEN: refreshToken,
+          ...withSecretParam(this.config, subject),
+        },
+      });
+      const auth = result.AuthenticationResult as Record<string, unknown> | undefined;
+      if (!auth || typeof auth.AccessToken !== "string") return { kind: "refused" };
+      const decoded = decodeJwtPayload(auth.AccessToken);
+      if (!sameId(decoded?.sub, subject)) return { kind: "refused" };
+      const expiresIn = typeof auth.ExpiresIn === "number" ? auth.ExpiresIn : 3600;
+      return {
+        kind: "renewed",
+        session: {
+          userId: subject,
+          accessToken: auth.AccessToken,
+          // With refresh-token rotation on, Cognito returns a new one; otherwise the same stands.
+          refreshToken:
+            typeof auth.RefreshToken === "string" && auth.RefreshToken
+              ? auth.RefreshToken
+              : refreshToken,
+          idToken: auth.IdToken as string,
+          expiresAt: Math.floor(Date.now() / 1000) + expiresIn,
+        },
+      };
+    } catch (error) {
+      // The platform's own credential refused (a rotated client secret) is not the user's doing.
+      if (isClientSecretRejection(error)) {
+        this.codedFailure(error, "renewSession");
+        return { kind: "unavailable" };
+      }
+      return cognitoUnavailable(error) ? { kind: "unavailable" } : { kind: "refused" };
+    }
+  }
+
   // ── Password Management ──
 
   async forgotPassword(email: string): Promise<PasswordRecoveryResult> {
@@ -798,7 +947,9 @@ export class CognitoAuthProvider implements AuthProvider {
         ConfirmationCode: code,
         Password: newPassword,
       });
-      return { success: true };
+      // Whose password it was (ADR-057 D6): the route ends every session of that account.
+      const userId = await this.subjectOfAddress(email);
+      return { success: true, ...(userId ? { userId } : {}) };
     } catch (error) {
       return this.codedFailure(error, "Password reset failed");
     }
@@ -975,28 +1126,56 @@ export class CognitoAuthProvider implements AuthProvider {
     }
   }
 
+  /**
+   * Turn the user's authenticator off: AdminSetUserMFAPreference, signed with the administrative
+   * key — never the user's token (ADR-057 D7). Without the key, or when its policy does not
+   * allow the action, the answer is service.unavailable (auth) and operator readiness names the
+   * missing action ("sessions").
+   */
   async disableMfa(
-    accessToken: AuthToken
-  ): Promise<{ success: boolean; error?: string }> {
+    userId: AuthUserId
+  ): Promise<{ success: boolean; error?: string; errorCode?: ErrorCode }> {
     try {
-      await callCognito(this.config, "SetUserMFAPreference", {
-        AccessToken: accessToken,
-        SoftwareTokenMfaSettings: { Enabled: false, PreferredMfa: false },
-      });
+      await callCognito(
+        this.config,
+        "AdminSetUserMFAPreference",
+        {
+          UserPoolId: this.config.userPoolId,
+          Username: this.poolUsernameOf(userId),
+          SoftwareTokenMfaSettings: { Enabled: false, PreferredMfa: false },
+        },
+        this.requireAdmin()
+      );
       return { success: true };
     } catch (error) {
+      if (
+        error instanceof CognitoError &&
+        (isKeyRefusal(error.cognitoType) || error.cognitoType === "ConfigurationError")
+      ) {
+        logger.error("The Cognito administrative key may not turn a second factor off", {
+          route: "platform/auth/cognito-provider",
+          cognitoType: error.cognitoType,
+        });
+        return {
+          success: false,
+          error: "administrative key refused",
+          errorCode: "service.unavailable",
+          errorParams: { service: "auth" },
+        } as { success: false; error: string; errorCode: ErrorCode };
+      }
       return this.codedFailure(error, "Failed to disable MFA");
     }
   }
 
   /**
-   * Step-up (TASK-194, audit C-3): the token's own user signs in again with the password and
+   * Step-up (TASK-194, audit C-3): the session's own user signs in again with the password and
    * answers the SOFTWARE_TOKEN_MFA challenge with the current code — the one way Cognito checks
-   * an enrolled factor's code. The pool username comes from GetUser on the token, so the proof is
-   * of this token's user; the session it makes is revoked at once (best effort, logged).
+   * an enrolled factor's code. The pool username comes from AdminGetUser on the session's subject
+   * (the administrative key — the user's token is not used, ADR-057 D7), and the proof must be
+   * of that same subject; the session it makes is revoked at once (best effort, logged).
    */
   async confirmCurrentFactor(
-    accessToken: AuthToken,
+    userId: AuthUserId,
     password: string,
     totpCode: string | null
   ): Promise<{
@@ -1011,14 +1190,20 @@ export class CognitoAuthProvider implements AuthProvider {
       errorCode,
     });
     try {
-      const me = await callCognito(this.config, "GetUser", { AccessToken: accessToken });
+      const me = await callCognito(
+        this.config,
+        "AdminGetUser",
+        { UserPoolId: this.config.userPoolId, Username: this.poolUsernameOf(userId) },
+        this.requireAdmin()
+      );
       const username = typeof me.Username === "string" ? me.Username : "";
       const attrs = (me.UserAttributes as Array<{ Name: string; Value: string }>) ?? [];
       const sub = subAttribute(attrs);
       const enrolled = ((me.UserMFASettingList as unknown[] | undefined) ?? []).includes(
         "SOFTWARE_TOKEN_MFA"
       );
-      if (!username || !sub) return refused("auth.token_invalid", "token user unknown");
+      if (!username || !sub || !sameId(sub, userId))
+        return refused("auth.token_invalid", "session user unknown");
       // A federated account (any provider in `identities`) may have no password in the pool to
       // confirm with: where the proof cannot be made, it is told so (auth.step_up_unavailable)
       // and how to recover — never let through without it.
@@ -1099,6 +1284,23 @@ export class CognitoAuthProvider implements AuthProvider {
         return refused("auth.token_invalid", "another user's proof");
       return { success: true };
     } catch (error) {
+      // No administrative key, or one whose policy cannot read the user: the proof cannot be
+      // made here — the platform's failure (operator readiness, "sessions"), never the user's.
+      if (
+        error instanceof CognitoError &&
+        (error.cognitoType === "ConfigurationError" || isKeyRefusal(error.cognitoType))
+      ) {
+        logger.error("Step-up unavailable: the administrative key cannot read the user", {
+          route: "platform/auth/cognito-provider",
+          cognitoType: error.cognitoType,
+        });
+        return {
+          success: false,
+          error: "administrative key unavailable",
+          errorCode: "service.unavailable",
+          errorParams: { service: "auth" },
+        };
+      }
       return this.codedFailure(error, "confirmCurrentFactor");
     }
   }
@@ -1148,9 +1350,7 @@ export class CognitoAuthProvider implements AuthProvider {
     const url = new URL(`https://${domain}/oauth2/authorize`);
     url.searchParams.set("client_id", this.config.clientId);
     url.searchParams.set("response_type", "code");
-    // aws.cognito.signin.user.admin: without it the token cannot call GetUser, which is how
-    // every request verifies it, so every SSO user was refused after signing in (audit A-13).
-    url.searchParams.set("scope", "openid email profile aws.cognito.signin.user.admin");
+    url.searchParams.set("scope", ssoScopes(Boolean(this.config.adminCredentials)));
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("identity_provider", identityProvider);
     if (options.state) url.searchParams.set("state", options.state);
@@ -1369,15 +1569,7 @@ export class CognitoAuthProvider implements AuthProvider {
   private async revokeVerificationsOf(email: string): Promise<void> {
     if (!this.config.adminCredentials) return;
     try {
-      const user = await callCognito(
-        this.config,
-        "AdminGetUser",
-        { UserPoolId: this.config.userPoolId, Username: email },
-        this.config.adminCredentials
-      );
-      const sub = subAttribute(
-        user.UserAttributes as Array<{ Name: string; Value: string }> | undefined
-      );
+      const sub = await this.readSubjectOfAddress(email);
       if (sub) await revokeTokenVerification(sub);
     } catch (error) {
       logger.warn("Remembered token verifications not voided after an attribute change", {
@@ -1387,8 +1579,37 @@ export class CognitoAuthProvider implements AuthProvider {
     }
   }
 
+  /** The subject (`sub`) of the pool user who signs in with `email` (AdminGetUser). */
+  private async readSubjectOfAddress(email: string): Promise<string | undefined> {
+    const user = await callCognito(
+      this.config,
+      "AdminGetUser",
+      { UserPoolId: this.config.userPoolId, Username: email },
+      this.requireAdmin()
+    );
+    const sub = subAttribute(
+      user.UserAttributes as Array<{ Name: string; Value: string }> | undefined
+    );
+    if (sub && typeof user.Username === "string" && user.Username)
+      this.rememberPoolUsername(sub, user.Username);
+    return sub;
+  }
+
+  /** As readSubjectOfAddress, or undefined when it cannot be read (no key, no answer). */
+  private async subjectOfAddress(email: string): Promise<string | undefined> {
+    try {
+      return await this.readSubjectOfAddress(email);
+    } catch (error) {
+      logger.warn("The subject of an address could not be read", {
+        route: "platform/auth/cognito-provider",
+        cognitoType: error instanceof CognitoError ? error.cognitoType : "Unknown",
+      });
+      return undefined;
+    }
+  }
+
   /**
-   * Set the user's tenant — the one administrative write the platform makes. Idempotent. The
+   * Set the user's tenant — an administrative write. Idempotent. The
    * caller (sign-up in shared mode, or an operator moving a user) decides whether it may.
    */
   async assignTenant(
@@ -1855,6 +2076,69 @@ export class CognitoAuthProvider implements AuthProvider {
       }
       return isDenied(error) ? denied(step) : unknown(step, error);
     }
+  }
+
+  /**
+   * Whether the administrative key can do what server-side sessions ask of it (ADR-057 D7):
+   * read a user (AdminGetUser), end every token of one (AdminUserGlobalSignOut) and turn a second
+   * factor off (AdminSetUserMFAPreference). Each is tried on ERASURE_PROBE_USERNAME, a name no
+   * pool user can have: UserNotFoundException means the policy allows the action,
+   * AccessDeniedException that it does not. Nothing is changed. Read on demand by operator
+   * readiness, never on a timer.
+   */
+  async checkSessionAccess(): Promise<SessionAccessReadiness> {
+    const credentials = this.config.adminCredentials;
+    if (!credentials) {
+      return { state: "missing", reason: shown("screens.readiness.sessions_no_key") };
+    }
+    // AdminSetUserMFAPreference is sent with no setting: were the name ever a user's, nothing
+    // would change.
+    const probes = [
+      "AdminGetUser",
+      "AdminUserGlobalSignOut",
+      "AdminSetUserMFAPreference",
+    ];
+    for (const action of probes) {
+      try {
+        await callCognito(
+          this.config,
+          action,
+          { UserPoolId: this.config.userPoolId, Username: ERASURE_PROBE_USERNAME },
+          credentials
+        );
+        // A call naming no user cannot succeed; an answer is not taken as proof.
+        return {
+          state: "unknown",
+          reason: shown("screens.readiness.probe_user_exists", {
+            user: ERASURE_PROBE_USERNAME,
+          }),
+        };
+      } catch (error) {
+        if (
+          error instanceof CognitoError &&
+          error.cognitoType === "UserNotFoundException"
+        )
+          continue;
+        if (error instanceof CognitoError && isAccessRefusal(error.cognitoType)) {
+          return {
+            state: "denied",
+            action,
+            reason: shown("screens.readiness.sessions_denied", {
+              action,
+              policy: COGNITO_ADMIN_POLICY,
+            }),
+          };
+        }
+        return {
+          state: "unknown",
+          reason: shown("screens.readiness.no_answer", {
+            action,
+            error: error instanceof CognitoError ? error.cognitoType : "error",
+          }),
+        };
+      }
+    }
+    return { state: "ready" };
   }
 
   /**

@@ -99,6 +99,14 @@ export const DEFAULT_RULES = {
   },
   /** Session plumbing (hosted sign-in redirects, sign-out): 30 per minute per IP */
   AUTH_SESSION: { id: "auth:session", maxRequests: 30, windowSeconds: 60 },
+  /**
+   * The page's read of its own session (GET /api/auth/session, ADR-057 D1): once per page load,
+   * and every 30 seconds for a staff tab — 120 per minute, counted for the session the request's
+   * cookie names, or for the address when it names none. Not per address for a signed-in
+   * browser: many people share one (an office, a school), and each page load of each of them
+   * reads this once.
+   */
+  AUTH_SESSION_STATUS: { id: "auth:session-status", maxRequests: 120, windowSeconds: 60 },
   /** Admin operations: 30 per minute */
   ADMIN_OPS: { id: "admin:ops", maxRequests: 30, windowSeconds: 60 },
 } satisfies Readonly<Record<string, RateLimitRule>>;

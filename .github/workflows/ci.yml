@@ -522,7 +522,7 @@ jobs:
           cron="$(openssl rand -hex 32)"
           guest="$(openssl rand -base64 48 | tr -d '\n')"
           erasure="$(openssl rand -hex 32)"
-          refreshkey="$(openssl rand -hex 32)"
+          sessionkey="$(openssl rand -hex 32)"
           # Throwaway values for this job's database and app. They are never printed: they go
           # only into an env file (umask 077) passed to the containers with --env-file — not into
           # $GITHUB_ENV, whose values each later step's log header shows.
@@ -538,7 +538,7 @@ jobs:
             echo "AI_PROVIDER=mock"
             echo "GUEST_TOKEN_SECRET=$guest"
             echo "ERASURE_HASH_KEY=$erasure"
-            echo "REFRESH_COOKIE_KEY=$refreshkey"
+            echo "SESSION_ENCRYPTION_KEY=$sessionkey"
             echo "CRON_SECRET=$cron"
             echo "CACHE_PROVIDER=memory"
             echo "TENANCY_MODE=single"

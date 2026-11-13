@@ -134,16 +134,25 @@ export function identityForSub(sub: string): TestIdentity | undefined {
   return registry.get(sub);
 }
 
+/**
+ * The cookie the mocked middleware reads a test caller from. Not the session cookie: these
+ * suites replace token verification, so they present a caller's name where a browser presents a
+ * session — in a cookie, as a browser does, never an Authorization header (ADR-057 D8: a user
+ * route takes no bearer credential; a suite that exercises the real session uses
+ * __tests__/helpers/session.ts).
+ */
+export const TEST_CALLER_COOKIE = "test_caller";
+
 /** Request headers that authenticate as `caller` (none for "anonymous"). */
 export function authAs(caller: CallerName | TestIdentity): Record<string, string> {
   if (caller === "anonymous") return {};
   const identity = typeof caller === "string" ? CALLERS[caller] : caller;
-  return { authorization: `Bearer test-token:${identity.sub}` };
+  return { cookie: `${TEST_CALLER_COOKIE}=${identity.sub}` };
 }
 
 function identityFromRequest(request: any): TestIdentity | undefined {
-  const header: string | null = request?.headers?.get?.("authorization") ?? null;
-  const match = header?.match(/^Bearer test-token:(.+)$/);
+  const header: string | null = request?.headers?.get?.("cookie") ?? null;
+  const match = header?.match(new RegExp(`(?:^|;\\s*)${TEST_CALLER_COOKIE}=([^;]+)`));
   return match ? registry.get(match[1]) : undefined;
 }
 
@@ -162,7 +171,12 @@ export function mockMiddleware(): any {
           email: `${identity.name}@test`,
           mfaEnabled: identity.mfaEnabled,
         },
-        accessToken: "test",
+        // A real session of the caller's (helpers/session.ts), in the store the route reads: a
+        // route that acts on the session itself — enrols a factor with its token, moves it to a
+        // new id — does so as in production.
+        session: await jest
+          .requireActual("@/__tests__/helpers/session")
+          .liveTestSession(identity.sub, { token: "test" }),
       };
     }),
   };

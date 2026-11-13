@@ -27,6 +27,8 @@
  * @module platform/moderation
  */
 
+import { endSubjectSessions } from "@/platform/auth/session-revocation";
+import { NO_GUEST_STATUSES } from "@/platform/auth/restricted-marker";
 import {
   BAN_STRIKE_THRESHOLD,
   STRIKE_REASON_KIND,
@@ -586,8 +588,13 @@ async function updateUserStatus(
     // (platform/auth/token-verification.ts). Keyed by the token's subject — the account's
     // users.cognito_sub, which differs from its id for an account re-linked to a new identity
     // pool (review 15 L1, TASK-174); a legacy row without one is keyed by its id.
-    for (const row of updated.rows)
+    for (const row of updated.rows) {
       await revokeTokenVerification(row.cognito_sub ?? userId);
+      // A suspended or banned account's sessions end on every device (ADR-057 D6): the account
+      // signs in again to learn its standing, and a restricted one keeps its session.
+      if (NO_GUEST_STATUSES.has(newStatus))
+        await endSubjectSessions(row.cognito_sub ?? userId, "account_restricted");
+    }
   } catch (err) {
     logger.error("Sentinel: user status update failed", {
       userId,

@@ -79,22 +79,72 @@ export async function requireActorWithStatus(
     return { actor };
   }
 
+  const refusal = await userStandingRefusal(
+    request,
+    {
+      id: actor.id,
+      sub: actor.user.sub,
+      // The token's email seeds the user's row on first use (TASK-117) — stored verified only
+      // when a trusted source verified it (review 16 L8: never an untrusted provider's claim).
+      email: actor.user.email,
+      emailVerified: trustedVerifiedClaim(actor.user),
+    },
+    feature,
+    options
+  );
+  if (refusal) return { error: refusal };
+  return { actor };
+}
+
+// ── TASK-181: the refusals this guard can return ─────────────────────────────────────────────
+// Read by __tests__/refusal-coverage.test.ts: each route that calls a guard named here can
+// return its codes, and every screen calling that route must handle each one. The test also
+// checks this module's own apiError literals are all listed.
+// (`?? []`: a suite that jest.mocks a guard module without these lists still loads.)
+
+/** The account a standing check is about: its id, and its identity's subject when one is known. */
+export interface StandingAccount {
+  readonly id: string;
+  /**
+   * The identity's subject, under which its permissions are cached; null when the caller holds
+   * only the account (a machine acting for it with its own credential: an app's delegated agent)
+   * — the permissions are then read for the account itself.
+   */
+  readonly sub: string | null;
+  /** The identity's address and whether a trusted source verified it, when a token gave them. */
+  readonly email?: string;
+  readonly emailVerified?: boolean;
+}
+
+/**
+ * Whether a user's account may use `feature` now — its status, the feature's permission from its
+ * role and entitlements, its age and consent — as the refusal to answer, or null when it may.
+ * The checks requireActorWithStatus makes after it has verified who is calling; exported for a
+ * route whose caller is verified another way (an app's agent presenting its own credential for a
+ * user who delegated to it), so the account's standing is judged by the same rules.
+ */
+export async function userStandingRefusal(
+  request: NextRequest,
+  account: StandingAccount,
+  feature: string,
+  options: Pick<ActorOptions, "allowGuests">
+): Promise<NextResponse | null> {
   // The token's email seeds the user's row on first use (TASK-117) — stored verified only when
   // a trusted source verified it (review 16 L8: never an untrusted provider's claim).
-  const status = await checkAccountStatus(actor.id, feature, {
-    email: actor.user.email,
-    emailVerified: trustedVerifiedClaim(actor.user),
+  const status = await checkAccountStatus(account.id, feature, {
+    email: account.email,
+    emailVerified: account.emailVerified,
   });
   if (!status.allowed && status.code === "account.not_provisioned") {
-    return { error: apiError("account.not_provisioned", { request }) };
+    return apiError("account.not_provisioned", { request });
   }
   // An erased account (audit A-11): no access, and no detail about why.
   if (!status.allowed && status.code === "account.not_found") {
-    return { error: apiError("account.not_found", { request }) };
+    return apiError("account.not_found", { request });
   }
   if (!status.allowed) {
     logger.info("Actor guard: access denied by account status", {
-      userId: actor.id,
+      userId: account.id,
       feature,
       accountStatus: status.accountStatus,
       route: request.nextUrl.pathname,
@@ -105,25 +155,23 @@ export async function requireActorWithStatus(
     });
     // A banned or suspended account's browser cannot then continue as a guest (audit X-20).
     if (NO_GUEST_STATUSES.has(status.accountStatus ?? "")) markRestricted(refusal);
-    return { error: refusal };
+    return refusal;
   }
   // The feature's permission, from the caller's role and entitlements (audit C-4).
   const permission = featurePermission(feature);
   const standing = permission
-    ? await accountPermissionStanding(actor.user.sub, actor.id, permission)
+    ? await accountPermissionStanding(account.sub, account.id, permission)
     : "held";
   if (standing === "unknown") {
     // The role could not be read: unavailable — never a refusal that marks the browser (N3).
-    return {
-      error: apiError("service.unavailable", {
-        params: { service: "permissions" },
-        request,
-      }),
-    };
+    return apiError("service.unavailable", {
+      params: { service: "permissions" },
+      request,
+    });
   }
   if (standing === "lacking" && permission) {
     logger.info("Actor guard: access denied by the feature's permission", {
-      userId: actor.id,
+      userId: account.id,
       feature,
       permission,
       route: request.nextUrl.pathname,
@@ -136,31 +184,23 @@ export async function requireActorWithStatus(
     // only where a guest would get it: a route that serves guests (round 2, N3; the profile
     // routes do not, so a refused can_edit_profile marks nothing).
     if (options.allowGuests) markRestricted(refusal);
-    return { error: refusal };
+    return refusal;
   }
   // Age and consent (COPPA), for every signed-in user on every route that names its feature.
-  const coppa = await checkCoppaGate(actor.id, feature);
+  const coppa = await checkCoppaGate(account.id, feature);
   if (!coppa.allowed) {
     logger.info("Actor guard: access denied by the age and consent gate", {
-      userId: actor.id,
+      userId: account.id,
       feature,
       route: request.nextUrl.pathname,
     });
-    return {
-      error: apiError(coppa.code ?? "account.consent_required", {
-        params: { feature },
-        request,
-      }),
-    };
+    return apiError(coppa.code ?? "account.consent_required", {
+      params: { feature },
+      request,
+    });
   }
-  return { actor };
+  return null;
 }
-
-// ── TASK-181: the refusals this guard can return ─────────────────────────────────────────────
-// Read by __tests__/refusal-coverage.test.ts: each route that calls a guard named here can
-// return its codes, and every screen calling that route must handle each one. The test also
-// checks this module's own apiError literals are all listed.
-// (`?? []`: a suite that jest.mocks a guard module without these lists still loads.)
 
 /** Everything requireActorWithStatus can refuse with: the caller, its account, its age. */
 export const ACTOR_GUARD_REFUSAL_CODES = [

@@ -130,6 +130,11 @@ export interface PasswordRecoveryResult {
 /** Password recovery confirmation result */
 export interface PasswordResetResult {
   success: boolean;
+  /**
+   * The subject (`sub`) of the account whose password was reset, when the provider can say: every
+   * session of that account is then ended (ADR-057 D6). Absent: the provider could not say.
+   */
+  userId?: AuthUserId;
   error?: string;
   /** ADR-051: what a route returns on failure; `error` is for logs. */
   errorCode?: ErrorCode;
@@ -199,5 +204,23 @@ export interface EmailVerificationResult {
   success: boolean;
   error?: string;
   /** ADR-051: what a route returns on failure; `error` is for logs. */
+  errorCode?: ErrorCode;
+}
+
+/**
+ * What the provider answered when asked to renew a session from its refresh token (ADR-057):
+ * renewed; refused (the refresh token is revoked, expired or not this user's — the session
+ * ends); or unavailable (throttled, down — the session is kept and the request retried).
+ */
+export type RenewalOutcome =
+  | { readonly kind: "renewed"; readonly session: AuthSession }
+  | { readonly kind: "refused" }
+  | { readonly kind: "unavailable" };
+
+/** What the provider answered when asked to end every token it issued a user (ADR-057 D6). */
+export interface SignOutEverywhereResult {
+  success: boolean;
+  error?: string;
+  /** `service.unavailable` when the provider's administrative key may not make the call. */
   errorCode?: ErrorCode;
 }

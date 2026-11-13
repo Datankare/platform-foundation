@@ -187,6 +187,50 @@ describe("operator readiness: erasure, client secret, dual control (N-22, N-52, 
     expect((await byName()).erasure.state).toBe("ready");
   });
 
+  it("ADR-057 D7: an administrative key without a session action is named, not ready — and a missing key likewise; neither is reported as fine", async () => {
+    mockProvider.current = {
+      checkSessionAccess: async () => ({
+        state: "denied",
+        action: "AdminUserGlobalSignOut",
+        reason: shown("screens.readiness.sessions_denied", {
+          action: "AdminUserGlobalSignOut",
+          policy: "cognito-tenancy-and-erasure",
+        }),
+      }),
+    };
+    const denied = await checkTenancyReadiness();
+    const check = denied.checks.find((c) => c.name === "sessions")!;
+    expect({ ...check, detail: renderShown(check.detail) }).toEqual({
+      name: "sessions",
+      state: "not_ready",
+      detail:
+        "Sessions are degraded: the administrative key may not call cognito-idp:AdminUserGlobalSignOut on this pool — sign-in still works; add the action to the policy cognito-tenancy-and-erasure (TENANCY_OPERATIONS §3.3).",
+    });
+    expect(denied.ready).toBe(false);
+
+    mockProvider.current = {
+      checkSessionAccess: async () => ({
+        state: "missing",
+        reason: shown("screens.readiness.sessions_no_key"),
+      }),
+    };
+    const missing = (await byName()).sessions;
+    expect(missing.state).toBe("not_ready");
+    expect(renderShown(missing.detail)).toMatch(
+      /^Sessions are degraded: COGNITO_ADMIN_ACCESS_KEY_ID is not set/
+    );
+
+    mockProvider.current = {
+      checkSessionAccess: async () => ({ state: "unknown", reason: "no answer" }),
+    };
+    expect((await byName()).sessions.state).toBe("unknown");
+    mockProvider.current = { checkSessionAccess: async () => ({ state: "ready" }) };
+    expect((await byName()).sessions.state).toBe("ready");
+    // A provider with no administrative key to check (the test double): not needed.
+    mockProvider.current = {};
+    expect((await byName()).sessions.state).toBe("not_needed");
+  });
+
   it("a provider that keeps no identities to erase (the mock) is not_needed", async () => {
     mockProvider.current = {};
     const c = await byName();

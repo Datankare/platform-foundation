@@ -12,6 +12,7 @@ import { mintGuestToken, newGuestId } from "@/platform/auth/guest-token";
 import { checkAccountStatus } from "@/platform/auth/account-status-guard";
 import { checkCoppaGate } from "@/platform/auth/coppa-gate";
 import type { AuthProvider } from "@/platform/auth/provider";
+import { sessionHeadersFor } from "@/__tests__/helpers/session";
 
 jest.mock("@/lib/logger", () => ({
   logger: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() },
@@ -47,9 +48,9 @@ jest.mock("@/platform/auth/permissions-cache", () => ({
   hasGuestPermission: (permission: string) => mockGuestHeld(permission),
 }));
 
-function req(token?: string): NextRequest {
-  const headers = new Headers();
-  if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
+/** A request from a browser whose session holds `token` (ADR-057); none: no session. */
+async function req(token?: string): Promise<NextRequest> {
+  const headers = new Headers(token === undefined ? {} : await sessionHeadersFor(token));
   return new NextRequest("http://localhost:3000/api/translate/dispatch", { headers });
 }
 
@@ -96,14 +97,14 @@ describe("requireActor", () => {
 
   it("a signed-in user is a user actor on any route", async () => {
     for (const allowGuests of [true, false]) {
-      const r = await requireActor(req(userToken), { allowGuests });
+      const r = await requireActor(await req(userToken), { allowGuests });
       expect(r.actor).toEqual(expect.objectContaining({ kind: "user", id: userId }));
     }
   });
 
   it("a signed guest is a guest actor where the route opts in", async () => {
     const { token, guestId, expiresAt } = await mintGuestToken();
-    const r = await requireActor(req(token), { allowGuests: true });
+    const r = await requireActor(await req(token), { allowGuests: true });
     expect(r.actor).toEqual({
       kind: "guest",
       id: guestId,
@@ -114,7 +115,7 @@ describe("requireActor", () => {
 
   it("a guest on a route that does not opt in gets 401 sign_in_required", async () => {
     const { token } = await mintGuestToken();
-    const r = await requireActor(req(token), { allowGuests: false });
+    const r = await requireActor(await req(token), { allowGuests: false });
     expect(r.error?.status).toBe(401);
     await expect(r.error?.json()).resolves.toEqual(
       expect.objectContaining({ code: "auth.sign_in_required" })
@@ -122,7 +123,7 @@ describe("requireActor", () => {
   });
 
   it("a forged or expired guest token gets 401 guest_invalid", async () => {
-    const r = await requireActor(req("guest.e30.AAAA"), { allowGuests: true });
+    const r = await requireActor(await req("guest.e30.AAAA"), { allowGuests: true });
     expect(r.error?.status).toBe(401);
     await expect(r.error?.json()).resolves.toEqual(
       expect.objectContaining({ code: "auth.guest_invalid" })
@@ -130,15 +131,17 @@ describe("requireActor", () => {
   });
 
   it("the provider's own guest format is never accepted as a guest", async () => {
-    const r = await requireActor(req("mock-guest-token"), { allowGuests: true });
+    const r = await requireActor(await req("mock-guest-token"), { allowGuests: true });
     expect(r.error?.status).toBe(401);
   });
 
   it("no token is 401", async () => {
-    expect((await requireActor(req(), { allowGuests: true })).error?.status).toBe(401);
-    expect((await requireActor(req("   "), { allowGuests: true })).error?.status).toBe(
+    expect((await requireActor(await req(), { allowGuests: true })).error?.status).toBe(
       401
     );
+    expect(
+      (await requireActor(await req("   "), { allowGuests: true })).error?.status
+    ).toBe(401);
   });
 });
 
@@ -150,7 +153,7 @@ describe("guest namespace (D4)", () => {
     } as unknown as AuthProvider;
     registerAuthProvider(rogue);
     try {
-      const r = await requireAuth(req("any-token"));
+      const r = await requireAuth(await req("any-token"));
       expect(r.error?.status).toBe(401);
     } finally {
       registerAuthProvider(createMockAuthProvider());
@@ -168,7 +171,7 @@ describe("requireActorWithStatus", () => {
     "refuses %s to a user whose role lacks %s (403 auth.permission_denied)",
     async (feature, permission) => {
       mockHeld.mockResolvedValue(false);
-      const r = await requireActorWithStatus(req(userToken), feature, {
+      const r = await requireActorWithStatus(await req(userToken), feature, {
         allowGuests: false,
       });
       expect(r.error?.status).toBe(403);
@@ -183,20 +186,24 @@ describe("requireActorWithStatus", () => {
   it("asks no permission of a feature that maps to none", async () => {
     mockHeld.mockResolvedValue(false);
     mockGuestHeld.mockResolvedValue(false);
-    const r = await requireActorWithStatus(req(userToken), "stream", {
+    const r = await requireActorWithStatus(await req(userToken), "stream", {
       allowGuests: false,
     });
     expect(r.actor?.kind).toBe("user");
     expect(mockHeld).not.toHaveBeenCalled();
     const { token } = await mintGuestToken();
-    const g = await requireActorWithStatus(req(token), "stream", { allowGuests: true });
+    const g = await requireActorWithStatus(await req(token), "stream", {
+      allowGuests: true,
+    });
     expect(g.actor?.kind).toBe("guest");
     expect(mockGuestHeld).not.toHaveBeenCalled();
   });
 
   // Round 1, C3: resolved by the account the identity is bound to, not only the subject.
   it("resolves a user's permission by their account id", async () => {
-    await requireActorWithStatus(req(userToken), "translate", { allowGuests: false });
+    await requireActorWithStatus(await req(userToken), "translate", {
+      allowGuests: false,
+    });
     expect(mockAccountHeld).toHaveBeenCalledWith(userId, userId, "can_translate");
   });
 
@@ -204,7 +211,7 @@ describe("requireActorWithStatus", () => {
   it("refuses a guest the feature when the guest role lacks its permission", async () => {
     mockGuestHeld.mockResolvedValue(false);
     const { token } = await mintGuestToken();
-    const r = await requireActorWithStatus(req(token), "translate", {
+    const r = await requireActorWithStatus(await req(token), "translate", {
       allowGuests: true,
     });
     expect(r.error?.status).toBe(403);
@@ -218,7 +225,7 @@ describe("requireActorWithStatus", () => {
   // Round 1, C2: refused as themselves, a user is marked so the browser cannot go on as a guest.
   it("marks a user refused a feature's permission, so no guest token follows", async () => {
     mockHeld.mockResolvedValue(false);
-    const r = await requireActorWithStatus(req(userToken), "translate", {
+    const r = await requireActorWithStatus(await req(userToken), "translate", {
       allowGuests: true,
     });
 
@@ -229,7 +236,7 @@ describe("requireActorWithStatus", () => {
   // Round 2, N3: only a definite refusal, and only where a guest would get the feature.
   it("marks nothing when the role cannot be read: 503, not a refusal", async () => {
     mockUnreadable.value = true;
-    const r = await requireActorWithStatus(req(userToken), "translate", {
+    const r = await requireActorWithStatus(await req(userToken), "translate", {
       allowGuests: true,
     });
     expect(r.error?.status).toBe(503);
@@ -239,7 +246,7 @@ describe("requireActorWithStatus", () => {
 
   it("marks nothing for a refusal on a route guests cannot use (can_edit_profile)", async () => {
     mockHeld.mockResolvedValue(false);
-    const r = await requireActorWithStatus(req(userToken), "update_profile", {
+    const r = await requireActorWithStatus(await req(userToken), "update_profile", {
       allowGuests: false,
     });
     expect(r.error?.status).toBe(403);
@@ -247,7 +254,7 @@ describe("requireActorWithStatus", () => {
   });
 
   it("checks account status for users", async () => {
-    const r = await requireActorWithStatus(req(userToken), "translate", {
+    const r = await requireActorWithStatus(await req(userToken), "translate", {
       allowGuests: true,
     });
     expect(r.actor?.kind).toBe("user");
@@ -265,7 +272,7 @@ describe("requireActorWithStatus", () => {
       feature: "translate",
       code: "account.not_provisioned",
     } as Awaited<ReturnType<typeof checkAccountStatus>>);
-    const r = await requireActorWithStatus(req(userToken), "translate", {
+    const r = await requireActorWithStatus(await req(userToken), "translate", {
       allowGuests: true,
     });
     expect(r.error?.status).toBe(503);
@@ -279,7 +286,7 @@ describe("requireActorWithStatus", () => {
       accountStatus: "suspended",
       feature: "translate",
     } as Awaited<ReturnType<typeof checkAccountStatus>>);
-    const r = await requireActorWithStatus(req(userToken), "translate", {
+    const r = await requireActorWithStatus(await req(userToken), "translate", {
       allowGuests: true,
     });
     expect(r.error?.status).toBe(403);
@@ -287,7 +294,7 @@ describe("requireActorWithStatus", () => {
 
   it("guests skip account status (no account) on opted-in routes", async () => {
     const { token } = await mintGuestToken();
-    const r = await requireActorWithStatus(req(token), "translate", {
+    const r = await requireActorWithStatus(await req(token), "translate", {
       allowGuests: true,
     });
     expect(r.actor?.kind).toBe("guest");
@@ -296,7 +303,9 @@ describe("requireActorWithStatus", () => {
 
   it("passes auth errors through", async () => {
     const { token } = await mintGuestToken();
-    const r = await requireActorWithStatus(req(token), "profile", { allowGuests: false });
+    const r = await requireActorWithStatus(await req(token), "profile", {
+      allowGuests: false,
+    });
     expect(r.error?.status).toBe(401);
     expect(mockStatus).not.toHaveBeenCalled();
   });
@@ -315,7 +324,7 @@ describe("requireActorWithStatus — age and consent (audit X-16)", () => {
       consentStatus: "pending",
       code,
     });
-    const r = await requireActorWithStatus(req(userToken), "stream", {
+    const r = await requireActorWithStatus(await req(userToken), "stream", {
       allowGuests: false,
     });
     expect(r.error?.status).toBe(status);
@@ -333,13 +342,13 @@ describe("requireActorWithStatus — age and consent (audit X-16)", () => {
       feature: "stream",
       reason: "x",
     } as Awaited<ReturnType<typeof checkAccountStatus>>);
-    await requireActorWithStatus(req(userToken), "stream", { allowGuests: false });
+    await requireActorWithStatus(await req(userToken), "stream", { allowGuests: false });
     expect(mockCoppa).not.toHaveBeenCalled();
   });
 
   it("does not gate a guest (no account, no age)", async () => {
     const { token } = await mintGuestToken();
-    const r = await requireActorWithStatus(req(token), "translate", {
+    const r = await requireActorWithStatus(await req(token), "translate", {
       allowGuests: true,
     });
     expect(r.actor?.kind).toBe("guest");
@@ -354,7 +363,7 @@ describe("requireActorWithStatus — age and consent (audit X-16)", () => {
       reason: "deleted",
       code: "account.not_found",
     } as Awaited<ReturnType<typeof checkAccountStatus>>);
-    const r = await requireActorWithStatus(req(userToken), "translate", {
+    const r = await requireActorWithStatus(await req(userToken), "translate", {
       allowGuests: false,
     });
     expect(r.error?.status).toBe(403);

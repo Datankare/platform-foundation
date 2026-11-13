@@ -10,9 +10,8 @@
  * @module platform/auth
  */
 
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { NextResponse } from "next/server";
-import { logger } from "@/lib/logger";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { NextResponse, type NextRequest } from "next/server";
 import {
   apiError,
   errorFromResult,
@@ -28,8 +27,8 @@ import { auditableAccountId } from "./account-identity";
 import {
   getPreviousRefreshCookieKey,
   getRefreshCookieKey,
-  isProductionContext,
 } from "@/platform/providers/environment-contract";
+import { clearSessionCookie, startSession } from "@/platform/auth/session";
 
 export interface ProviderResult extends CodedFailure {
   success: boolean;
@@ -53,7 +52,15 @@ export function authResultResponse<T extends ProviderResult>(
   } = {}
 ): NextResponse {
   if (result.success || isChallenge(result)) {
-    const { error: _error, ...rest } = result;
+    // Never a token, whatever the provider's result carries (ADR-057 D1): a route that ends in a
+    // session answers through sessionResponse, which keeps them on the server.
+    const {
+      error: _error,
+      accessToken: _accessToken,
+      refreshToken: _refreshToken,
+      idToken: _idToken,
+      ...rest
+    } = result as T & Record<string, unknown>;
     return NextResponse.json(rest);
   }
   return errorFromResult(result, options);
@@ -97,57 +104,36 @@ export async function passwordPolicyRefusal(
 }
 
 // ---------------------------------------------------------------------------
-// Sessions (audit X-17, A-12, A-14, A-17)
+// Sessions (ADR-057; audit X-17, A-12, A-14, A-17)
 // ---------------------------------------------------------------------------
 
 /**
- * The refresh token lives in this cookie, never in the browser's script-readable storage: httpOnly
- * (no script reads it, so a cross-site script cannot take a 30-day credential), Secure in
- * production, SameSite=Strict, and sent only to the auth routes. Its value is
- * `<user id>.<mac>.<refresh token>`: a confidential client refreshes with the user's id, and the
- * MAC — HMAC-SHA256 under REFRESH_COOKIE_KEY over the id and the token — binds the id to the token
- * it was issued with (review 17 M1). A cookie whose MAC fails (forged, edited, or written before
- * the MAC existed) is no cookie: every reader refuses it (refresh, sign-out). Rotation: the old
- * key moves to REFRESH_COOKIE_KEY_PREVIOUS, which still verifies (never signs) until the
- * refresh-token lifetime has passed.
+ * Before ADR-057 the refresh token lived in this httpOnly cookie (`<user id>.<mac>.<refresh
+ * token>`, HMAC-SHA256 under REFRESH_COOKIE_KEY — review 17 M1) and the access token in the
+ * browser's storage. Now neither reaches the browser: the session is a server-side record
+ * (platform/auth/session.ts). The cookie is only ever READ — once, by POST
+ * /api/auth/session/migrate, to move a browser signed in before the change onto a server-side
+ * session without a new sign-in — and cleared by every sign-in and sign-out. Nothing sets it.
+ * REFRESH_COOKIE_KEY (and _PREVIOUS) verify it until the refresh-token lifetime (30 days) has
+ * passed since the deploy; then both settings are removed. Without the key no legacy cookie
+ * verifies, and those browsers sign in again.
  */
-export const REFRESH_COOKIE = "pf_refresh";
-export const REFRESH_COOKIE_PATH = "/api/auth";
-/** Cognito's default refresh-token lifetime; the provider still decides when it expires. */
-export const REFRESH_COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
-/** The page proxy's session indicator (not a credential). */
-export const SESSION_INDICATOR_COOKIE = "pf_has_session";
+export const LEGACY_REFRESH_COOKIE = "pf_refresh";
+export const LEGACY_REFRESH_COOKIE_PATH = "/api/auth";
+/** The page proxy's old session indicator (script-readable; never a credential). Cleared. */
+export const LEGACY_SESSION_INDICATOR_COOKIE = "pf_has_session";
 
-/** A provider user id the cookie can carry: no dot (the separator), nothing to encode. */
-const COOKIE_USER_ID = /^[\w-]{1,128}$/;
 /** `<user id>.<mac: 43 base64url characters>.<refresh token>`. */
 const SIGNED_COOKIE = /^([\w-]{1,128})\.([\w-]{43})\.(.+)$/;
-/** Domain separation: this key signs nothing else. */
+/** Domain separation: this key signed nothing else. */
 const COOKIE_MAC_LABEL = "pf_refresh.v1";
 
-const EPHEMERAL_KEY = Symbol.for("datankare.platform.refreshCookie.ephemeralKey.v1");
-
-/**
- * The keys a cookie may be verified with, the signing one first; none in production without
- * REFRESH_COOKIE_KEY (the environment contract refuses that boot — this is the belt). Outside
- * production an unset key is a random one per process, so a local run needs nothing.
- */
-function cookieKeys(): string[] {
+/** The keys a legacy cookie may be verified with; none when the key is not configured. */
+function legacyCookieKeys(): string[] {
   const current = getRefreshCookieKey();
-  if (current) {
-    const previous = getPreviousRefreshCookieKey();
-    return previous && previous !== current ? [current, previous] : [current];
-  }
-  if (isProductionContext()) return [];
-  const g = globalThis as unknown as Record<symbol, string | undefined>;
-  if (!g[EPHEMERAL_KEY]) g[EPHEMERAL_KEY] = randomBytes(32).toString("base64url");
-  return [g[EPHEMERAL_KEY] as string];
-}
-
-function cookieMac(key: string, userId: string, refreshToken: string): Buffer {
-  return createHmac("sha256", key)
-    .update(`${COOKIE_MAC_LABEL}\0${userId}\0${refreshToken}`)
-    .digest();
+  if (!current) return [];
+  const previous = getPreviousRefreshCookieKey();
+  return previous && previous !== current ? [current, previous] : [current];
 }
 
 interface CookieWriter {
@@ -157,20 +143,10 @@ interface CookieWriter {
 }
 
 /**
- * The refresh cookie's value for a user and their refresh token (signed under the current key),
- * or null when it cannot be signed (no key in production) or the id cannot be carried.
+ * A legacy refresh cookie's user id and token, or null when it is absent, malformed, or its MAC
+ * fails under every key (review 17 M1: the id is the one the token was issued with, or nothing).
  */
-export function refreshCookieValue(userId: string, refreshToken: string): string | null {
-  const [key] = cookieKeys();
-  if (!key || !COOKIE_USER_ID.test(userId) || !refreshToken) return null;
-  return `${userId}.${cookieMac(key, userId, refreshToken).toString("base64url")}.${refreshToken}`;
-}
-
-/**
- * The refresh cookie's user id and token, or null when it is absent, malformed, or its MAC fails
- * under every key (review 17 M1: the id is the one the token was issued with, or nothing).
- */
-export function readRefreshCookie(
+export function readLegacyRefreshCookie(
   value: string | undefined
 ): { readonly userId: string; readonly refreshToken: string } | null {
   if (!value || value.length > 8192) return null;
@@ -179,58 +155,37 @@ export function readRefreshCookie(
   const [, userId, mac, refreshToken] = m;
   const given = Buffer.from(mac, "base64url");
   if (given.length !== 32) return null;
-  for (const key of cookieKeys()) {
-    if (timingSafeEqual(given, cookieMac(key, userId, refreshToken))) {
-      return { userId, refreshToken };
-    }
+  for (const key of legacyCookieKeys()) {
+    const expected = createHmac("sha256", key)
+      .update(`${COOKIE_MAC_LABEL}\0${userId}\0${refreshToken}`)
+      .digest();
+    if (timingSafeEqual(given, expected)) return { userId, refreshToken };
   }
   return null;
 }
 
-/** Set the refresh cookie; false (nothing set) when it cannot be signed. */
-export function setRefreshCookie(
-  response: CookieWriter,
-  userId: string,
-  refreshToken: string
-): boolean {
-  const value = refreshCookieValue(userId, refreshToken);
-  if (value === null) {
-    logger.error("Refresh cookie not set: REFRESH_COOKIE_KEY is not configured", {
-      route: "platform/auth/auth-response",
-    });
-    return false;
-  }
-  response.cookies.set(REFRESH_COOKIE, value, {
+/** Remove what a browser signed in before ADR-057 still holds: the refresh cookie, the indicator. */
+export function clearLegacyCookies(response: CookieWriter): void {
+  response.cookies.set(LEGACY_REFRESH_COOKIE, "", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
-    path: REFRESH_COOKIE_PATH,
-    maxAge: REFRESH_COOKIE_MAX_AGE,
+    path: LEGACY_REFRESH_COOKIE_PATH,
+    maxAge: 0,
   });
-  return true;
-}
-
-/** Set the page proxy's indicator for `maxAge` seconds (0 clears it). */
-export function setSessionIndicator(response: CookieWriter, maxAge: number): void {
-  response.cookies.set(SESSION_INDICATOR_COOKIE, maxAge > 0 ? "true" : "", {
-    httpOnly: false, // Read by the page proxy and the client; it grants nothing.
+  response.cookies.set(LEGACY_SESSION_INDICATOR_COOKIE, "", {
+    httpOnly: false,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: Math.max(0, Math.floor(maxAge)),
+    maxAge: 0,
   });
 }
 
-/** End the browser's session: the refresh cookie and the indicator. */
+/** End the browser's session: the session cookie, and anything a legacy sign-in left. */
 export function clearSessionCookies(response: CookieWriter): void {
-  response.cookies.set(REFRESH_COOKIE, "", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    path: REFRESH_COOKIE_PATH,
-    maxAge: 0,
-  });
-  setSessionIndicator(response, 0);
+  clearSessionCookie(response);
+  clearLegacyCookies(response);
 }
 
 /** A provider result that may end in a session. */
@@ -243,27 +198,37 @@ export interface SessionResult extends ProviderResult {
 }
 
 /** How the session was obtained — recorded with each sign-in event. */
-export type SignInMethod = "password" | "mfa" | "new_password" | "sso" | "refresh";
+export type SignInMethod = "password" | "mfa" | "new_password" | "sso" | "migrated";
 
 /**
- * The response for a sign-in step (sign-in, its MFA and new-password challenges, SSO). A session
- * is returned only after its `login_success` record is written — otherwise the provider's tokens
- * are revoked and the answer is 503 — and only as the access token: the refresh token goes into
- * the httpOnly cookie and the ID token is never returned (A-17). A failure is recorded as
- * `login_failed` (best effort) and answered as before; a challenge is answered as before.
+ * The response for a sign-in step (sign-in, its MFA and new-password challenges, SSO, a legacy
+ * browser's migration). On success the provider's tokens stay on the server: they are sealed
+ * into a new server-side session (startSession — always a new id) and the browser receives only
+ * that session's cookie. The body is `{ success: true, userId }` plus `extra` — never a token
+ * (ADR-057 D1; __tests__/no-client-tokens.test.ts). The session is started only after its
+ * `login_success` record is written — otherwise the provider's tokens are revoked and the answer
+ * is 503. A failure is recorded as `login_failed` (best effort) and answered as before; a
+ * challenge is answered as before.
  */
 export async function sessionResponse(
   result: SessionResult,
   options: {
-    request: { headers: Headers; nextUrl?: { pathname: string } };
+    request: NextRequest;
     context: string;
     method: SignInMethod;
-    /** Extra fields for a successful response (SSO: the identity's email). */
+    /** Extra fields for a successful response (never a token). */
     extra?: Record<string, unknown>;
   }
 ): Promise<NextResponse> {
   const { request, method } = options;
-  if (result.success && result.accessToken) {
+  if (result.success && result.accessToken && result.userId) {
+    const discard = async () => {
+      try {
+        await getAuthProvider().signOut("", result.refreshToken);
+      } catch {
+        // The tokens were never handed out; they expire on their own.
+      }
+    };
     // The account the identity is bound to (TASK-174), so the record is the account's.
     const actorId = await auditableAccountId(result.userId);
     const recorded = await recordAuthEvent(
@@ -271,36 +236,44 @@ export async function sessionResponse(
       request
     );
     if (!recorded) {
-      try {
-        await getAuthProvider().signOut(result.accessToken, result.refreshToken);
-      } catch {
-        // The tokens were never handed out; they expire on their own.
-      }
+      await discard();
       return apiError("service.unavailable", { params: { service: "audit" }, request });
     }
     // The account's last sign-in (TASK-185), best effort: never a reason to refuse the session.
     await recordLastSignIn(actorId, method);
-    const {
-      error: _error,
-      refreshToken,
-      idToken: _idToken,
-      ...rest
-    } = result as SessionResult & Record<string, unknown>;
-    const response = NextResponse.json({ ...rest, ...(options.extra ?? {}) });
+    const response = NextResponse.json({
+      success: true,
+      userId: result.userId,
+      ...(options.extra ?? {}),
+    });
     response.headers.set("Cache-Control", "no-store");
-    if (
-      refreshToken &&
-      result.userId &&
-      COOKIE_USER_ID.test(result.userId) &&
-      setRefreshCookie(response, result.userId, refreshToken)
-    ) {
-      setSessionIndicator(response, REFRESH_COOKIE_MAX_AGE);
-    } else {
-      setSessionIndicator(response, result.expiresIn ?? 3600);
+    try {
+      await startSession(request, response, {
+        kind: "user",
+        subject: result.userId,
+        method,
+        tokens: {
+          kind: "user",
+          accessToken: result.accessToken,
+          ...(result.refreshToken ? { refreshToken: result.refreshToken } : {}),
+          expiresAt: Math.floor(Date.now() / 1000) + (result.expiresIn ?? 3600),
+        },
+      });
+    } catch (err) {
+      await discard();
+      return internalError(err, { request, context: options.context });
     }
+    clearLegacyCookies(response);
     return response;
   }
-  if (!result.success && !isChallenge(result)) {
+  if (result.success) {
+    // A "success" without a user or a token is no session: never answered as one.
+    return internalError(new Error("sign-in result carries no session"), {
+      request,
+      context: options.context,
+    });
+  }
+  if (!isChallenge(result)) {
     await recordAuthEvent(
       {
         action: "login_failed",

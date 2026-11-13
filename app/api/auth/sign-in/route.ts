@@ -1,9 +1,10 @@
 /**
  * app/api/auth/sign-in/route.ts — Sign in endpoint
  *
- * POST { email, password } → AuthResult
- * Calls AuthProvider.signIn() on the server side. A session is returned as the access token; the
- * refresh token is set as an httpOnly cookie (platform/auth/auth-response.ts sessionResponse).
+ * POST { email, password } → { success, userId } with the session cookie, or a challenge step.
+ * Calls AuthProvider.signIn() on the server side. The provider's tokens never leave the server:
+ * they are sealed into a server-side session and the browser receives only its HttpOnly cookie
+ * (platform/auth/auth-response.ts sessionResponse; ADR-057).
  */
 
 import { NextRequest } from "next/server";
@@ -54,8 +55,8 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   const refused = await sessionTenantRefusal(result, request);
   if (refused) return refused;
 
-  // The session: the access token in the body, the refresh token in an httpOnly cookie, the
-  // sign-in recorded first (audit X-17, A-12).
+  // The session: kept on the server, its cookie set, the sign-in recorded first (ADR-057; audit
+  // X-17, A-12).
   return sessionResponse(result, {
     request,
     context: "Sign in failed",

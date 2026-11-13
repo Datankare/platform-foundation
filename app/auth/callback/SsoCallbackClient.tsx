@@ -10,13 +10,14 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/platform/auth/context";
+import { apiFetch } from "@/platform/auth/api-fetch";
 import { isErrorCode } from "@/platform/errors/registry";
 import { handleRefusal } from "@/platform/errors/refusal";
 import { renderMessage } from "@/platform/errors/messages";
 
 export default function SsoCallbackClient() {
   const router = useRouter();
-  const { setSession } = useAuth();
+  const { sessionStarted } = useAuth();
   // An authorization code is single-use; React may run effects twice in development.
   const started = useRef(false);
 
@@ -40,35 +41,30 @@ export default function SsoCallbackClient() {
 
     (async () => {
       try {
-        const res = await fetch("/api/auth/sso/callback", {
+        const res = await apiFetch("/api/auth/sso/callback", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          credentials: "same-origin",
           body: JSON.stringify({ code, state }),
         });
         const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-        if (
-          !res.ok ||
-          typeof data.accessToken !== "string" ||
-          typeof data.userId !== "string"
-        ) {
+        if (!res.ok || typeof data.userId !== "string") {
           // Every refusal returns to sign-in with its code's message (the shared handler names
           // it; an erased or unmatched account is no different here — there is no session yet).
           fail(res.ok ? undefined : handleRefusal(data.code).code || undefined);
           return;
         }
-        setSession({
-          accessToken: data.accessToken,
-          userId: data.userId,
-          email: typeof data.email === "string" ? data.email : "",
-          emailVerified: data.emailVerified === true,
-        });
+        // The server set the session cookie and kept the provider's tokens (ADR-057): the page
+        // reads who is signed in from the server.
+        if (!(await sessionStarted())) {
+          fail();
+          return;
+        }
         router.replace("/");
       } catch {
         fail();
       }
     })();
-  }, [router, setSession]);
+  }, [router, sessionStarted]);
 
   return (
     <div className="flex min-h-screen items-center justify-center">

@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { checkA11y } from "./helpers/a11y";
-import { setAuthSession } from "./helpers/auth-setup";
+import { signInPage } from "./helpers/session";
 
 test.describe("Platform baseline", () => {
   test("page loads and passes accessibility audit", async ({ page }) => {
@@ -15,12 +15,9 @@ test.describe("Platform baseline", () => {
   });
 
   // TASK-210 (found by its walk): at 390 px the three buttons ran past their card's edge.
-  test("on a phone the home's buttons stay inside their card", async ({
-    page,
-    baseURL,
-  }) => {
+  test("on a phone the home's buttons stay inside their card", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await setAuthSession(page, baseURL!);
+    await signInPage(page);
     await page.goto("/");
     const submit = page.getByRole("button", { name: "Submit and translate" });
     await expect(submit).toBeVisible({ timeout: 30000 });

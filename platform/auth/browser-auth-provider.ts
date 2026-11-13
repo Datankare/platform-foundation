@@ -10,6 +10,7 @@
  */
 
 import type { AuthProvider, SignUpProfile } from "@/platform/auth/provider";
+import { apiFetch } from "@/platform/auth/api-fetch";
 import type {
   AuthResult,
   AuthSession,
@@ -22,6 +23,7 @@ import type {
   MfaVerifyResult,
   PasswordRecoveryResult,
   PasswordResetResult,
+  RenewalOutcome,
   SsoCallbackResult,
   SsoInitResult,
   SsoProvider,
@@ -34,7 +36,9 @@ import type {
  * `internal.error`, never a thrown parse error or a success.
  */
 async function postAuth<T>(path: string, body?: Record<string, unknown>): Promise<T> {
-  const res = await fetch(path, {
+  // apiFetch: the session cookie goes with the call and, when the browser already has a session,
+  // its forgery token too (a sign-in over a live session replaces it — ADR-057).
+  const res = await apiFetch(path, {
     method: "POST",
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
@@ -77,16 +81,21 @@ export function createBrowserAuthProvider(): AuthProvider {
     signIn: (email: string, password: string) =>
       postAuth<AuthResult>("/api/auth/sign-in", { email, password }),
 
-    signOut: async (accessToken: AuthToken) => {
-      await fetch("/api/auth/sign-out", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+    // The session is the browser's cookie: the server ends the one the request presents.
+    signOut: async () => {
+      await apiFetch("/api/auth/sign-out", { method: "POST" });
+    },
+    signOutEverywhere: async () => {
+      const res = await apiFetch("/api/auth/sign-out-everywhere", { method: "POST" });
+      return res.ok
+        ? { success: true }
+        : { success: false, errorCode: "service.unavailable" as const };
     },
 
-    // ── Token Management ──
+    // ── Token Management ── (the browser holds no token: ADR-057)
     verifyToken: async (_accessToken: AuthToken) => null as TokenPayload | null,
     refreshToken: async (_refreshToken: AuthToken) => null as AuthSession | null,
+    renewSession: async (): Promise<RenewalOutcome> => ({ kind: "refused" }),
 
     // ── Password Management ──
     forgotPassword: (email: string) =>
@@ -139,9 +148,9 @@ export function createBrowserAuthProvider(): AuthProvider {
         username,
       }),
 
-    disableMfa: async (_accessToken: AuthToken) => notFromTheBrowser("disableMfa"),
+    disableMfa: async (_userId: string) => notFromTheBrowser("disableMfa"),
     confirmCurrentFactor: async (
-      _accessToken: AuthToken,
+      _userId: string,
       _password: string,
       _code: string | null
     ) => notFromTheBrowser("confirmCurrentFactor"),

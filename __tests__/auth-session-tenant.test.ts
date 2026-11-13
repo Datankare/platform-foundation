@@ -70,6 +70,10 @@ import {
   setTenantDirectory,
 } from "@/platform/tenancy/directory";
 import { SSO_COOKIE, encodeSsoAttempt, randomToken } from "@/platform/auth/sso";
+import { hashSessionId } from "@/platform/auth/session";
+import { getSessionStore } from "@/platform/auth/session-store";
+import { runWithTenant } from "@/platform/tenancy/context";
+import { sessionCookieOf } from "@/__tests__/helpers/session";
 import { POST as signIn } from "@/app/api/auth/sign-in/route";
 import { POST as signUp } from "@/app/api/auth/sign-up/route";
 import { POST as mfa } from "@/app/api/auth/mfa-challenge/route";
@@ -175,12 +179,36 @@ const SESSION_ROUTES: Record<string, (host?: string) => Promise<Response>> = {
   "sso/callback": (host) => ssoCallback(ssoRequest(host)),
 };
 
-function expectNoSession(body: Record<string, unknown>) {
+function expectNoSession(body: Record<string, unknown>, res?: Response) {
   expect(body.accessToken).toBeUndefined();
   expect(body.refreshToken).toBeUndefined();
   expect(body.idToken).toBeUndefined();
   expect(JSON.stringify(body)).not.toMatch(/mock-(access|refresh)-token/);
+  if (res) expect(sessionCookieOf(res)).toBeNull();
 }
+
+/**
+ * A sign-in that succeeded (ADR-057): the answer names the user and carries no token; the
+ * browser gets the session cookie; and the session is recorded in the address's tenant — and
+ * in no other.
+ */
+async function expectSessionIn(tenantId: string, res: Response) {
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as Record<string, unknown>;
+  expect(body).toMatchObject({ success: true, userId: SUB });
+  expectNoSession(body);
+  const cookie = sessionCookieOf(res);
+  expect(cookie).not.toBeNull();
+  const idHash = hashSessionId(cookie!.split("=")[1]);
+  const inTenant = (id: string) =>
+    runWithTenant({ tenantId: id, mode: "shared" }, () => getSessionStore().find(idHash));
+  expect(await inTenant(tenantId)).toMatchObject({ kind: "user", subject: SUB });
+  expect(await inTenant(tenantId === A ? B : A)).toBeNull();
+}
+
+// hostile:role n/a: the sign-in routes are public: what is judged here is the identity's tenant, never a role
+// hostile:self n/a: no route here acts on another account: each signs in the identity presented
+// hostile:id-spelling n/a: no account id is compared here: tenant ids are the tenancy layer's to compare, in its own tests
 
 describe.each(Object.entries(SESSION_ROUTES))(
   "%s in a shared deployment",
@@ -191,14 +219,13 @@ describe.each(Object.entries(SESSION_ROUTES))(
       expect(res.status).toBe(403);
       const body = await res.json();
       expect(body.code).toBe("tenant.mismatch");
-      expectNoSession(body);
+      expectNoSession(body, res);
       await expect(provider.getUserTenant!(SUB)).resolves.toBe(B); // and it stays B's
     });
 
     it("a new identity is assigned the address's tenant and gets its session", async () => {
       const res = await call("acme.example.com");
-      expect(res.status).toBe(200);
-      expect((await res.json()).accessToken).toBe("mock-access-token");
+      await expectSessionIn(A, res);
       await expect(provider.getUserTenant!(SUB)).resolves.toBe(A);
     });
 
@@ -212,7 +239,7 @@ describe.each(Object.entries(SESSION_ROUTES))(
       await expect(provider.getUserTenant!(SUB)).resolves.toBeNull();
     });
 
-    it("when the identity cannot be checked, the session is not returned (503)", async () => {
+    it("[hostile:store-down] when the identity cannot be checked, the session is not returned (503)", async () => {
       registerAuthProvider({ ...provider, verifyToken: async () => null });
       const res = await call("acme.example.com");
       expect(res.status).toBe(503);
@@ -224,8 +251,7 @@ describe.each(Object.entries(SESSION_ROUTES))(
     it("an identity of the address's own tenant gets its session", async () => {
       await provider.assignTenant!(SUB, A);
       const res = await call("acme.example.com");
-      expect(res.status).toBe(200);
-      expect((await res.json()).accessToken).toBe("mock-access-token");
+      await expectSessionIn(A, res);
     });
   }
 );

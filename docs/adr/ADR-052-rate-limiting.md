@@ -27,16 +27,17 @@ Postgres was chosen as the default deployment store because it is already run, a
 
 **D6 — The rules.**
 
-| Rule            | Limit        | Counted by | Routes                                                                  |
-| --------------- | ------------ | ---------- | ----------------------------------------------------------------------- |
-| `AUTH_LOGIN`    | 10 / 15 min  | address    | sign-in, MFA challenge, new-password challenge                          |
-| `AUTH_ACCOUNT`  | 10 / hour    | address    | sign-up, forgot and confirm password, verify email, resend verification |
-| `AUTH_GUEST`    | 20 / hour    | address    | guest token minting                                                     |
-| `AUTH_SESSION`  | 30 / minute  | address    | hosted sign-in start and callback, sign-out                             |
-| `AI_PER_USER`   | 20 / minute  | actor      | `/api/process`, `/api/stream`                                           |
-| `ADMIN_OPS`     | 30 / minute  | address    | every admin and moderation-review route (through `adminGuard`)          |
-| `API_GLOBAL`    | 100 / minute | address    | features, agent capabilities, GDPR requests, appeals                    |
-| `SONG_IDENTIFY` | 10 / hour    | actor      | provided for a consumer's identification route                          |
+| Rule                  | Limit        | Counted by            | Routes                                                                                                                                                                                 |
+| --------------------- | ------------ | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_LOGIN`          | 10 / 15 min  | address               | sign-in, MFA challenge, new-password challenge                                                                                                                                         |
+| `AUTH_ACCOUNT`        | 10 / hour    | address               | sign-up, forgot and confirm password, verify email, resend verification                                                                                                                |
+| `AUTH_GUEST`          | 20 / hour    | address               | guest token minting                                                                                                                                                                    |
+| `AUTH_SESSION`        | 30 / minute  | address               | hosted sign-in start and callback, sign-out                                                                                                                                            |
+| `AUTH_SESSION_STATUS` | 120 / minute | session, else address | the page's read of its own session (`GET /api/auth/session`, ADR-057): once per page load, so counted for the session its cookie names — an address is shared by many signed-in people |
+| `AI_PER_USER`         | 20 / minute  | actor                 | `/api/process`, `/api/stream`                                                                                                                                                          |
+| `ADMIN_OPS`           | 30 / minute  | address               | every admin and moderation-review route (through `adminGuard`)                                                                                                                         |
+| `API_GLOBAL`          | 100 / minute | address               | features, agent capabilities, GDPR requests, appeals                                                                                                                                   |
+| `SONG_IDENTIFY`       | 10 / hour    | actor                 | provided for a consumer's identification route                                                                                                                                         |
 
 ## 3. Consequences
 

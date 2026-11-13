@@ -6,6 +6,8 @@ import {
   concealAccount,
   passwordPolicyRefusal,
 } from "@/platform/auth/auth-response";
+import { endSubjectSessions } from "@/platform/auth/session-revocation";
+import { revokeTokenVerification } from "@/platform/auth/token-verification";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 
@@ -39,8 +41,15 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     }
   );
   if (!called.ok) return called.response;
+  // A new password ends every session opened under the old one, on every device (ADR-057 D6):
+  // whoever knew the old password is signed out. The subject stays on the server.
+  const { userId, ...result } = called.result;
+  if (result.success && userId) {
+    await endSubjectSessions(userId, "password_changed");
+    await revokeTokenVerification(userId);
+  }
   // Never says whether the address has an account (audit A-15).
-  return authResultResponse(concealAccount(called.result, "code"), {
+  return authResultResponse(concealAccount(result, "code"), {
     request,
     context: "Password reset failed",
   });

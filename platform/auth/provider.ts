@@ -33,6 +33,8 @@ import type {
   MfaVerifyResult,
   PasswordRecoveryResult,
   PasswordResetResult,
+  RenewalOutcome,
+  SignOutEverywhereResult,
   SsoCallbackOptions,
   SsoCallbackResult,
   SsoInitOptions,
@@ -63,11 +65,21 @@ export interface AuthProvider {
   signIn(email: string, password: string): Promise<AuthResult>;
 
   /**
-   * Sign out — revoke the session (audit X-17): every token of the user's sign-in, and the
-   * refresh token when given. Throws when the revocation could not be made: a sign-out that
-   * revoked nothing is not reported as one.
+   * End one sign-in at the provider (ADR-057 D6): revoke `refreshToken`, and with it every access
+   * token it issued. The server-side session calls it with the refresh token it holds and no
+   * access token (`""`) — the user's other sign-ins are untouched; ending them all is
+   * signOutEverywhere. An `accessToken`, when given, is not sent to the provider. Throws when the
+   * revocation could not be made: a sign-out that revoked nothing is not reported as one.
    */
   signOut(accessToken: AuthToken, refreshToken?: AuthToken): Promise<void>;
+
+  /**
+   * End every token the provider issued `userId` (its subject), on every device — sign-out
+   * everywhere, a password change, a restriction, erasure (ADR-057 D6). An administrative call
+   * (Cognito: AdminUserGlobalSignOut), never the user's own token. A failure is a result, not a
+   * throw: the platform's own sessions are ended in its records whatever the provider answers.
+   */
+  signOutEverywhere(userId: AuthUserId): Promise<SignOutEverywhereResult>;
 
   // ── Token Management ───────────────────────────────────────────────
 
@@ -92,6 +104,13 @@ export interface AuthProvider {
     refreshToken: AuthToken,
     subject?: AuthUserId
   ): Promise<AuthSession | null>;
+
+  /**
+   * Renew a server-side session from the refresh token it holds (ADR-057 D3), telling a refusal
+   * (the session ends) from the provider not answering (the session is kept). `subject` as for
+   * refreshToken.
+   */
+  renewSession(refreshToken: AuthToken, subject: AuthUserId): Promise<RenewalOutcome>;
 
   // ── Password Management ────────────────────────────────────────────
 
@@ -136,6 +155,10 @@ export interface AuthProvider {
   /**
    * Set up TOTP MFA for the authenticated user.
    * Returns the secret and QR code URI for authenticator app enrollment.
+   *
+   * Enrolment (this and verifyMfaSetup) is the one operation the server performs with the user's
+   * own access token (ADR-057 D7): Cognito's AssociateSoftwareToken and VerifySoftwareToken take
+   * a user token only — no administrative call exists for them (docs/SECURITY_DEBT.md SEC-018).
    */
   setupMfa(accessToken: AuthToken): Promise<MfaSetupResult>;
 
@@ -168,17 +191,22 @@ export interface AuthProvider {
   ): Promise<AuthResult>;
 
   /**
-   * Disable MFA for the authenticated user.
+   * Disable MFA for the user whose subject is `userId` — an administrative call (Cognito:
+   * AdminSetUserMFAPreference), never the user's own token (ADR-057 D7). The route proves the
+   * current factor first (step-up).
    */
-  disableMfa(accessToken: AuthToken): Promise<{ success: boolean; error?: string }>;
+  disableMfa(
+    userId: AuthUserId
+  ): Promise<{ success: boolean; error?: string; errorCode?: ErrorCode }>;
 
   /**
    * Prove the caller holds the account's CURRENT second factor now (step-up, TASK-194 audit
-   * C-3): the token's user signs in again with `password` and answers the MFA challenge with
-   * `totpCode` from the authenticator already enrolled. Changing or removing a factor requires it,
-   * so a stolen access token alone can neither turn MFA off nor enrol an attacker's
-   * authenticator. The sign-in it makes leaves no session (its tokens are revoked). Fails —
-   * coded — on a wrong password or code, an account with no factor, or a token of another user.
+   * C-3): the user whose subject is `userId` (the session's — read administratively, ADR-057 D7)
+   * signs in again with `password` and answers the MFA challenge with `totpCode` from the
+   * authenticator already enrolled. Changing or removing a factor requires it, so a hijacked
+   * session alone can neither turn MFA off nor enrol an attacker's authenticator. The sign-in it
+   * makes leaves no session (its tokens are revoked). Fails — coded — on a wrong password or
+   * code, an account with no factor, or a proof made by another user.
    * Cognito checks an enrolled factor's code only inside a sign-in challenge, hence the password.
    *
    * `totpCode` null (TASK-194 round 1, B1 — the delegation consent): the account proves itself
@@ -187,7 +215,7 @@ export interface AuthProvider {
    * password is refused auth.step_up_unavailable.
    */
   confirmCurrentFactor(
-    accessToken: AuthToken,
+    userId: AuthUserId,
     password: string,
     totpCode: string | null
   ): Promise<{
@@ -336,6 +364,14 @@ export interface AuthProvider {
   checkErasureAccess?(): Promise<ErasureAccessReadiness>;
 
   /**
+   * Whether the provider's administrative key can do what server-side sessions ask of it
+   * (ADR-057 D7): read a user, end every token of one, turn a second factor off. Checked by
+   * operator readiness on demand (platform/tenancy/readiness.ts, "sessions"). Optional: a
+   * provider that needs no such key is not checked.
+   */
+  checkSessionAccess?(): Promise<SessionAccessReadiness>;
+
+  /**
    * Whether the app client's secret the deployment holds is the one the pool has (N-52, decided:
    * operator readiness on demand, read with DescribeUserPoolClient and compared in constant time —
    * never a sign-in against the pool). Optional: a provider without a client secret is not checked.
@@ -356,6 +392,15 @@ export type ErasureAccessReadiness =
   | { readonly state: "ready" }
   | { readonly state: "denied"; readonly reason: ShownText; readonly action: string }
   | { readonly state: "missing" | "unknown"; readonly reason: ShownText };
+
+/**
+ * As ErasureAccessReadiness, for the session actions: `ready`; `denied` (`action` names the one
+ * the key's policy refuses — until it is added, sign-in still works: the session is ended in the
+ * platform's records, but the provider is not asked to end the user's other tokens, and a second
+ * factor cannot be turned off); `missing` (no key: requests are verified with the user's own
+ * token); `unknown`.
+ */
+export type SessionAccessReadiness = ErasureAccessReadiness;
 
 /**
  * - `ready`         — the secret held matches the app client's (or neither has one);
