@@ -13,13 +13,20 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireActor, requirePermission } from "@/platform/auth/middleware";
-import { EXPORT_TOO_LARGE, exportUserData } from "@/platform/auth/data-export";
+import {
+  ACCOUNT_EXPORT_SCHEMA,
+  EXPORT_TOO_LARGE,
+  exportUserData,
+} from "@/platform/auth/data-export";
 import { EXPORT_MAX_ROWS } from "@/platform/auth/user-data";
 import { apiError } from "@/platform/errors";
 import { negotiateLocale } from "@/platform/errors/messages";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { logger } from "@/lib/logger";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+const GET_RESPONSE: ResponseSchema = ACCOUNT_EXPORT_SCHEMA;
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const limited = await enforceRateLimit(request, DEFAULT_RULES.API_GLOBAL);
@@ -68,4 +75,4 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
       "Content-Disposition": 'attachment; filename="my-data.json"',
     },
   });
-});
+}, GET_RESPONSE);

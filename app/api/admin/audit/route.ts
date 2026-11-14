@@ -11,13 +11,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { withTenantTx } from "@/platform/data";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { logger } from "@/lib/logger";
-import { internalError } from "@/platform/errors";
+import { apiError, internalError } from "@/platform/errors";
 import { AUDIT_ACTIONS } from "@/platform/auth/audit";
 import { pageParams } from "@/lib/pagination";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { namedAccounts, type NamedAccount } from "@/platform/admin/account-names";
 import { negotiateLocale } from "@/platform/errors/messages";
 import { renderRecordedDeep } from "@/platform/errors/recorded-words";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /**
  * A row's actor or target as the screen names it (TASK-202, N-63): an account of this tenant by
@@ -39,12 +40,84 @@ type Row = {
   created_at: Date;
 };
 
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    entries: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+          },
+          actor: {
+            type: ["null", "object"],
+            properties: {
+              email: {
+                type: ["null", "string"],
+              },
+              erased: {
+                type: "boolean",
+              },
+              role: {
+                type: "string",
+              },
+            },
+          },
+          actorId: {
+            type: "string",
+          },
+          createdAt: {
+            type: "string",
+          },
+          details: {
+            type: "string",
+          },
+          id: {
+            type: "string",
+          },
+          target: {
+            type: ["null", "object"],
+            properties: {
+              email: {
+                type: ["null", "string"],
+              },
+              erased: {
+                type: "boolean",
+              },
+              role: {
+                type: "string",
+              },
+            },
+          },
+          targetId: {
+            type: ["null", "string"],
+          },
+        },
+      },
+    },
+    hasMore: {
+      type: "boolean",
+    },
+  },
+};
+
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_view_audit");
   if (denied) return denied;
 
   const params = new URL(request.url).searchParams;
   const q = (params.get("q") ?? "").trim().toLowerCase();
+  // TASK-215 (audit A-17): a URL carries ids and codes, never what a person typed — the search is
+  // an account's id or part of an action's name (a code), and anything else is refused rather than
+  // carried in the URL into proxies and access logs.
+  if (q !== "" && !UUID.test(q) && !/^[a-z_]{1,64}$/.test(q)) {
+    return apiError("request.invalid_value", {
+      params: { field: "q", allowed: ["user_id", "action"] },
+      request,
+    });
+  }
   const { limit, offset } = pageParams(params, {
     maxLimit: 200,
     maxOffset: UUID.test(q) ? 800 : 10_000,
@@ -119,4 +192,4 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     entries,
     hasMore: entries.length === limit,
   });
-});
+}, GET_RESPONSE);

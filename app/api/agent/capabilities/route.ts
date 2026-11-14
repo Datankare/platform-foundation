@@ -22,6 +22,73 @@ import { capabilitySelections } from "@/platform/agents/capabilities";
 import { requireActor } from "@/platform/auth/middleware";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    goals: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          description: {
+            type: "string",
+          },
+          endpoint: {
+            type: "string",
+          },
+          estimatedCostUSD: {
+            type: "number",
+          },
+          goal: {
+            type: "string",
+          },
+          requiredCapability: {
+            type: ["null", "string"],
+          },
+          steps: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                estimatedCostUSD: {
+                  type: "number",
+                },
+                intent: {
+                  type: "string",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    notReported: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
+    providerSelections: {
+      type: "object",
+      properties: {
+        ai: {
+          type: "string",
+        },
+        embeddingProvider: {
+          type: "string",
+        },
+      },
+      values: {
+        type: "string",
+      },
+    },
+    requestId: {
+      type: "string",
+    },
+  },
+};
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   // ADR-052: rate limited before any work.
@@ -43,4 +110,4 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   });
 
   return NextResponse.json({ requestId, ...capabilities });
-});
+}, GET_RESPONSE);

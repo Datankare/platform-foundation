@@ -6,7 +6,8 @@
  *   OperatorJobsView   operators (platform_operate): every recurring job — turn it on or off
  *                      (a required one is always on: shown so, no switch), change its
  *                      interval, run it now, see its last run and outcome — and the
- *                      dead-lettered jobs, to replay or discard
+ *                      dead-lettered jobs, to replay or discard; external calls whose outcome
+ *                      is unknown, to mark as took effect or not (TASK-215, audit B-12)
  *   TenantJobsList     a tenant's administrators: their own tenant's recent jobs, read-only
  *
  * Every action calls the server, which decides (tier permission, approvals, dual control, audit);
@@ -18,6 +19,7 @@ import { isShownText, renderShown, type ShownText } from "@/platform/errors/show
 import React, { useCallback, useId, useState } from "react";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
+import { handleRefusal } from "@/platform/errors/refusal";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.jobs.${key}`, values);
@@ -93,9 +95,17 @@ async function call(url: string, init?: RequestInit): Promise<ApiReply> {
   }
 }
 
+/**
+ * A refusal in words, through the shared handler (platform/errors/refusal.ts): the server's message,
+ * else the catalog's for its code, else a generic one — so every code a route answers is shown as
+ * that code is everywhere (refusal coverage; TASK-215 brought this screen to it).
+ */
 function reasonOf(reply: ApiReply): string {
-  const m = reply.body.message ?? reply.body.code;
-  return typeof m === "string" && m ? m : t("refused");
+  if (reply.status === 0) return t("refused");
+  return handleRefusal(reply.body.code, {
+    message: reply.body.message,
+    params: reply.body.params,
+  }).message;
 }
 
 type Tone = "ok" | "error";
@@ -160,9 +170,21 @@ export interface JobRow {
   updatedAt: string;
 }
 
+/** An external call whose outcome is unknown, waiting for an operator (TASK-215, audit B-12). */
+export interface EffectRow {
+  id: string;
+  tenantId: string;
+  operationId: string;
+  effectKey: string;
+  effectType: string;
+  attempts: number;
+  createdAt: string;
+}
+
 export interface JobsData {
   schedules?: ScheduleRow[];
   deadLetters?: JobRow[];
+  unresolvedEffects?: EffectRow[];
 }
 
 const OUTCOMES = new Set(["succeeded", "retrying", "dead"]);
@@ -402,6 +424,10 @@ export function OperatorJobsView({ data: initial }: { data: JobsData | undefined
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState<JobRow | null>(null);
+  const [confirmEffect, setConfirmEffect] = useState<{
+    effect: EffectRow;
+    outcome: "took_effect" | "no_effect";
+  } | null>(null);
   const [status, setStatus] = useState<{ text: string; tone: Tone } | null>(null);
 
   const reload = useCallback(async () => {
@@ -432,6 +458,7 @@ export function OperatorJobsView({ data: initial }: { data: JobsData | undefined
 
   if (!data?.schedules) return <p className="text-gray-400">{t("loading")}</p>;
   const dead = data.deadLetters ?? [];
+  const effects = data.unresolvedEffects ?? [];
 
   return (
     <div className="space-y-6">
@@ -570,6 +597,92 @@ export function OperatorJobsView({ data: initial }: { data: JobsData | undefined
                         >
                           {t("discard")}
                         </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className={card} aria-labelledby="effects-heading">
+        <h3 id="effects-heading" className="text-base font-semibold text-white">
+          {t("effects_heading")}
+        </h3>
+        <p className="text-sm text-gray-400 mt-1">{t("effects_intro")}</p>
+        {confirmEffect && (
+          <div
+            role="group"
+            aria-label={t(`${confirmEffect.outcome}_label`, {
+              key: confirmEffect.effect.effectKey,
+            })}
+            className="flex flex-wrap gap-2 items-center mt-3 p-3 rounded-md border border-gray-700"
+          >
+            <p className="w-full text-sm text-white">
+              {t("effect_confirm", {
+                key: confirmEffect.effect.effectKey,
+                outcome: t(confirmEffect.outcome),
+              })}
+            </p>
+            <button
+              className={button}
+              disabled={busy}
+              onClick={() => {
+                const { effect, outcome } = confirmEffect;
+                setConfirmEffect(null);
+                void act(
+                  t(`${outcome}_label`, { key: effect.effectKey }),
+                  `/api/operator/jobs/effects/${encodeURIComponent(effect.id)}`,
+                  { method: "POST", body: JSON.stringify({ outcome }) }
+                );
+              }}
+            >
+              {t(confirmEffect.outcome)}
+            </button>
+            <button className={quiet} onClick={() => setConfirmEffect(null)}>
+              {t("cancel")}
+            </button>
+          </div>
+        )}
+        {effects.length === 0 ? (
+          <p className="text-sm text-gray-400 mt-3">{t("effects_none")}</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm mt-3 min-w-[36rem]">
+              <thead>
+                <tr>
+                  <th className={th}>{t("col_call")}</th>
+                  <th className={th}>{t("col_tenant")}</th>
+                  <th className={th}>{t("col_attempts")}</th>
+                  <th className={th}>{t("col_since")}</th>
+                  <th className={th}>{t("col_actions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {effects.map((effect) => (
+                  <tr key={effect.id}>
+                    <td className={td}>
+                      <span className="font-mono text-blue-300">{effect.effectKey}</span>
+                      <p className="text-xs text-gray-400">{effect.effectType}</p>
+                    </td>
+                    <td className={`${td} font-mono text-xs`}>{effect.tenantId}</td>
+                    <td className={td}>{effect.attempts}</td>
+                    <td className={td}>{when(effect.createdAt)}</td>
+                    <td className={td}>
+                      <div className="flex flex-wrap gap-1">
+                        {(["took_effect", "no_effect"] as const).map((outcome) => (
+                          <button
+                            key={outcome}
+                            className={quiet}
+                            aria-label={t(`${outcome}_label`, { key: effect.effectKey })}
+                            disabled={busy}
+                            onClick={() => setConfirmEffect({ effect, outcome })}
+                          >
+                            {t(outcome)}
+                          </button>
+                        ))}
                       </div>
                     </td>
                   </tr>

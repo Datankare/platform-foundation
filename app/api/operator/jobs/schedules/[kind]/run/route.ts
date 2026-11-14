@@ -14,11 +14,84 @@ import { internalError } from "@/platform/errors";
 import { runNow } from "@/platform/jobs/operator";
 import { jobsResponse } from "@/platform/jobs/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** Long enough for RUN_NOW_BUDGET_MS and the answer. */
 export const maxDuration = 60;
 
 type Params = { params: Promise<{ kind: string }> };
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    result: {
+      type: "object",
+      properties: {
+        enqueued: {
+          type: "number",
+        },
+        report: {
+          type: "object",
+          properties: {
+            claimed: {
+              type: "number",
+            },
+            continued: {
+              type: "number",
+            },
+            dead: {
+              type: "number",
+            },
+            durationMs: {
+              type: "number",
+            },
+            hung: {
+              type: "number",
+            },
+            lostLease: {
+              type: "number",
+            },
+            released: {
+              type: "number",
+            },
+            retried: {
+              type: "number",
+            },
+            scheduleErrors: {
+              type: "number",
+            },
+            scheduled: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  enqueued: {
+                    type: "number",
+                  },
+                  kind: {
+                    type: "string",
+                  },
+                },
+              },
+            },
+            skipped: {
+              type: "number",
+            },
+            stoppedBy: {
+              type: "string",
+            },
+            succeeded: {
+              type: "number",
+            },
+            workerId: {
+              type: "string",
+            },
+          },
+        },
+      },
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(
   request: NextRequest,
@@ -32,4 +105,4 @@ export const POST = tenantRoute(async function POST(
   } catch (error) {
     return internalError(error, { request, context: "Run now failed" });
   }
-});
+}, POST_RESPONSE);

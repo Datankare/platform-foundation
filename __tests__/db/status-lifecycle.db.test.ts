@@ -59,6 +59,8 @@ const owner = <R extends Record<string, unknown>>(sql: string, values: unknown[]
 
 /** Reaped states proved elsewhere, with where and why not here. */
 const AGED_ELSEWHERE: Readonly<Record<string, string>> = {
+  "effect_ledger.status=pending":
+    "__tests__/db/effect-settlement.db.test.ts ages a pending entry past effects.pending_timeout_minutes and runs settleStaleEffects (the data.retention job's), and requires it settled indeterminate — another tenant's untouched (TASK-215, audit B-12)",
   "tenants.status=deleted":
     "__tests__/db/tenant-lifecycle.db.test.ts purges a deleted tenant past purge_after; the purge is platform-wide, so running it here would purge other suites' deleted tenants",
 };

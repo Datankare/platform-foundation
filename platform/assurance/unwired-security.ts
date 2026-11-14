@@ -17,6 +17,8 @@
  */
 
 export const UNWIRED_SECURITY: Readonly<Record<string, string>> = {
+  "platform/auth/record-hash.ts#recordHashCandidates":
+    "The lookup of a known text under the current and the previous record-hash key (TASK-215, audit A-6): no reader matches a decision by its text today — ModerationStore.getByInputHash, the one lookup, has no production caller either. Kept so that, during a RECORD_HASH_KEY rotation, a lookup a person makes never misses what the previous key made.",
   "platform/auth/gdpr-deletion.ts#registerDeletionModule":
     "Extension point: an app registers a deletion module for each table it owns. The platform's own tables are erased by its register (platform/auth/user-data.ts), so a purge no longer depends on one (audit X-15).",
   "platform/auth/data-export.ts#registerExportModule":

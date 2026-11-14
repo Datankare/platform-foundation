@@ -23,6 +23,8 @@ import {
 } from "@/platform/gdpr/erasure-attestation";
 import { operatorOf, operatorResponse } from "@/platform/tenancy/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+import type { OperatorResult } from "@/platform/tenancy/admin";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const ATTESTATION_BODY_SCHEMA: InputSchemaNode = {
@@ -34,6 +36,81 @@ const ATTESTATION_BODY_SCHEMA: InputSchemaNode = {
     store: { type: "string" },
   },
 };
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    result: {
+      type: "object",
+      properties: {
+        attempts: {
+          type: "number",
+        },
+        attestationRequest: {
+          type: "object",
+          properties: {
+            at: {
+              type: "string",
+            },
+            by: {
+              type: "string",
+            },
+            expiresAt: {
+              type: "string",
+            },
+            reason: {
+              type: "string",
+            },
+          },
+        },
+        attested: {
+          type: "object",
+          properties: {
+            at: {
+              type: "string",
+            },
+            by: {
+              type: "string",
+            },
+            reason: {
+              type: "string",
+            },
+            requestedBy: {
+              type: "string",
+            },
+          },
+        },
+        doneAt: {
+          type: "string",
+        },
+        poolUnverified: {
+          type: "boolean",
+        },
+        retryAt: {
+          type: "string",
+        },
+      },
+    },
+  },
+};
+
+/**
+ * The store's step as the operator is answered (TASK-215, A-13): the recorded step without the
+ * provider's own error text, as the erasures list shows it (platform/gdpr/erasure-status.ts) — a
+ * provider's message can name the account or its pool, and the operator acts on the step's state
+ * (its attempts, its retry, the open request), not on that text.
+ */
+function stepAnswer<T extends { readonly error?: string }>(
+  result: OperatorResult<T>
+): OperatorResult<Omit<T, "error">> {
+  if (!result.ok) return result;
+  return {
+    ...result,
+    value: Object.fromEntries(
+      Object.entries(result.value).filter(([key]) => key !== "error")
+    ) as Omit<T, "error">,
+  };
+}
 
 export const POST = tenantRoute(async function POST(
   request: NextRequest,
@@ -61,7 +138,9 @@ export const POST = tenantRoute(async function POST(
         });
       }
       return operatorResponse(
-        await requestErasureAttestation(operatorOf(guard.admin), target, reason, note),
+        stepAnswer(
+          await requestErasureAttestation(operatorOf(guard.admin), target, reason, note)
+        ),
         request,
         201
       );
@@ -73,15 +152,17 @@ export const POST = tenantRoute(async function POST(
       });
     }
     return operatorResponse(
-      await decideErasureAttestation(
-        operatorOf(guard.admin),
-        target,
-        decision === "approve",
-        note ?? ""
+      stepAnswer(
+        await decideErasureAttestation(
+          operatorOf(guard.admin),
+          target,
+          decision === "approve",
+          note ?? ""
+        )
       ),
       request
     );
   } catch (error) {
     return internalError(error, { request, context: "Erasure attestation failed" });
   }
-});
+}, POST_RESPONSE);

@@ -27,11 +27,6 @@ export interface ClassifierOutput {
   confidence: number;
   severity: SafetySeverity;
   /**
-   * The model's own words on why (its JSON's `reason`), raw: model output, kept for the record and
-   * never shown as a screen's text (TASK-209). Before, `reason`, mixed with the platform's notes.
-   */
-  rawReason?: string;
-  /**
    * The platform's note on the answer, when it could not take it as given (unreadable, declined,
    * unavailable): a catalog key and values (screens.moderation.classifier.*, TASK-209).
    */
@@ -162,7 +157,10 @@ export function parseClassifierResponse(raw: string): ClassifierOutput {
   if (result.safe && (categories.length > 0 || (severityValid && severity !== "low")))
     problems.push(shown("screens.moderation.problems.safe_contradiction"));
 
-  const reason = typeof result.reason === "string" ? result.reason : undefined;
+  // The model's `reason` is checked (text or nothing) and then dropped (TASK-215, audit A-5): a
+  // model's words on why can quote or paraphrase what the person wrote, and they were stored with
+  // every decision and logged by the routes. What a moderator and an appeal need is kept as codes —
+  // the categories, the severity, the confidence — and the platform's note as a catalog key.
   if (problems.length > 0) {
     // Partly readable: not a judgement. Never "safe", and marked, so no threshold clears it.
     return {
@@ -179,7 +177,6 @@ export function parseClassifierResponse(raw: string): ClassifierOutput {
     categories,
     confidence,
     severity,
-    ...(reason !== undefined ? { rawReason: reason } : {}),
   };
 }
 

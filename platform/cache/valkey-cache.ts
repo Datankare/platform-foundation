@@ -32,6 +32,7 @@ import type {
 } from "./types";
 import { PROBE_FAILED, logCaught } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
+import { boundedDefaultTtl, boundedTtl } from "./ttl";
 
 export interface ValkeyCacheConfig {
   /**
@@ -113,7 +114,7 @@ export class ValkeyCacheProvider implements CacheProvider {
     // Errors reach the caller through its command; the event is noted, never thrown.
     this.client.on("error", () => undefined);
     this.namespace = config.namespace ?? "pf:";
-    this.defaultTTLSeconds = config.defaultTTLSeconds ?? 3600;
+    this.defaultTTLSeconds = boundedDefaultTtl(config.defaultTTLSeconds);
   }
 
   private key(key: string): string {
@@ -150,7 +151,7 @@ export class ValkeyCacheProvider implements CacheProvider {
   ): Promise<void> {
     const client = await this.ready();
     const args: (string | number)[] = [this.key(key), JSON.stringify(value)];
-    const ttl = options?.ttlSeconds ?? this.defaultTTLSeconds;
+    const ttl = boundedTtl(options?.ttlSeconds, this.defaultTTLSeconds);
     if (ttl > 0) args.push("EX", ttl);
     if (options?.onlyIfAbsent) args.push("NX");
     await client.call("SET", ...args);

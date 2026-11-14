@@ -32,6 +32,11 @@ import { withTrajectory } from "@/platform/agents/trajectory-closure";
 import { apiError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
 import { mergeInputSchemas } from "@/platform/admin/input-keys";
 import { tenantRoute } from "@/platform/tenancy/route";
+import {
+  type ResponseSchema,
+  SHOWN,
+  SHOWN_PARAMS,
+} from "@/platform/errors/response-schema";
 
 /** Held for a second admin's approval: `held`, with the hold's id (ActionResult, review 9 H1). */
 type ActionResult = BarResult;
@@ -118,6 +123,92 @@ function serverSetPaths(body: Readonly<Record<string, unknown>>): string[] {
 
 /** The most actions one confirmed plan may carry (audit B-19). */
 const MAX_ACTIONS = 20;
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    results: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          account: {
+            type: "object",
+            properties: {
+              email: {
+                type: "string",
+              },
+              id: {
+                type: "string",
+              },
+            },
+          },
+          code: {
+            type: "string",
+          },
+          error: {
+            type: "string",
+          },
+          held: {
+            type: "boolean",
+          },
+          indeterminate: {
+            type: "boolean",
+          },
+          params: SHOWN_PARAMS,
+          proposalId: {
+            type: "string",
+          },
+          result: SHOWN,
+          success: {
+            type: "boolean",
+          },
+          table: {
+            type: "object",
+            properties: {
+              columns: {
+                type: "array",
+                items: {
+                  type: "string",
+                },
+              },
+              filters: {
+                type: "object",
+                properties: {
+                  role: {
+                    type: "string",
+                  },
+                  text: {
+                    type: "string",
+                  },
+                },
+                values: {
+                  type: ["number", "string"],
+                },
+              },
+              matched: {
+                type: "number",
+              },
+              rows: {
+                type: "array",
+                items: {
+                  type: "array",
+                  items: SHOWN,
+                },
+              },
+              table: {
+                type: "string",
+              },
+            },
+          },
+          tool: {
+            type: "string",
+          },
+        },
+      },
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const verified = await requireAdmin(request, "can_access_admin");
@@ -276,4 +367,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   // is accepted and waiting: 202, as every route that can hold answers (round 11, item 1).
   const stoppedHeld = results.length > 0 && results[results.length - 1].held === true;
   return NextResponse.json({ results }, { status: stoppedHeld ? 202 : 200 });
-});
+}, POST_RESPONSE);

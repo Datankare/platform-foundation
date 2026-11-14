@@ -49,8 +49,12 @@ jest.mock("@/platform/auth/user-provisioning", () => ({
 jest.mock("@/platform/agents/trajectory-retention", () => ({
   applyTrajectoryRetention: jest.fn(),
 }));
+jest.mock("@/platform/agents/effect-settlement", () => ({
+  settleStaleEffects: jest.fn(async () => ({ settled: 0, waiting: 0, more: false })),
+}));
 jest.mock("@/platform/jobs/retention", () => ({
   applyRetention: jest.fn(),
+  deleteOrphanedSessionRuns: jest.fn(async () => ({ deleted: 0, more: false })),
 }));
 jest.mock("@/platform/admin/config-approval", () => ({
   expireStaleApprovals: jest.fn(),
@@ -124,12 +128,43 @@ describe("the core duties", () => {
     });
     const stop = new AbortController();
     expect(await duty("data.retention")({ signal: stop.signal })).toEqual({
-      summary: { audit_log: 3, ai_metrics: 5000 },
+      summary: {
+        audit_log: 3,
+        ai_metrics: 5000,
+        effectsSettled: 0,
+        effectsWaiting: 0,
+        orphanedSessionRuns: 0,
+      },
       continueWith: { part: "next" },
     });
     expect((applyRetention as jest.Mock).mock.calls[0][0]).toBe(stop.signal);
     (applyRetention as jest.Mock).mockResolvedValue({ changed: {}, more: false });
-    expect(await duty("data.retention")()).toEqual({ summary: {} });
+    expect(await duty("data.retention")()).toEqual({
+      summary: { effectsSettled: 0, effectsWaiting: 0, orphanedSessionRuns: 0 },
+    });
+    // TASK-215 (audit B-12): a full batch of settled effects continues too.
+    const { settleStaleEffects } = jest.requireMock(
+      "@/platform/agents/effect-settlement"
+    );
+    (settleStaleEffects as jest.Mock).mockResolvedValueOnce({
+      settled: 1000,
+      waiting: 2,
+      more: true,
+    });
+    expect(await duty("data.retention")()).toEqual({
+      summary: { effectsSettled: 1000, effectsWaiting: 2, orphanedSessionRuns: 0 },
+      continueWith: { part: "next" },
+    });
+    // TASK-215 (audit B-5): so does a full batch of orphaned session runs.
+    const { deleteOrphanedSessionRuns } = jest.requireMock("@/platform/jobs/retention");
+    (deleteOrphanedSessionRuns as jest.Mock).mockResolvedValueOnce({
+      deleted: 1000,
+      more: true,
+    });
+    expect(await duty("data.retention")()).toEqual({
+      summary: { effectsSettled: 0, effectsWaiting: 0, orphanedSessionRuns: 1000 },
+      continueWith: { part: "next" },
+    });
   });
 
   // Review finding 3: a duty that works item by item is given the job's signal and, told to

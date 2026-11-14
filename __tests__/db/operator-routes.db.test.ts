@@ -1392,7 +1392,9 @@ dbDescribe(`${SUITE} GET /api/operator/tenants/[id]/export`, () => {
     expect(all[all.length - 1]).toEqual({ done: true, rows: rows.length });
     for (const r of rows)
       expect(r).toEqual({ table: expect.any(String), row: expect.any(Object) });
-    for (const r of rows) expect((r.row as { tenant_id: string }).tenant_id).toBe(t.id);
+    // Named, classified columns only (TASK-215, audit A-7): never the tenant key — the first line
+    // names the tenant — and only this tenant's accounts (below).
+    for (const r of rows) expect("tenant_id" in (r.row as object)).toBe(false);
     const exportedUsers = rows
       .filter((r) => r.table === "users")
       .map((r) => (r.row as { id: string }).id)

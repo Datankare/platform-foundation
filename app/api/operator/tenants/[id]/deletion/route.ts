@@ -16,12 +16,45 @@ import {
 import { requestTenantDeletion } from "@/platform/tenancy/admin";
 import { operatorOf, operatorResponse } from "@/platform/tenancy/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const DELETION_BODY_SCHEMA: InputSchemaNode = {
   type: "object",
   properties: {
     reason: { type: "string" },
+  },
+};
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    result: {
+      type: "object",
+      properties: {
+        createdAt: {
+          type: "string",
+        },
+        expiresAt: {
+          type: "string",
+        },
+        id: {
+          type: "string",
+        },
+        reason: {
+          type: "string",
+        },
+        requestedBy: {
+          type: "string",
+        },
+        status: {
+          type: "string",
+        },
+        tenantId: {
+          type: "string",
+        },
+      },
+    },
   },
 };
 
@@ -50,4 +83,4 @@ export const POST = tenantRoute(async function POST(
   } catch (error) {
     return internalError(error, { request, context: "Tenant deletion request failed" });
   }
-});
+}, POST_RESPONSE);

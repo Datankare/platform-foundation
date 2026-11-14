@@ -15,12 +15,42 @@ import {
 import { renameTenant } from "@/platform/tenancy/admin";
 import { operatorOf, operatorResponse } from "@/platform/tenancy/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const RENAME_BODY_SCHEMA: InputSchemaNode = {
   type: "object",
   properties: {
     name: { type: "string" },
+  },
+};
+
+const PATCH_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    result: {
+      type: "object",
+      properties: {
+        createdAt: {
+          type: "string",
+        },
+        id: {
+          type: "string",
+        },
+        name: {
+          type: "string",
+        },
+        slug: {
+          type: "string",
+        },
+        status: {
+          type: "string",
+        },
+        updatedAt: {
+          type: "string",
+        },
+      },
+    },
   },
 };
 
@@ -45,4 +75,4 @@ export const PATCH = tenantRoute(async function PATCH(
   } catch (error) {
     return internalError(error, { request, context: "Tenant rename failed" });
   }
-});
+}, PATCH_RESPONSE);

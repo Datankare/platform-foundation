@@ -466,7 +466,8 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
           : at;
       if (!open(t.status) || links.has(id) || new Date(t.updatedAt).getTime() >= until)
         continue;
-      // An app session's trajectory is its session's (audit B-5), never reaped here.
+      // An app session's trajectory is its session's (audit B-5), never reaped here: it is deleted
+      // with its session (app_sessions' delete trigger, migration 073, TASK-215).
       if (r.subject.kind === "session") continue;
       if (chainIds(r).some((c) => held.has(c))) continue;
       const room = trajectoryHasRoom(t.steps.length, this.bytesOf(id));

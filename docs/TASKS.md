@@ -7,6 +7,209 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-215 — Data minimisation and retention (S3, S4): named columns, classified exports and responses, no person's words or unkeyed hashes kept, every log field and URL parameter classified, and every lifecycle ended
+
+| Field        | Detail                                                                                                     |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-215                                                                                                   |
+| **Type**     | Defect (whole rows read and exported; free text and unkeyed hashes kept after erasure; states with no end) |
+| **Severity** | Medium (whole-row reads, A-5, A-6, A-7, A-13, B-5, B-12), Low (A-10, A-14, A-17, rate-limit events)        |
+| **Phase**    | Phase 5                                                                                                    |
+| **Target**   | v6.0.0 (RC)                                                                                                |
+| **Status**   | Fixed on develop (batch 56c)                                                                               |
+| **Logged**   | 2026-11-12 (second-wave status audit, S3 and S4 rows marked OPEN or PARTLY)                                |
+
+Batch 56c, in both repositories (Playform: its TASK-5016). Every S3 and S4 row the second-wave audit
+left OPEN or PARTLY, each checked against the code first.
+
+**Whole-row reads (S3 scope, A-11, A-12).** `__tests__/whole-row-reads.test.ts` (`@guard`) reads every
+SQL string and template literal of the code that runs against a deployment's data and every
+migration, and fails on `select *`, `select x.*`, `returning *`, and `to_jsonb`, `to_json`,
+`row_to_json`, `json_agg`, `jsonb_agg`, `array_agg`, `hstore` or `row(x.*)` of a table row (a table's
+alias or name in the statement, or a trigger's `new`/`old`; a column, a parameter, a derived table of
+named columns or a VALUES list is not one). Migrations are immutable once applied (063's checksums),
+so a migration's function or view counts only while no later migration replaces or drops it.
+`__tests__/db/whole-row-functions.db.test.ts` checks every SQL and PL/pgSQL function and view the
+replayed database holds with the same rules. There is no list of accepted sites. Fixed: the tenant
+export (049, below), the profile export (below), the audit-log read (`auditRowsForUser` names its
+columns and no longer reads anyone's address or browser; `getAuditLogForUser`, the appeals route's
+source, returns none), both password-policy reads, the tenant directory read and the eligible-approver
+query's `c.*`.
+
+**A-7 — the operator's tenant export.** Migration 071 replaces `tenant_export_rows(table, tenant)`
+(`to_jsonb(r)`) with `tenant_export_rows(table, tenant, columns)`, which builds each row from the named
+columns only and refuses a table that is not a tenant's, an empty list, a name that is not a column,
+the tenant key and a name given twice; the old form is dropped. `writeTenantExport` passes each table's
+exported columns from `TENANT_EXPORT_COLUMNS` (`platform/auth/user-data.ts`, beside the user-data
+register's column classification) — every column of every tenant table, exported or not, with why;
+an app's own tables in `APP_TENANT_EXPORT` (`platform/tenancy/app-tenant-export.ts`, a consumer seam the
+sync leaves alone). Not exported: network addresses and browsers,
+jobs' payloads, leases and error texts, an erasure's kept hash, subject and pool, the identity
+provider's subject, an embedding vector, a ledger's idempotency key, a run token, rate-limit events,
+a guest's id, and the screened-text hash. TASK-214's `auth_sessions` is classified too, none of it exported: a
+sign-in session is a credential, and sign-ins are the audit log's. An unclassified table refuses the whole export.
+`__tests__/db/export-columns.db.test.ts` fails on any unclassified column (a column added in a
+rolled-back transaction is reported) and proves the export holds no planted address, payload or key.
+
+**A-14 — the profile export.** `PROFILE_COLUMNS` classifies every column of `users` for the person's
+own export, and `PROFILE_EXPORT_SQL` names the given ones (the role by name). Not given, with why: the
+identity provider's subject, a parent's address (another person's, Article 15(4)), who changed the
+standing, the role and tenant keys, `deleted_at`.
+
+**A-13 — what each route returns.** Mechanism chosen from what the code had: the body-schema rule's
+pattern (a declared schema per route, a baseline that only shrinks) at the choke point every handler
+already passes through — `tenantRoute`. Its second argument is the handler's declared answer; every
+JSON answer is checked against it (an error against the registry's one error body), and an undeclared
+field fails outside production and is removed and logged (`response.undeclared_fields`) in production
+(`platform/errors/response-schema.ts`). `__tests__/api-route-response-schema.test.ts` requires the
+declaration on every exported handler; `response-schema-baseline.json` is at zero. Each declaration
+was written from the type the handler answers with (the type checker's view of every
+`NextResponse.json` call) and checked against what the whole suite's calls returned; a stored
+document returned as it is (a setting's value, a moderation record, an audit record's details, a
+run step's input) is a `stored("why")` leaf, a catalogue message is `SHOWN`, and a route whose
+refusal carries more than the error body (a tool's run beside its code) declares `onError`. The
+end-to-end run's production log then showed one answer stripped: the operator's erasure attestation
+answered the recorded step whole, the provider's own error text (`result.error`) with it, which the
+erasures list deliberately leaves out. The route now answers the step without that text and declares
+its retry time; its fixture is a stuck step carrying both, and fails without the fix. On
+TASK-214's server-side sessions: its new routes declare their answers (the session read, the
+legacy-session move, sign-out everywhere, and the MFA changes' new forgery token), and no auth
+answer declares a token any more (`authResultSchema` dropped `accessToken` and `expiresIn`), so a
+token a route answered by mistake fails in CI and is removed in production.
+
+**A-5 — the classifier's free-text reason.** The classifier's `reason` is checked and dropped at the
+parse (`prompts/safety/classify-v1.ts`); nothing stores or logs the model's words (the routes' log
+lines, the review queue's body schema, the modality screen's axes). Moderators and appeals keep the
+categories, severity and confidence as codes and the platform's note as a catalog key (as 55i did for
+the Guardian's reasoning). The register's statement on `classifier_output` is corrected. Erasure now
+clears, on the erased account's decisions, the screened text's hash and any model words left.
+Migration 072 removes the model's words from every stored decision and review case. The sweep for
+what else an erased account wrote found its own moves in a session it shared with others: the run
+stood for the others and only the account's id was replaced, so its words stayed, unattributed. The
+erasure now empties those moves' input and output (`sessionMoveText`, before the id is replaced);
+the others' moves stand.
+
+**A-6 — hashes.** `RECORD_HASH_KEY` (with `RECORD_HASH_KEY_PREVIOUS` for rotation) keys an
+HMAC-SHA256 for the screened text and a re-link's subject hints (`platform/auth/record-hash.ts`:
+`hmac-sha256:<key id>:<hex>`, a purpose mixed in). Decided and documented: the unkeyed hashes written
+before are cleared by 072 (they cannot be rehashed without the text, and nothing reads them); an
+erased account's decisions lose theirs at erasure; removing the previous key ends the matching of what
+it made. `__tests__/db/erased-text.db.test.ts` (hostile): after erasure, no row holds the text, its
+unkeyed hash, its keyed hash under either key, or the model's words.
+
+**A-10 — logs.** The logger redacts by field name — now network addresses, browsers, the model's words,
+identity subjects, a song identified from a recording and a model's raw answer — and by value: an
+e-mail or IP address inside any text, the message included, is replaced. `lib/log-fields.ts`
+classifies every field name a log call passes (an app's own in `APP_LOG_FIELDS`,
+`platform/observability/app-log-fields.ts`, a consumer seam);
+`__tests__/log-fields.test.ts` fails on a new one until it is classified. The practice is the OWASP
+Logging Cheat Sheet's "Data to exclude" (OWASP Cheat Sheet Series Team), checked 2026-11-13. TASK-214's
+new log fields are classified; its forgery-check refusal logged whether the header came under the
+name `token`, which the logger redacts by name, so the field is now `csrfHeader` (wrong or absent).
+
+**A-17 — search text in URLs.** The Users screen's search goes in the body of
+`POST /api/admin/users/search`; `GET /api/admin/users` refuses `q` and `text`; the audit log's `q` is
+an account id or part of an action's name, anything else refused. The search POST goes
+through `apiFetch` and carries the session's `x-csrf-token` (TASK-214); a screen test reads the
+session as the page does and requires the header on every search call, with no bearer. `__tests__/url-parameters.test.ts`
+classifies every parameter a route reads and every one a screen sends (no free text), and refuses a
+screen building a query from values. The practice is MITRE's CWE-598, "Use of HTTP Request With
+Sensitive Query String" (MITRE Corporation), checked 2026-11-13.
+
+**B-5 — app sessions' runs.** A statement trigger on `app_sessions` (073) deletes the runs of every
+session a statement deletes — retention, erasure or its app; the runs of sessions already gone are
+deleted once, and one a race leaves (opened while its session was being deleted) by `data.retention`
+an hour on. The "deferred to S4" markers are replaced by these closers.
+`__tests__/db/session-run-orphans.db.test.ts` runs `data.retention`'s own rule on a session idle past
+`retention.app_sessions_days` and requires the session and its runs gone, and a session in use kept
+with its runs.
+
+**B-12 — the effect ledger.** A pending entry past `effects.pending_timeout_minutes` is settled
+indeterminate by `data.retention` (never guessed confirmed or failed, never fired again); an
+indeterminate one is listed on the operator console's Jobs page, where an operator marks it took
+effect or did not (`POST /api/operator/jobs/effects/[id]`, recorded first); `effects.indeterminate`
+alerts while one waits; a resolved entry is retention's.
+
+**Rate-limit events (S4).** `data.retention` deletes every tenant's events older than
+`retention.rate_limit_events_days` (073), whether or not the bucket is counted again; the register's
+wording is corrected.
+
+**B-13, B-14 (text lost) — retention by scope.** Every table already had a rule or a reason; the sweep
+by store found the cache kept an entry with no, zero or negative TTL — or `CACHE_DEFAULT_TTL=0` — for
+good. Every backend now bounds each entry (`platform/cache/ttl.ts`: the default, never over seven
+days). `RETENTION_STORES` states every store's retention — the platform's own, the browser's, and
+each service a request's data is sent to (the identity, AI, embedding, translation and speech,
+song-identification and audio-conversion providers). `__tests__/retention-stores.test.ts` finds
+every store in the code — each setting that selects a provider or a store, each module slot, each
+file that writes the browser's storage — and fails on one with no stated retention
+(`RETENTION_STORE_SOURCES`; an app's own in its manifest's new `retentionStores`). On
+TASK-214's sessions the browser holds only httpOnly cookies (the session's id, an SSO attempt's
+state, a restricted account's marker) and the forgery-check token in the page's memory: the guard
+finds every file that sets a cookie or touches the page's storage, ignores comments, and fails on a
+register entry the code no longer has.
+
+**Design check**
+
+- **Reach:** every route handler (its declared answer, at `tenantRoute`); the logger and every log
+  call (the field register); the tenant and profile exports and the user-data register; the
+  moderation audit, the classifier prompt and every reader of its output; the re-link record; the
+  retention register, `data.retention`, the effect ledger and the operator Jobs page; the cache
+  backends; the Users screen and its routes; three migrations, the replay and both guides.
+- **Races:** two operators deciding one external call at once change it once (the update matches
+  only an entry still `indeterminate`; the second answers `effects.not_indeterminate`); a pending
+  entry settled while its call returns is resolved by whichever writes first, and the other finds
+  it no longer pending; a run opened by a request that still held a session while another deleted
+  it commits after the delete trigger ran — `data.retention` deletes such an orphan an hour on
+  (`deleteOrphanedSessionRuns`; `__tests__/db/session-run-orphans.db.test.ts`).
+- **Touches a shared module?** Yes, both repositories: `tenantRoute`, the logger, the cache backends,
+  the user-data and retention registers, the moderation audit, the manifest loader, the replay script.
+- **Data migration?** 071 (a function), 072 (rows changed: model words and unkeyed hashes removed),
+  073 (two settings, a trigger, orphaned session runs deleted). Each idempotent, applied twice in the
+  replay, with a replay step and a verification query in the guides.
+- **New secret?** `RECORD_HASH_KEY` (required with a real auth provider), `RECORD_HASH_KEY_PREVIOUS`
+  (rotation only): ENV_REFERENCE, the credential registers, ROTATION_RUNBOOK and the guides.
+- **Dependencies down:** the database down → every route answers its coded refusal as before (the
+  response check reads no store); `data.retention`'s settlement and deletions fail with the job and
+  run again on its retry; the record-hash key unset with a real auth provider → the environment
+  contract refuses to start; the cache bound needs nothing.
+- **Erasure leftovers:** fewer than before: the erased account's moderation records keep no screened
+  text's hash and no model words; a re-link record keeps keyed hints only (an HMAC under a key the
+  database never holds — after the key is rotated out, nothing matches it); its app sessions' runs
+  go with the sessions.
+- **Screens × responses:** the Users screen against the search route's fixtures (every refusal shown,
+  never an empty list); the Jobs page's new section against its route's answers and refusals; every
+  route's answer is declared, so a screen reads no field a route no longer sends.
+- **Journeys touched:** the Users screen's list (a POST now) and the operator Jobs page (a new section);
+  walked at 1280 and 390 pixels.
+- **Weakens a tenant's protection?** No: every change removes data from a place or bounds how long it
+  stays; the new operator route is `platform_operate` only and audited before it acts.
+
+**Threat model**
+
+- **Boundary:** what leaves the database (exports, route answers, logs, URLs) and how long it stays.
+- **Actors that exist today:** an operator exporting a tenant (gave other people's addresses and
+  erased accounts' residue); anyone who can read the database or a backup (an unkeyed hash of a short
+  text confirms a guess after the erasure); whoever reads the log drain or an access log (addresses
+  and search terms); a tenant administrator receiving a route's answer.
+- **Bypasses:** a route answering a field it did not declare (stripped in production); a migration
+  adding a column (in no export until classified); a log call adding a field (fails CI).
+- **Forgeries:** none: no new input is trusted; the effects route takes an id and one of two outcomes.
+- **Legitimate flows:** the Users search, exports, appeals (they read details only), the operator's
+  decision on an external call, retention runs.
+- **Agreed before code:** the owner's brief for batch 56c (2026-11-13).
+
+**Self-review**
+
+- **Consumers checked:** every reader of `ClassifierOutput`, `SafetyResult`, `getAuditLogForUser`,
+  `hashInput`, `subjectHint`, `tenant_export_rows`, the users list and the cache API, in both
+  repositories.
+- **Hostile re-read:** an erased person's moves in a shared session (emptied; the other participant's
+  stand); a provider setting or a browser write added with no retention (reported); an erased
+  person's text confirmed by any hash (none matches); a column added
+  without classification (reported, exported nowhere); a route answering a planted address (fails, or
+  is stripped); a log line with a planted address in its message, an error and a nested field
+  (redacted); an IPv6 address in a rate-limit bucket (redacted); a time `12:30:45` (kept).
+
 ### TASK-214 — Server-side sessions: the browser holds no token (S9, SEC-016)
 
 | Field        | Detail                                                                                                |
@@ -3806,7 +4009,7 @@ own Cognito pool, Google client, guest secret and durable stores; `/api/health` 
 | **Severity** | Medium — a visible feature is broken                                          |
 | **Phase**    | Phase 5                                                                       |
 | **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
-| **Status**   | Resolved (Playform TASK-5014, platform TASK-213)                              |
+| **Status**   | Resolved (Playform TASK-5018, 2026-11-13)                                     |
 | **Logged**   | 2026-09-26                                                                    |
 
 **What:** `/api/extract` fails with `DOMMatrix is not defined`: the PDF parser needs `@napi-rs/canvas` at runtime, but Playform lists it under devDependencies, so the deployment never installs it.
@@ -3819,6 +4022,10 @@ whatever the top level lists: a production-only install (`npm ci --omit=dev`) of
 lockfile extracts a PDF's text with no top-level canvas. The top-level devDependency served nothing
 and is removed; `__tests__/extract-pdf-real.test.ts` runs the real parser as the server does. The
 owner checks an upload on playform-dev once (TASK-5014's owner step).
+
+**Corrected (2026-11-13):** TASK-5014's fix was verified on an install that reads `node_modules`,
+which a deployment does not; the cause was file tracing, fixed and checked from the built bundle by
+Playform TASK-5018, and confirmed by the owner's upload on playform-dev.
 
 ### TASK-097 — Production accepts the mock auth provider
 

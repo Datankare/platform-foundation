@@ -403,6 +403,15 @@ const ROUTES: readonly RouteCase[] = [
     load: R("admin/users"),
     permission: "admin_manage_users",
   },
+  // TASK-215 (audit A-17): the Users list, searched — its text in the body, never the URL.
+  {
+    path: "admin/users/search",
+    method: "POST",
+    load: R("admin/users/search"),
+    permission: "admin_manage_users",
+    body: {},
+    valid: () => fc.record({ q: fc.string({ maxLength: 20 }) }),
+  },
   {
     path: "admin/users",
     method: "PATCH",
@@ -507,6 +516,10 @@ const ROUTES: readonly RouteCase[] = [
   // The open erasures, across tenants (TASK-202, S3-E19): read-only.
   op("erasures", "GET", "erasures"),
   op("jobs", "GET", "jobs"),
+  // TASK-215 (audit B-12): an operator's decision on an external call of unknown outcome.
+  op("jobs/effects/" + ID, "POST", "jobs/effects/[id]", () =>
+    fc.record({ outcome: fc.constantFrom("took_effect", "no_effect") })
+  ),
   op("jobs/dead/" + ID, "POST", "jobs/dead/[id]", () =>
     fc.record({ action: fc.constantFrom("replay", "discard") })
   ),

@@ -48,6 +48,8 @@ const NO_RECORD: Readonly<Record<string, string>> = {
     "Answers only: the config assistant's reply; a change it suggests is made through /api/admin/config-ai/execute, recorded.",
   "app/api/moderation/review/[id]/assist/route.ts POST":
     "Advises only: the reviewer-assist recommendation for an item; the moderator's decision is made and recorded through /api/moderation/review/[id].",
+  "app/api/admin/users/search/route.ts POST":
+    "Reads only: the Users list, searched — a POST so that the search text travels in the body, never in a URL (TASK-215, audit A-17); nothing changes.",
   "app/api/operator/tenants/[id]/state/route.ts POST":
     "Dispatches through its ACTIONS table (suspendTenant, resumeTenant, restoreTenant), which this name-based scan does not follow; each records through recorded() — checked below.",
 };

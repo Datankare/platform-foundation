@@ -35,6 +35,7 @@ import {
   isDualControlledAction,
   runCommandBarAction,
 } from "@/app/api/admin/ai/command-bar";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const ENTITLEMENT_BODY_SCHEMA: InputSchemaNode = {
@@ -46,6 +47,35 @@ const ENTITLEMENT_BODY_SCHEMA: InputSchemaNode = {
 };
 
 type GroupRow = { id: string; code: string; display_name: string; is_active: boolean };
+
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    groups: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          code: {
+            type: "string",
+          },
+          displayName: {
+            type: "string",
+          },
+          id: {
+            type: "string",
+          },
+          isActive: {
+            type: "boolean",
+          },
+          userCount: {
+            type: "number",
+          },
+        },
+      },
+    },
+  },
+};
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_entitlements");
@@ -93,7 +123,22 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   }));
 
   return NextResponse.json({ groups: result });
-});
+}, GET_RESPONSE);
+
+const PATCH_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    held: {
+      type: "boolean",
+    },
+    proposalId: {
+      type: "string",
+    },
+    success: {
+      type: "boolean",
+    },
+  },
+};
 
 export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
   const verified = await requireAdmin(request, "admin_manage_entitlements");
@@ -267,4 +312,4 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
     },
     () => apiError("service.unavailable", { params: { service: "audit" }, request })
   );
-});
+}, PATCH_RESPONSE);

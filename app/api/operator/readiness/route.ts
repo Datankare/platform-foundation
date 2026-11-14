@@ -9,6 +9,37 @@ import { internalError } from "@/platform/errors";
 import { checkTenancyReadiness } from "@/platform/tenancy/readiness";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { commandBarDualControlledActions } from "@/app/api/admin/ai/command-bar";
+import { type ResponseSchema, SHOWN } from "@/platform/errors/response-schema";
+
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    checks: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          detail: SHOWN,
+          name: {
+            type: "string",
+          },
+          state: {
+            type: "string",
+          },
+        },
+      },
+    },
+    mode: {
+      type: "string",
+    },
+    ready: {
+      type: "boolean",
+    },
+    tenantId: {
+      type: "string",
+    },
+  },
+};
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const guard = await requireAdmin(request, "platform_operate");
@@ -21,4 +52,4 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   } catch (error) {
     return internalError(error, { request, context: "Tenancy readiness check failed" });
   }
-});
+}, GET_RESPONSE);

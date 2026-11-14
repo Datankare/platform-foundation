@@ -251,7 +251,8 @@ export const SAFETY_CLASSIFY_EVAL: EvalSuite<ClassifierOutput, string> = {
       id: "adversarial-oversized",
       tags: ["adversarial:oversized"],
       fixture: `{"safe": false, "categories": ["hate"], "confidence": 0.9, "severity": "high", "reason": "${"A".repeat(20000)}"}`,
-      assert: (o) => o.safe === false && typeof o.rawReason === "string",
+      // The model's reason is read and dropped (TASK-215, A-5): never kept, however long.
+      assert: (o) => o.safe === false && !("rawReason" in o) && !("reason" in o),
     },
   ],
 };

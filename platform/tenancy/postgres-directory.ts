@@ -82,7 +82,10 @@ export class PostgresTenantDirectory implements TenantDirectory {
     // that tenant's own transaction (never who changed its status, or why): asked from within
     // the tenant, ask in its transaction. Operators read other tenants on the owner connection.
     const read = (tx: Tx) =>
-      tx.query<TenantRow>("select * from public.directory_tenant($1::uuid)", [tenantId]);
+      tx.query<TenantRow>(
+        "select id, status, slug, name, created_at, updated_at, status_changed_at from public.directory_tenant($1::uuid)",
+        [tenantId]
+      );
     const { rows } = await (sameId(peekTenant()?.tenantId, tenantId)
       ? withTenantTx(read)
       : withPlatformTx(read));

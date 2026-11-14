@@ -33,9 +33,14 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("hashInput", () => {
-  it("returns a 64-character hex string", async () => {
+  // TASK-215 (A-6): keyed — HMAC-SHA256 under RECORD_HASH_KEY, naming the key's id — never the
+  // unkeyed SHA-256 a guess could be checked against.
+  it("returns a keyed hash naming its key, never the text's unkeyed SHA-256", async () => {
     const hash = await hashInput("Hello, world!");
-    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(hash).toMatch(/^hmac-sha256:[0-9a-f]{16}:[0-9a-f]{64}$/);
+    expect(hash).not.toContain(
+      "315f5bdb76d078c43b8ac0064e4a0164612b1fce77c869345bfc94c75894edd3"
+    );
   });
 
   it("returns consistent hash for same input", async () => {
@@ -52,7 +57,7 @@ describe("hashInput", () => {
 
   it("handles empty string", async () => {
     const hash = await hashInput("");
-    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(hash).toMatch(/^hmac-sha256:[0-9a-f]{16}:[0-9a-f]{64}$/);
   });
 });
 
@@ -73,7 +78,6 @@ describe("buildAuditRecord", () => {
       categories: ["violence", "hate"],
       confidence: 0.87,
       severity: "high",
-      rawReason: "graphic content",
     },
     reasoning: [
       {
@@ -97,7 +101,7 @@ describe("buildAuditRecord", () => {
   it("builds a complete audit record with all fields", async () => {
     const record = await buildAuditRecord("violent text", baseResult, "req-123");
 
-    expect(record.inputHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(record.inputHash).toMatch(/^hmac-sha256:[0-9a-f]{16}:[0-9a-f]{64}$/);
     expect(record.direction).toBe("input");
     expect(record.contentType).toBe("generation");
     expect(record.contentRatingLevel).toBe(1);

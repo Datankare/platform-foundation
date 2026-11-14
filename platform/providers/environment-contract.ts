@@ -345,6 +345,20 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
       "at least 32 random characters (letters, digits, + / = . ~ _ -), e.g. openssl rand -hex 32 — the job tick's bearer secret (ADR-056 D2)",
   },
   {
+    name: "RECORD_HASH_KEY",
+    aliases: [],
+    shape: /^[\w+/=.~-]{32,512}$/,
+    shapeHint:
+      "at least 32 random characters, e.g. openssl rand -hex 32 — the key of the HMAC a record keeps instead of a value: the screened text of a moderation decision, a re-link's identity subject (TASK-215, audit A-6); to rotate it, move the old value to RECORD_HASH_KEY_PREVIOUS",
+  },
+  {
+    name: "RECORD_HASH_KEY_PREVIOUS",
+    aliases: [],
+    shape: /^[\w+/=.~-]{32,512}$/,
+    shapeHint:
+      "the record-hash key before the current one (rotation, TASK-215): hashes it made still match; nothing new is hashed with it",
+  },
+  {
     name: "ERASURE_HASH_KEY",
     aliases: [],
     shape: /^[\w+/=.~-]{32,512}$/,
@@ -510,6 +524,18 @@ export function getSupabaseUrl(env: EnvSource = process.env): string | undefined
 
 export function getAuthProviderSetting(env: EnvSource = process.env): string | undefined {
   return resolveSetting("AUTH_PROVIDER", env);
+}
+
+/** TASK-215 (audit A-6): the key of the HMAC a record keeps instead of a value; undefined when not set. */
+export function getRecordHashKey(env: EnvSource = process.env): string | undefined {
+  return resolveSetting("RECORD_HASH_KEY", env);
+}
+
+/** The record-hash key before the current one (rotation, TASK-215); undefined when not set. */
+export function getPreviousRecordHashKey(
+  env: EnvSource = process.env
+): string | undefined {
+  return resolveSetting("RECORD_HASH_KEY_PREVIOUS", env);
 }
 
 /** The key of the address hash kept for an account erased while banned (review 7 L4). */
@@ -965,6 +991,28 @@ function sessionKeyViolations(env: EnvSource, auth: string): string[] {
  * Every contract violation in `env`, as messages naming the setting. Pure — callers decide
  * whether the context is one the contract applies to (see assertEnvironmentContract).
  */
+/**
+ * TASK-215 (audit A-6): a moderation decision keeps the screened text, and a re-link record the
+ * identity's subject, as an HMAC under RECORD_HASH_KEY — an unkeyed hash of a short text is
+ * confirmed by hashing a guess. Required with a real auth provider, as the erasure key is; the
+ * previous key, when set, is another key.
+ */
+function recordHashKeyViolations(env: EnvSource, auth: string): string[] {
+  const out: string[] = [];
+  const recordKey = getRecordHashKey(env);
+  if (!TEST_DOUBLE_AUTH_PROVIDERS.has(auth) && recordKey === undefined) {
+    out.push(
+      `RECORD_HASH_KEY is required by AUTH_PROVIDER=${auth} (the keyed hash of screened text and re-link subjects)`
+    );
+  }
+  if (recordKey !== undefined && recordKey === getPreviousRecordHashKey(env)) {
+    out.push(
+      "RECORD_HASH_KEY_PREVIOUS is the same as RECORD_HASH_KEY — set it to the key before the current one, or unset it"
+    );
+  }
+  return out;
+}
+
 export function checkEnvironmentContract(env: EnvSource): string[] {
   const violations: string[] = [];
   const harnessAllowed = allowsHarnessSwitches(env);
@@ -1041,6 +1089,7 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
       `GUEST_TOKEN_SECRET is required by AUTH_PROVIDER=${auth} (signed guest tokens)`
     );
   }
+  violations.push(...recordHashKeyViolations(env, auth));
   // Review 7 L4: an erased banned account's address is kept as an HMAC under this key, so the
   // ban follows the address without the address being recoverable by a dictionary of addresses
   // (an unsalted SHA-256 was). Required with a real auth provider, as the guest secret is.

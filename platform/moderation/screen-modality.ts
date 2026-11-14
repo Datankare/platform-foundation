@@ -25,14 +25,14 @@ export interface ModalityContent {
 /** The independent, separately-tunable safety axes (ADR-046 D2). */
 export type ScreenAxis = "nsfw" | "real-person" | "baseline";
 
+/**
+ * One axis's verdict: its code and its action. A provider's own words are not taken (TASK-215,
+ * audit A-5: they can describe what the person sent, and the result is stored with the review
+ * item); the result carries each axis's code and action only, whatever a classifier returns.
+ */
 export interface AxisVerdict {
   readonly axis: ScreenAxis;
   readonly action: ModerationAction;
-  /**
-   * The classifier's own words, raw: provider output, never shown as a screen's text (TASK-209).
-   * Before, `reasoning`.
-   */
-  readonly rawReasoning?: string;
 }
 
 export interface ModalityScreenResult {
@@ -148,7 +148,7 @@ export async function screenModality(
     );
     return {
       action,
-      axes,
+      axes: axes.map((a) => ({ axis: a?.axis, action: a?.action })),
       hardRefused: false,
       reasoning: modalityClassifiersConfigured()
         ? shown("screens.moderation.modality.axes", {

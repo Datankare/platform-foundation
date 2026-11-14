@@ -12,6 +12,25 @@ import { NextResponse } from "next/server";
 import { deployedCommit } from "@/platform/observability/deployment";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { PLATFORM_VERSION } from "@/platform/version";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    commit: {
+      type: "null",
+    },
+    status: {
+      type: "string",
+    },
+    timestamp: {
+      type: "string",
+    },
+    version: {
+      type: "string",
+    },
+  },
+};
 
 export const GET = tenantRoute(async function GET() {
   return NextResponse.json(
@@ -23,4 +42,4 @@ export const GET = tenantRoute(async function GET() {
     },
     { status: 200, headers: { "cache-control": "no-store" } }
   );
-});
+}, GET_RESPONSE);

@@ -91,6 +91,10 @@ import {
 } from "@/platform/admin/hold-expiry";
 import { sameId } from "@/platform/auth/same-id";
 import {
+  errorBodyWith,
+  type ResponseSchemaNode,
+} from "@/platform/errors/response-schema";
+import {
   APPROVED_AGAIN,
   changeApproved,
   approvedNote,
@@ -200,6 +204,20 @@ interface DecisionBody {
   source?: string;
   note?: string;
 }
+
+/**
+ * What a refused decision may answer beside its code (TASK-215, audit A-13): what became of the
+ * approval — withdrawn, or settling and when it is listed again — and, for a held run that failed,
+ * whether the approval is kept and when an undecided run settles. The decision routes declare it
+ * as their `onError`.
+ */
+export const DECISION_REFUSAL: ResponseSchemaNode = errorBodyWith({
+  withdrawn: { type: "boolean" },
+  settling: { type: "boolean" },
+  settlesWithinMinutes: { type: "number" },
+  approvalKept: { type: "boolean" },
+  undecidedWithinMinutes: { type: "number" },
+});
 
 /**
  * The answer to a config approval whose apply failed: its code (errorFromResult) and, for the

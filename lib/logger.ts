@@ -1,4 +1,5 @@
 import { generateId } from "@/platform/agents/utils";
+import { REDACTED_LOG_FIELDS } from "@/lib/log-fields";
 /**
  * lib/logger.ts — Structured platform logger
  *
@@ -10,7 +11,10 @@ import { generateId } from "@/platform/agents/utils";
  * - Every log entry is structured JSON with mandatory fields
  * - Trace context (traceId, spanId) auto-injected when observability is initialized
  * - Never logs: API keys, user input content, audio data, PII — credential and personal-data
- *   fields are redacted in emit() whatever the caller passes (redact, REDACTED_KEYS)
+ *   fields are redacted in emit() whatever the caller passes (redact, REDACTED_KEYS, and every
+ *   field lib/log-fields.ts classifies "redacted"), and an e-mail or IP address inside any text —
+ *   the message included — is replaced (redactText; TASK-215, audit A-10). Every field name a log
+ *   call passes is classified there (__tests__/log-fields.test.ts).
  *
  * OWASP A09: Security Logging and Monitoring
  *
@@ -77,13 +81,41 @@ function shouldLog(level: LogLevel): boolean {
 const REDACTED_KEYS =
   /^(?:email|password|newpassword|oldpassword|token|accesstoken|refreshtoken|idtoken|authorization|cookie|phone|phonenumber|secret|apikey|api_key|clientsecret|client_secret|codeverifier|code_verifier|currentcode|current_code)$/i;
 
-/** A copy of `value` with every REDACTED_KEYS field replaced, to a bounded depth. */
+/** An e-mail address anywhere in a text. */
+const EMAIL_IN_TEXT = /[\w.%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/gi;
+/** An IPv4 address anywhere in a text (an IPv4-mapped IPv6 address's last part too). */
+const IPV4_IN_TEXT =
+  /\b(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}\b/g;
+/** An IPv6 address: eight groups, or a compressed one (`::`) — never a time like 02:05:14. */
+const IPV6_IN_TEXT =
+  /(?<!\w)(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?)(?![\w:])/gi;
+
+/**
+ * `text` with every e-mail and IP address in it replaced (TASK-215, audit A-10): a value, not a
+ * field name, can carry them — an error's text, a rate-limit bucket, a message a caller wrote.
+ */
+export function redactText(text: string): string {
+  return text
+    .replace(EMAIL_IN_TEXT, "[redacted email]")
+    .replace(IPV4_IN_TEXT, "[redacted ip]")
+    .replace(IPV6_IN_TEXT, (m) => (m.length > 2 ? "[redacted ip]" : m));
+}
+
+/** A field whose value is never written: a credential, or personal data by its name. */
+const redactedKey = (k: string): boolean =>
+  REDACTED_KEYS.test(k) || REDACTED_LOG_FIELDS.has(k);
+
+/**
+ * A copy of `value` with every redacted field replaced and every string's addresses replaced
+ * (redactText), to a bounded depth.
+ */
 export function redact(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return redactText(value);
   if (depth > 4 || value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = REDACTED_KEYS.test(k) ? "[redacted]" : redact(v, depth + 1);
+    out[k] = redactedKey(k) ? "[redacted]" : redact(v, depth + 1);
   }
   return out;
 }
@@ -95,7 +127,7 @@ function emit(level: LogLevel, message: string, fields?: Partial<LogEntry>): voi
     timestamp: new Date().toISOString(),
     level,
     environment: process.env.NODE_ENV ?? "development",
-    message,
+    message: redactText(message),
     ...(fields ? (redact(fields) as Partial<LogEntry>) : {}),
   };
 

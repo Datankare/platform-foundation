@@ -16,6 +16,10 @@ import { getTenantDirectory } from "@/platform/tenancy/directory";
 import { exportTenantData } from "@/platform/tenancy/admin";
 import { operatorError, operatorOf } from "@/platform/tenancy/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { type ResponseSchema, NOT_JSON } from "@/platform/errors/response-schema";
+
+/** NDJSON: one line per row, not one JSON body. */
+const GET_RESPONSE: ResponseSchema = NOT_JSON;
 
 export const GET = tenantRoute(async function GET(
   request: NextRequest,
@@ -65,7 +69,7 @@ export const GET = tenantRoute(async function GET(
       "Cache-Control": "no-store",
     },
   });
-});
+}, GET_RESPONSE);
 
 /** The id in a file name: a UUID (the directory found it), reduced to safe characters anyway. */
 function exportFileId(id: string): string {

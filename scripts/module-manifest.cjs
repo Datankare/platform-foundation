@@ -100,6 +100,7 @@ const APP_KEYS = [
   "migrationsBeforeTheConvention",
   "noUserData",
   "retention",
+  "retentionStores",
 ];
 /** A table name as the app declares one: lower-case, digits and "_". */
 const TABLE_NAME = /^[a-z_][a-z0-9_]*$/;
@@ -349,6 +350,29 @@ function appManifestShapeProblems(platform, app) {
       }
     }
   }
+  // The app's stores outside the tables (TASK-215, S4 by store): each setting that selects one of
+  // its own providers or stores, or each of its files that writes the browser's storage, with how
+  // long what it holds is kept, in a sentence. __tests__/retention-stores.test.ts finds them in the
+  // code and classifies them by these, the platform's by platform/jobs/retention.ts.
+  if (app.retentionStores !== undefined) {
+    const r = app.retentionStores;
+    if (r === null || typeof r !== "object" || Array.isArray(r)) {
+      problems.push(
+        `${where}: "retentionStores" must be an object { "<setting or file>": "<how long it keeps what it holds>" }`
+      );
+    } else {
+      for (const [store, rule] of Object.entries(r)) {
+        if (!/^[A-Z][A-Z0-9_]*$/.test(store) && !/^[\w./-]+\.(?:ts|tsx)$/.test(store))
+          problems.push(
+            `${where} retentionStores."${store}": not a setting (upper-case letters, digits, "_") or a source file`
+          );
+        if (typeof rule !== "string" || rule.trim().length < 10)
+          problems.push(
+            `${where} retentionStores.${store}: say how long it keeps what it holds (a sentence)`
+          );
+      }
+    }
+  }
   const modules = app.modules ?? {};
   if (typeof modules !== "object" || Array.isArray(modules)) {
     return [...problems, `${where}: "modules" must be an object keyed by module id`];
@@ -421,6 +445,7 @@ function mergeManifests(
   out.migrationsBeforeTheConvention = [...(app.migrationsBeforeTheConvention ?? [])];
   out.noUserData = { ...(app.noUserData ?? {}) };
   out.retention = { ...(app.retention ?? {}) };
+  out.retentionStores = { ...(app.retentionStores ?? {}) };
   out.platformModules = Object.keys(platform.modules);
   out.appModules = [];
   for (const [id, entry] of Object.entries(app.modules ?? {})) {

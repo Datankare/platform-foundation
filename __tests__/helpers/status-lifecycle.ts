@@ -56,8 +56,11 @@ export type StateLifecycle =
 export const STATUS_LIFECYCLE: Readonly<
   Record<string, Readonly<Record<string, StateLifecycle>>>
 > = {
-  // App sessions' trajectories are their sessions' (audit B-5, batch S4 of the TASK-193 sweep):
-  // the reaper skips them.
+  // An app session's runs (subject_kind 'session') are their session's (audit B-5): the reaper
+  // below skips them, and they end with the session — deleted with it by app_sessions' delete
+  // trigger (migration 073, TASK-215), which data.retention fires after retention.app_sessions_days
+  // idle (and an erasure, or the session's app, sooner). __tests__/db/session-run-orphans.db.test.ts
+  // ages a session past its bound, runs the job, and requires its runs gone.
   "agent_trajectories.status": {
     running: {
       reaper: "agents.trajectory-retention",
@@ -246,14 +249,21 @@ export const STATUS_LIFECYCLE: Readonly<
       rest: "the record of an erasure attempt that ran out of time (TASK-203, N-27): whether its running step completed is not known, so its account stays due in user_deletions and the erasure runs again",
     },
   },
+  // TASK-215 (audit B-12): a pending entry is settled indeterminate past its bound; an
+  // indeterminate one is a person's to decide (ADR-031 D7), on the operator console.
   "effect_ledger.status": {
     pending: {
-      deferred: "B-12 (TASK-193 sweep, batch S4)",
-      reason: "no tool declares an external effect yet in either repository (latent)",
+      reaper: "data.retention",
+      fn: "platform/agents/effect-settlement.ts#settleStaleEffects",
+      bound: "effects.pending_timeout_minutes",
+      waitsOn:
+        "the call's own retry, which resolves it (performExternalEffect) — the reaper settles one no retry came back for",
     },
     indeterminate: {
-      deferred: "B-12 (TASK-193 sweep, batch S4)",
-      reason: "no tool declares an external effect yet in either repository (latent)",
+      waits:
+        'the operator console\'s Jobs page, "External calls with an unknown outcome" (took effect, or did not); alert effects.indeterminate, raised again by every data.retention run while one is waiting',
+      reason:
+        "the downstream neither confirmed nor denied the call: deciding it without a person could report a payment or a message as sent when it was not, or the reverse (ADR-029 D10, ADR-031 D7)",
     },
     confirmed: { rest: "a receipt of an external call that took effect" },
     failed: { rest: "a receipt of an external call that did not take effect" },

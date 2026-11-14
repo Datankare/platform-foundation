@@ -36,6 +36,8 @@ import {
 import { parseDeclaredBirthDate, recordAgeVerification } from "@/platform/auth/coppa";
 import { isUnder13Unavailable } from "@/platform/auth/age";
 import { ensureUserProvisioned } from "@/platform/auth/user-provisioning";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+import { authResultSchema } from "@/platform/auth/auth-response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const SIGN_UP_BODY_SCHEMA: InputSchemaNode = {
@@ -46,6 +48,8 @@ const SIGN_UP_BODY_SCHEMA: InputSchemaNode = {
     dateOfBirth: { type: "string" },
   },
 };
+
+const POST_RESPONSE: ResponseSchema = authResultSchema();
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
@@ -108,7 +112,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     request,
     context: "Sign up failed",
   });
-});
+}, POST_RESPONSE);
 
 /** Create the account's row with its declared age; a failure leaves it unverified (gated). */
 async function recordSignUpAge(

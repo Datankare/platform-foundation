@@ -16,12 +16,28 @@ import { isUnder13Unavailable } from "@/platform/auth/age";
 import { apiError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const AGE_BODY_SCHEMA: InputSchemaNode = {
   type: "object",
   properties: {
     dateOfBirth: { type: "string" },
+  },
+};
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    contentRatingLevel: {
+      type: "number",
+    },
+    requiresParentalConsent: {
+      type: "boolean",
+    },
+    success: {
+      type: "boolean",
+    },
   },
 };
 
@@ -70,4 +86,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     requiresParentalConsent: evaluation.requiresParentalConsent,
     contentRatingLevel: evaluation.contentRatingLevel,
   });
-});
+}, POST_RESPONSE);

@@ -368,15 +368,17 @@ export async function writeAuditLogOutsideTransaction(entry: AuditEntry): Promis
   }
 }
 
-/** An audit row as stored; timestamps as ISO strings (the JSON form of the row). */
-export type AuditRow = Record<string, unknown> & {
+/**
+ * An audit row as read for a reader of the account's record; timestamps as ISO strings. Named
+ * columns (TASK-215, audit S3): the network address and browser of whoever acted are not read —
+ * the row was read whole (`to_jsonb(a)`), so every reader held other people's addresses.
+ */
+export type AuditRow = {
   id: string;
   action: string;
   actor_id: string | null;
   target_id: string | null;
   details: Record<string, unknown>;
-  ip_address: string | null;
-  user_agent: string | null;
   created_at: string;
 };
 
@@ -390,7 +392,10 @@ export async function auditRowsForUser(
   limit: number
 ): Promise<AuditRow[]> {
   const { rows } = await tx.query<{ r: AuditRow }>(
-    `select to_jsonb(a) as r from audit_log a
+    `select jsonb_build_object('id', a.id, 'action', a.action, 'actor_id', a.actor_id,
+                              'target_id', a.target_id, 'details', a.details,
+                              'created_at', a.created_at) as r
+       from audit_log a
       where a.actor_id = $1::uuid or a.target_id = $1::uuid
       order by a.created_at desc, a.id
       limit $2`,
@@ -443,7 +448,7 @@ export type ExportedAuditRow = Record<string, unknown> & {
  * every row, never cut off (review 7 M2: the export stopped at 500). More than `maxRows`:
  * ExportTooLargeError, the export is refused whole.
  *
- * What a row holds depends on whose act it records (review 7 M1 — before, `to_jsonb(a)` gave a
+ * What a row holds depends on whose act it records (review 7 M1 — before, the whole row gave a
  * staff member's network address, browser, id and notes on every act about the user):
  *   - the user's own act: id, action, when, actor and target, their own address and browser,
  *     the details;
@@ -498,15 +503,22 @@ export async function auditRowsForExport(
   }
 }
 
+/** An audit entry as getAuditLogForUser gives it: what was done, by and to whom — no address or browser. */
+export type AuditReadEntry = Pick<
+  AuditEntry,
+  "action" | "actorId" | "targetId" | "details"
+>;
+
 /**
  * Read audit log entries for a specific user, in the current tenant.
  * Returns entries where the user is either actor or target; an unreadable log reads as none.
- * Admin only — the routes that call this check the permission.
+ * Admin only — the routes that call this check the permission. Never the network address or the
+ * browser of whoever acted (TASK-215): its one reader (the appeals route) reads the details.
  */
 export async function getAuditLogForUser(
   userId: string,
   limit: number = 50
-): Promise<AuditEntry[]> {
+): Promise<AuditReadEntry[]> {
   // A non-UUID is refused before it reaches the query.
   if (!UUID.test(userId)) return [];
   const bounded = Math.max(1, Math.min(Math.trunc(limit) || 50, 500));
@@ -526,8 +538,6 @@ export async function getAuditLogForUser(
     actorId: row.actor_id || undefined,
     targetId: row.target_id || undefined,
     details: row.details,
-    ipAddress: row.ip_address || undefined,
-    userAgent: row.user_agent || undefined,
   }));
 }
 

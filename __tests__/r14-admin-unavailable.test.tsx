@@ -147,7 +147,7 @@ describe("the admin console keeps a 503 as 'unavailable'", () => {
       return { ok: status < 400, status, json: async () => body };
     };
     let users: RouteFixtureName =
-      "GET /api/admin/users — refused (the permissions store down)";
+      "POST /api/admin/users/search — refused (the permissions store down)";
     fetchMock.mockImplementation(async (url: string) => {
       const u = String(url);
       if (u.includes("/api/admin/session"))
@@ -157,7 +157,7 @@ describe("the admin console keeps a 503 as 'unavailable'", () => {
     });
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(UNAVAILABLE));
-    users = "GET /api/admin/users — no accounts";
+    users = "POST /api/admin/users/search — no accounts";
     fireEvent.click(screen.getByRole("button", { name: /^Try reading .* again$/ }));
     await waitFor(() => expect(screen.queryByText(UNAVAILABLE)).toBeNull());
     expect(

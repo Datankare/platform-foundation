@@ -68,6 +68,7 @@ import {
 import type { ActionResult } from "@/app/api/admin/ai/handlers";
 import { withTenantTx } from "@/platform/data";
 import { raiseAlert } from "@/platform/observability/alert";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const ERASURE_BODY_SCHEMA: InputSchemaNode = {
@@ -139,6 +140,62 @@ function refusedResponse(result: ActionResult, request: NextRequest): NextRespon
   }
   return apiError("internal.error", { request });
 }
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    completedAt: {
+      type: ["null", "string"],
+    },
+    held: {
+      type: "boolean",
+    },
+    proposalId: {
+      type: "string",
+    },
+    purgeId: {
+      type: "string",
+    },
+    requestedAt: {
+      type: "string",
+    },
+    status: {
+      type: "string",
+    },
+    steps: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          deletedCount: {
+            type: "number",
+          },
+          durationMs: {
+            type: "number",
+          },
+          error: {
+            type: "string",
+          },
+          handler: {
+            type: "string",
+          },
+          success: {
+            type: "boolean",
+          },
+        },
+      },
+    },
+    success: {
+      type: "boolean",
+    },
+    totalDeleted: {
+      type: "number",
+    },
+    userId: {
+      type: "string",
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // Rate limited, verified, permission and account standing checked (requireAdmin).
@@ -319,9 +376,26 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     if (attempted) await closeRefusedRequest(admin, input, "internal.error");
     return internalError(error, { request, context: "GDPR purge failed" });
   }
-});
+}, POST_RESPONSE);
 
 /** The open erasure hold on an account, for the Users screen (A6). */
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    pending: {
+      type: ["null", "object"],
+      properties: {
+        createdAt: {
+          type: "string",
+        },
+        proposalId: {
+          type: "string",
+        },
+      },
+    },
+  },
+};
+
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   // Rate limited, verified, permission and account standing checked (requireAdmin).
   const verified = await requireAdmin(request, "admin_purge_user_data");
@@ -346,4 +420,4 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   } catch {
     return apiError("service.unavailable", { params: { service: "approvals" }, request });
   }
-});
+}, GET_RESPONSE);

@@ -27,6 +27,7 @@ import {
   type InputSchemaNode,
 } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { type ResponseSchema, SHOWN, stored } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const DECISION_BODY_SCHEMA: InputSchemaNode = {
@@ -40,6 +41,81 @@ const DECISION_BODY_SCHEMA: InputSchemaNode = {
 };
 
 const MODERATE_PERMISSION = "can_moderate";
+
+const PATCH_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    item: {
+      type: "object",
+      properties: {
+        appealReason: {
+          type: "string",
+        },
+        claimedAt: {
+          type: "string",
+        },
+        claimedBy: {
+          type: "string",
+        },
+        createdAt: {
+          type: "string",
+        },
+        decision: {
+          type: "string",
+        },
+        explanationChain: stored(
+          "a moderation decision's stored explanation chain: each phase and the platform's notes as catalogue keys"
+        ),
+        id: {
+          type: "string",
+        },
+        moderationResult: stored(
+          "a moderation decision's stored record (review_queue.moderation_result): its action, categories and the platform's notes as catalogue keys"
+        ),
+        modifiedAction: {
+          type: "string",
+        },
+        notesShown: SHOWN,
+        originalDecisionId: {
+          type: "string",
+        },
+        previousAccountStatus: {
+          type: "string",
+        },
+        priority: {
+          type: "string",
+        },
+        relatedStrikeId: {
+          type: "string",
+        },
+        requestId: {
+          type: "string",
+        },
+        resolvedAt: {
+          type: "string",
+        },
+        resolvedBy: {
+          type: "string",
+        },
+        reviewerNotes: {
+          type: "string",
+        },
+        source: {
+          type: "string",
+        },
+        status: {
+          type: "string",
+        },
+        targetUserId: {
+          type: "string",
+        },
+        updatedAt: {
+          type: "string",
+        },
+      },
+    },
+  },
+};
 
 export const PATCH = tenantRoute(async function PATCH(
   request: NextRequest,
@@ -120,4 +196,4 @@ export const PATCH = tenantRoute(async function PATCH(
     });
     return apiError("internal.error", { params: { requestId }, request });
   }
-});
+}, PATCH_RESPONSE);

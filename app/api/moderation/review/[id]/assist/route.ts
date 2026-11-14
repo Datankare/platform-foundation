@@ -18,8 +18,26 @@ import { generateReviewRecommendation } from "@/platform/moderation/review-assis
 import { apiError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { sameId } from "@/platform/auth/same-id";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 const MODERATE_PERMISSION = "can_moderate";
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    recommendation: {
+      type: ["null", "object"],
+      properties: {
+        rationale: {
+          type: "string",
+        },
+        recommendation: {
+          type: "string",
+        },
+      },
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(
   request: NextRequest,
@@ -56,4 +74,4 @@ export const POST = tenantRoute(async function POST(
     });
     return apiError("internal.error", { params: { requestId }, request });
   }
-});
+}, POST_RESPONSE);

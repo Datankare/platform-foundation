@@ -473,6 +473,18 @@ export const PLATFORM_ERROR_CODES = {
     action:
       "This recurring job cannot be turned off, or given one tenant's own setting: nothing else does its duty (config.expire-approvals settles approvals and lists undecided runs). Change its interval instead.",
   },
+  "effects.not_found": {
+    status: 404,
+    params: [],
+    action:
+      "Refresh the Jobs page; the external call named does not exist (it may have been resolved and then deleted by retention).",
+  },
+  "effects.not_indeterminate": {
+    status: 409,
+    params: [],
+    action:
+      "Refresh the Jobs page: only an external call whose outcome is unknown can be marked, and this one is pending or already resolved (another operator may have marked it).",
+  },
   "jobs.not_found": {
     status: 404,
     params: [],

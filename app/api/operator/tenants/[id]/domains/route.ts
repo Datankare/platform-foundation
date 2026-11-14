@@ -17,6 +17,7 @@ import {
 import { addTenantDomain, removeTenantDomain } from "@/platform/tenancy/admin";
 import { operatorOf, operatorResponse } from "@/platform/tenancy/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const DOMAIN_BODY_SCHEMA: InputSchemaNode = {
@@ -27,6 +28,26 @@ const DOMAIN_BODY_SCHEMA: InputSchemaNode = {
 };
 
 type Ctx = { params: Promise<{ id: string }> };
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    result: {
+      type: "object",
+      properties: {
+        createdAt: {
+          type: "string",
+        },
+        host: {
+          type: "string",
+        },
+        tenantId: {
+          type: "string",
+        },
+      },
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(
   request: NextRequest,
@@ -50,7 +71,16 @@ export const POST = tenantRoute(async function POST(
   } catch (error) {
     return internalError(error, { request, context: "Adding a tenant address failed" });
   }
-});
+}, POST_RESPONSE);
+
+const DELETE_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    result: {
+      type: "boolean",
+    },
+  },
+};
 
 export const DELETE = tenantRoute(async function DELETE(
   request: NextRequest,
@@ -70,4 +100,4 @@ export const DELETE = tenantRoute(async function DELETE(
   } catch (error) {
     return internalError(error, { request, context: "Removing a tenant address failed" });
   }
-});
+}, DELETE_RESPONSE);

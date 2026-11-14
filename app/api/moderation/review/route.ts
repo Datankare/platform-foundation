@@ -40,6 +40,7 @@ import {
   type InputSchemaNode,
 } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { type ResponseSchema, SHOWN, stored } from "@/platform/errors/response-schema";
 
 const MODERATE_PERMISSION = "can_moderate";
 /** Most queue items one list request returns. */
@@ -119,7 +120,8 @@ const CLASSIFIER_NOTE: InputSchemaNode = {
  * no key here: the pipeline enqueues its own items in process (review-service); a caller of the
  * route sends the chain's catalog keys (its description and conclusion, TASK-209), never data of
  * its own shape. A reason, a factor and a classifier's note are catalog keys and their values;
- * the classifier model's own words, if any, are `rawReason`.
+ * the classifier model's own words are not kept anywhere (TASK-215, audit A-5): `rawReason` is
+ * refused like any undeclared key.
  */
 const ENQUEUE_BODY_SCHEMA: InputSchemaNode = {
   type: "object",
@@ -142,7 +144,6 @@ const ENQUEUE_BODY_SCHEMA: InputSchemaNode = {
             categories: NAMES,
             confidence: N,
             severity: S,
-            rawReason: S,
             note: CLASSIFIER_NOTE,
             unjudged: B,
           },
@@ -246,6 +247,113 @@ function buildQueryOptions(params: URLSearchParams): ReviewQueryOptions {
   return options;
 }
 
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          appealReason: {
+            type: "string",
+          },
+          claimedAt: {
+            type: "string",
+          },
+          claimedBy: {
+            type: "string",
+          },
+          createdAt: {
+            type: "string",
+          },
+          decision: {
+            type: "string",
+          },
+          explanationChain: stored(
+            "a moderation decision's stored explanation chain: each phase and the platform's notes as catalogue keys"
+          ),
+          id: {
+            type: "string",
+          },
+          moderationResult: stored(
+            "a moderation decision's stored record (review_queue.moderation_result): its action, categories and the platform's notes as catalogue keys"
+          ),
+          modifiedAction: {
+            type: "string",
+          },
+          notesShown: SHOWN,
+          originalDecisionId: {
+            type: "string",
+          },
+          previousAccountStatus: {
+            type: "string",
+          },
+          priority: {
+            type: "string",
+          },
+          relatedStrikeId: {
+            type: "string",
+          },
+          requestId: {
+            type: "string",
+          },
+          resolvedAt: {
+            type: "string",
+          },
+          resolvedBy: {
+            type: "string",
+          },
+          reviewerNotes: {
+            type: "string",
+          },
+          source: {
+            type: "string",
+          },
+          status: {
+            type: "string",
+          },
+          targetUserId: {
+            type: "string",
+          },
+          updatedAt: {
+            type: "string",
+          },
+        },
+      },
+    },
+    stats: {
+      type: "object",
+      properties: {
+        avgResolutionMs: {
+          type: "number",
+        },
+        claimedCount: {
+          type: "number",
+        },
+        pendingByPriority: {
+          type: "object",
+          values: {
+            type: "number",
+          },
+        },
+        pendingBySource: {
+          type: "object",
+          values: {
+            type: "number",
+          },
+        },
+        pendingCount: {
+          type: "number",
+        },
+        resolvedCount: {
+          type: "number",
+        },
+      },
+    },
+  },
+};
+
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, MODERATE_PERMISSION);
   if (denied) return denied;
@@ -280,7 +388,82 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     });
     return apiError("internal.error", { request });
   }
-});
+}, GET_RESPONSE);
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    item: {
+      type: "object",
+      properties: {
+        appealReason: {
+          type: "string",
+        },
+        claimedAt: {
+          type: "string",
+        },
+        claimedBy: {
+          type: "string",
+        },
+        createdAt: {
+          type: "string",
+        },
+        decision: {
+          type: "string",
+        },
+        explanationChain: stored(
+          "a moderation decision's stored explanation chain: each phase and the platform's notes as catalogue keys"
+        ),
+        id: {
+          type: "string",
+        },
+        moderationResult: stored(
+          "a moderation decision's stored record (review_queue.moderation_result): its action, categories and the platform's notes as catalogue keys"
+        ),
+        modifiedAction: {
+          type: "string",
+        },
+        notesShown: SHOWN,
+        originalDecisionId: {
+          type: "string",
+        },
+        previousAccountStatus: {
+          type: "string",
+        },
+        priority: {
+          type: "string",
+        },
+        relatedStrikeId: {
+          type: "string",
+        },
+        requestId: {
+          type: "string",
+        },
+        resolvedAt: {
+          type: "string",
+        },
+        resolvedBy: {
+          type: "string",
+        },
+        reviewerNotes: {
+          type: "string",
+        },
+        source: {
+          type: "string",
+        },
+        status: {
+          type: "string",
+        },
+        targetUserId: {
+          type: "string",
+        },
+        updatedAt: {
+          type: "string",
+        },
+      },
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const guard = await requireAdmin(request, MODERATE_PERMISSION);
@@ -372,4 +555,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     });
     return apiError("internal.error", { params: { requestId }, request });
   }
-});
+}, POST_RESPONSE);

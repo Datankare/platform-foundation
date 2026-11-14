@@ -1,4 +1,4 @@
-import { logger, generateRequestId, redact } from "@/lib/logger";
+import { logger, generateRequestId, redact, redactText } from "@/lib/logger";
 
 describe("logger", () => {
   const originalEnv = process.env;
@@ -198,6 +198,56 @@ describe("logger", () => {
     const output = (console.error as jest.Mock).mock.calls[0][0] as string;
     expect(output).not.toContain(secret);
     expect(output).toContain("[redacted]");
+  });
+
+  // TASK-215 (audit A-10): addresses and browsers by field name, and any e-mail or IP address
+  // inside any text — the message too — whatever field carries it.
+  it.each([
+    ["an IP address field", { ipAddress: "198.51.100.23" }, "198.51.100.23"],
+    ["an ip_address field", { row: { ip_address: "198.51.100.24" } }, "198.51.100.24"],
+    ["a user agent", { userAgent: "SentinelBrowser/9.9" }, "SentinelBrowser/9.9"],
+    ["a model's reason", { rawReason: "they wrote sentinel-quote" }, "sentinel-quote"],
+    [
+      "an address inside an error",
+      { error: "connect ECONNREFUSED 198.51.100.25:5432" },
+      "198.51.100.25",
+    ],
+    [
+      "an IPv6 address inside a bucket",
+      { identifier: "t:x:ip:2001:db8::7334" },
+      "2001:db8::7334",
+    ],
+    [
+      "an e-mail inside a nested text",
+      { context: { note: "sent to sentinel-c@d.example" } },
+      "sentinel-c@d.example",
+    ],
+  ])("never writes %s to the log (A-10)", (_label, fields, secret) => {
+    process.env.LOG_LEVEL = "error";
+    logger.error("leak attempt", fields as never);
+    const output = (console.error as jest.Mock).mock.calls[0][0] as string;
+    expect(output).not.toContain(secret);
+    expect(output).toMatch(/\[redacted(?: ip| email)?\]/);
+  });
+
+  it("never writes an address planted in the message itself (A-10)", () => {
+    process.env.LOG_LEVEL = "error";
+    logger.error("failed for sentinel-m@n.example from 203.0.113.9 and ::ffff:192.0.2.1");
+    const entry = JSON.parse((console.error as jest.Mock).mock.calls[0][0]);
+    expect(entry.message).toBe(
+      "failed for [redacted email] from [redacted ip] and ::ffff:[redacted ip]"
+    );
+  });
+
+  it("redactText leaves times, versions of two parts, ids and plain words alone (A-10)", () => {
+    for (const keep of [
+      "2026-11-13T02:05:14.195Z",
+      "took 12:30:45",
+      "v6.0",
+      "aaaaaaaa-0000-4000-8000-00000000000a",
+      "POST /api/process → 200",
+    ])
+      expect(redactText(keep)).toBe(keep);
   });
 
   it("redact leaves other fields, primitives and the input untouched", () => {

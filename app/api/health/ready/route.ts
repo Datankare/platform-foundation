@@ -28,6 +28,63 @@ import {
 import { keepAliveForProbes } from "@/platform/observability/keep-probes-alive";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { PLATFORM_VERSION } from "@/platform/version";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+/** The report, healthy or not: an unhealthy one is the same body at 503. */
+const GET_BODY: ResponseSchema = {
+  type: "object",
+  properties: {
+    boot: {
+      type: "string",
+    },
+    bootStep: {
+      type: "null",
+    },
+    checks: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          checkedAt: {
+            type: "string",
+          },
+          name: {
+            type: "string",
+          },
+          required: {
+            type: "boolean",
+          },
+          status: {
+            type: "string",
+          },
+        },
+      },
+    },
+    commit: {
+      type: "null",
+    },
+    draining: {
+      type: "boolean",
+    },
+    ready: {
+      type: "boolean",
+    },
+    requestId: {
+      type: "string",
+    },
+    status: {
+      type: "string",
+    },
+    timestamp: {
+      type: "string",
+    },
+    version: {
+      type: "string",
+    },
+  },
+};
+
+const GET_RESPONSE: ResponseSchema = { ...GET_BODY, onError: GET_BODY };
 
 export const GET = tenantRoute(async function GET() {
   const requestId = generateRequestId();
@@ -65,4 +122,4 @@ export const GET = tenantRoute(async function GET() {
     },
     { status: readiness.ready ? 200 : 503, headers: { "cache-control": "no-store" } }
   );
-});
+}, GET_RESPONSE);

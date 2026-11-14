@@ -636,7 +636,10 @@ dbDescribe(`${SUITE} data export`, () => {
     const { data, errors } = await t.run(() => exportUserData(user));
     expect(errors).toEqual([]);
     expect(dataSpy().writes).toEqual([["insert", "audit_log"]]);
-    expect(data.profile).toMatchObject({ id: user, tenant_id: t.id });
+    expect(data.profile).toMatchObject({ id: user });
+    // TASK-215 (audit A-14): named columns only — never the tenant key or the identity subject.
+    expect(data.profile).not.toHaveProperty("tenant_id");
+    expect(data.profile).not.toHaveProperty("cognito_sub");
     expect(typeof (data.profile as Row).created_at).toBe("string");
     expect(data.consents).toHaveLength(1);
     expect(data.devices).toEqual([expect.objectContaining({ device_id: "dev-1" })]);

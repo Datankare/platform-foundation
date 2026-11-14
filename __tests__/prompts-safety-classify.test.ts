@@ -57,7 +57,7 @@ describe("parseClassifierResponse", () => {
     expect(result.categories).toEqual([]);
     expect(result.confidence).toBeCloseTo(0.95);
     expect(result.severity).toBe("low");
-    expect(result.rawReason).toBeUndefined();
+    expect("rawReason" in result).toBe(false);
   });
 
   it("parses an unsafe response with categories", () => {
@@ -68,7 +68,9 @@ describe("parseClassifierResponse", () => {
     expect(result.categories).toEqual(["violence", "hate"]);
     expect(result.confidence).toBeCloseTo(0.87);
     expect(result.severity).toBe("high");
-    expect(result.rawReason).toBe("graphic violence");
+    // TASK-215 (A-5): the model's reason is checked and dropped — never kept, never logged.
+    expect("rawReason" in result).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("graphic violence");
   });
 
   it("handles markdown code fences", () => {
@@ -143,7 +145,6 @@ describe("parseClassifierResponse", () => {
       categories: ["hate"],
       confidence: 0.9,
       severity: "high",
-      rawReason: "r",
     });
   });
 
@@ -203,6 +204,6 @@ describe("ClassifierOutput type contract", () => {
       severity: "low",
     };
     expect(output).toBeDefined();
-    expect(output.rawReason).toBeUndefined();
+    expect("rawReason" in output).toBe(false);
   });
 });

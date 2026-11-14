@@ -438,7 +438,8 @@ export class PostgresTrajectoryStore implements TrajectoryStore {
   /**
    * The reaper (TASK-193, platform/agents/trajectory-closure.ts): one statement in the tenant's
    * transaction. A chain's last segment that is open, untouched since `cutoff`, with no open hold
-   * on any segment of its chain — and not an app session's (its session owns it: audit B-5) — is
+   * on any segment of its chain — and not an app session's (its session owns it, audit B-5: it is
+   * deleted with the session, migration 073) — is
    * ended `failed` and given a step saying so (when it has room:
    * a workflow's — its trigger one of `workflows.triggers` — only past `workflows.cutoff`;
    * a full one is ended without it); `updated_at` is left as it was. Each earlier segment of a

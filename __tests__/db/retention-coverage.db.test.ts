@@ -204,6 +204,18 @@ dbDescribe("retention: the data.retention job keeps to the rules (N-25)", () => 
         `insert into app_sessions (id, tenant_id, state, created_at, updated_at)
          values ($1, $2, '{}'::jsonb, ${at}, ${at})`
       );
+      // TASK-215 (audit B-5): a session's run goes with its session (migration 073's trigger).
+      await add(
+        `sessionrun_${age}`,
+        `insert into agent_trajectories (id, tenant_id, trigger, subject_kind, subject_id, scope_type, steps, status, updated_at)
+         values ($1, $2, 'session', 'session', $3, 'user', '[]'::jsonb, 'running', ${at})`,
+        [ids[`session_${age}`]]
+      );
+      // TASK-215 (S4): a rate-limit event goes on a schedule, whether or not its bucket is counted.
+      await add(
+        `rate_${age}`,
+        `insert into rate_limit_events (bucket, tenant_id, at) values ($1::text, $2, ${at})`
+      );
       await add(
         `budget_${age}`,
         `insert into agent_budgets (id, tenant_id, agent_id, period, scope_type, created_at, updated_at)
@@ -252,6 +264,8 @@ dbDescribe("retention: the data.retention job keeps to the rules (N-25)", () => 
       ["guest_usage", "guest_id", "guest"],
       ["app_sessions", "id", "session"],
       ["agent_budgets", "id", "budget"],
+      ["agent_trajectories", "id", "sessionrun"],
+      ["rate_limit_events", "bucket", "rate"],
     ];
     for (const [table, key, label] of deleted) {
       expect([table, await exists(table, `${key}::text`, mine[`${label}_old`])]).toEqual([

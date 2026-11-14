@@ -600,8 +600,17 @@ describe("addresses, hints and arguments", () => {
     expect(acceptableEmail(email)).toBe(ok);
   });
 
-  it("a subject is recorded as a hash prefix and printed as its first 8 characters", () => {
-    expect(subjectHint(SUB)).toMatch(/^sha256:[0-9a-f]{16}$/);
+  // TASK-215 (A-6): keyed (RECORD_HASH_KEY) — an unkeyed hash of a subject is confirmed by hashing
+  // a candidate, and the subjects an erasure keeps are candidates.
+  it("a subject is recorded as a keyed hash and printed as its first 8 characters", () => {
+    expect(subjectHint(SUB)).toMatch(/^hmac-sha256:[0-9a-f]{16}:[0-9a-f]{64}$/);
+    expect(subjectHint(SUB)).not.toContain(
+      require("node:crypto")
+        .createHash("sha256")
+        .update(SUB.toLowerCase())
+        .digest("hex")
+        .slice(0, 16)
+    );
     expect(subjectHint(SUB)).not.toContain(SUB.slice(0, 8));
     expect(subjectHint(SUB.toUpperCase())).toBe(subjectHint(SUB));
     expect(subjectHint(null)).toBeNull();

@@ -73,7 +73,7 @@ export async function classifyContent(
       : {
           ...result.classifierOutput,
           safe: false,
-          // The platform's note (a key, TASK-209): the model's own words stay in rawReason.
+          // The platform's note (a key, TASK-209); the model's own words are not kept (TASK-215).
           note:
             result.classifierOutput.note ??
             shown("screens.moderation.classifier.pipeline_action", {
@@ -113,7 +113,6 @@ export async function checkSafety(
   return {
     safe: result.safe,
     ...(result.note ? { reasons: [result.note] } : {}),
-    ...(result.rawReason ? { rawReason: result.rawReason } : {}),
     ...(!result.safe && decision ? { decision } : {}),
   };
 }

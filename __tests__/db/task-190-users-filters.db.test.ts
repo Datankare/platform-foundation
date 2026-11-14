@@ -36,7 +36,8 @@ import { NextRequest } from "next/server";
 import { withOwnerTx } from "@/platform/data";
 import { handleSearch } from "@/app/api/admin/ai/handlers/search";
 import { SEARCHABLE_TABLES } from "@/app/api/admin/ai/tool-permissions";
-import { GET as usersGET } from "@/app/api/admin/users/route";
+import { GET as usersListGET } from "@/app/api/admin/users/route";
+import { POST as usersSearchPOST } from "@/app/api/admin/users/search/route";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
 import { shownCell } from "@/components/admin/ExecutionResultsPanel";
 import { readableRole } from "@/components/admin/admin-format";
@@ -57,6 +58,24 @@ import {
   suiteCaller,
 } from "../helpers/db-admin";
 import type { TestIdentity } from "../helpers/test-identities";
+
+/**
+ * TASK-215 (audit A-17): the Users list's search text travels in a POST body, never the URL — a
+ * list request whose URL carries `q` or `text` is sent as the screen sends it, to
+ * POST /api/admin/users/search with the parameters in its body; any other stays a GET.
+ */
+const usersGET = (request: NextRequest): Promise<Response> => {
+  const url = new URL(request.url);
+  if (!url.searchParams.has("q") && !url.searchParams.has("text"))
+    return usersListGET(request);
+  return usersSearchPOST(
+    new NextRequest(new URL("/api/admin/users/search", url), {
+      method: "POST",
+      headers: request.headers,
+      body: JSON.stringify(Object.fromEntries(url.searchParams)),
+    })
+  );
+};
 
 const RUN = newRun();
 let a: TestTenant;
@@ -246,7 +265,10 @@ dbDescribe("TASK-190 the Users list's filters: the same accounts as the search",
     expect(await listed({ role: "moderator" }, "", b)).toEqual([outsider]);
   });
 
-  it("a refused value reads nothing, and a moderator is refused before any filter", async () => {
+  // hostile:self n/a: the list targets no single account, the caller's or another's
+  // hostile:store-down n/a: a live-database suite; the list's store-down answers are in admin-read-failures.test.ts
+  // hostile:id-spelling n/a: the list reads no account id, only codes, day counts and a search text
+  it("[hostile:role] a refused value reads nothing, and a moderator is refused before any filter", async () => {
     const bad = await usersGET(req("/api/admin/users?status=superuser"));
     expect(bad.status).toBe(400);
     expect((await bad.json()).code).toBe("request.invalid_value");

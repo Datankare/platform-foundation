@@ -7,6 +7,8 @@ import {
 } from "@/platform/auth/auth-response";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+import { authResultSchema } from "@/platform/auth/auth-response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const EMAIL_BODY_SCHEMA: InputSchemaNode = {
@@ -15,6 +17,8 @@ const EMAIL_BODY_SCHEMA: InputSchemaNode = {
     email: { type: "string" },
   },
 };
+
+const POST_RESPONSE: ResponseSchema = authResultSchema();
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
@@ -39,4 +43,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     request,
     context: "Resend verification failed",
   });
-});
+}, POST_RESPONSE);

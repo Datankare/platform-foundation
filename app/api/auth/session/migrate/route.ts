@@ -32,6 +32,11 @@ import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { sessionTenantRefusal } from "@/platform/tenancy/identity";
 import { sameId } from "@/platform/auth/same-id";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+import { authResultSchema } from "@/platform/auth/auth-response-schema";
+
+/** A browser's pre-ADR-057 session moved: a session's answer, or that there was none to move. */
+const POST_RESPONSE: ResponseSchema = authResultSchema({ migrated: { type: "boolean" } });
 
 function notMigrated(): NextResponse {
   const response = NextResponse.json({ success: true, migrated: false });
@@ -88,4 +93,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     method: "migrated",
     extra: { migrated: true },
   });
-});
+}, POST_RESPONSE);

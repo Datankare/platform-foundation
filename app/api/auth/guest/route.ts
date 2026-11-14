@@ -28,6 +28,7 @@ import { isInGoodStanding } from "@/platform/auth/account-status-guard";
 import { resolveAccount } from "@/platform/auth/account-identity";
 import { trustedVerifiedClaim } from "@/platform/auth/email-verification";
 import { isMarkedRestricted, markRestricted } from "@/platform/auth/restricted-marker";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /**
  * Whether the request presents a signed-in user's session whose account may not continue as a
@@ -64,6 +65,24 @@ async function restrictedUser(
     return { restricted: true };
   }
 }
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    expiresAt: {
+      type: "number",
+    },
+    guestId: {
+      type: "string",
+    },
+    success: {
+      type: "boolean",
+    },
+    token: {
+      type: "string",
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
@@ -110,4 +129,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   }
   clearLegacyCookies(response);
   return response;
-});
+}, POST_RESPONSE);

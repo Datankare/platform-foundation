@@ -25,6 +25,138 @@ import { getBudgetTracker } from "@/platform/agents/budget-tracker";
 import { listTenantJobHistory } from "@/platform/jobs/operator";
 import { settingDescription } from "@/platform/errors/definitions";
 import { tenantRoute } from "@/platform/tenancy/route";
+import {
+  type ResponseSchema,
+  SETTING_VALUE,
+  SHOWN,
+} from "@/platform/errors/response-schema";
+
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    budget: {
+      type: "object",
+      properties: {
+        budgetUsd: {
+          type: "number",
+        },
+        exhausted: {
+          type: "boolean",
+        },
+        period: {
+          type: "string",
+        },
+        tenantId: {
+          type: "string",
+        },
+        usedUsd: {
+          type: "number",
+        },
+      },
+    },
+    domains: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          createdAt: {
+            type: "string",
+          },
+          host: {
+            type: "string",
+          },
+        },
+      },
+    },
+    jobs: {
+      type: ["array", "null"],
+      items: {
+        type: "object",
+        properties: {
+          attempts: {
+            type: "number",
+          },
+          id: {
+            type: "string",
+          },
+          kind: {
+            type: "string",
+          },
+          lastError: {
+            type: ["null", "string"],
+          },
+          maxAttempts: {
+            type: "number",
+          },
+          source: {
+            type: "string",
+          },
+          status: {
+            type: "string",
+          },
+          updatedAt: {
+            type: "string",
+          },
+        },
+      },
+    },
+    settings: {
+      type: ["array", "null"],
+      items: {
+        type: "object",
+        properties: {
+          allowedValues: {
+            type: ["array", "null"],
+            items: {
+              type: "string",
+            },
+          },
+          description: SHOWN,
+          key: {
+            type: "string",
+          },
+          maxValue: {
+            type: ["null", "number"],
+          },
+          minValue: {
+            type: ["null", "number"],
+          },
+          overridden: {
+            type: "boolean",
+          },
+          permissionTier: {
+            type: "string",
+          },
+          platformValue: SETTING_VALUE,
+          value: SETTING_VALUE,
+          valueType: {
+            type: "string",
+          },
+        },
+      },
+    },
+    tenant: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+        },
+        mode: {
+          type: "string",
+        },
+        name: {
+          type: ["null", "string"],
+        },
+        slug: {
+          type: ["null", "string"],
+        },
+        status: {
+          type: "string",
+        },
+      },
+    },
+  },
+};
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const guard = await requireAdmin(request, "can_access_admin");
@@ -100,4 +232,4 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   } catch (error) {
     return internalError(error, { request, context: "Tenant settings read failed" });
   }
-});
+}, GET_RESPONSE);

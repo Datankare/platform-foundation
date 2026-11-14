@@ -71,7 +71,7 @@ To debug: query content_safety_audit by request_id or trajectory_id, read `reaso
 
 ## Reasoning Safety
 
-The reasons are catalog keys and values (`platform/moderation/reasons.ts`, `screens.moderation.*`; TASK-209) carrying metadata only — severity levels, confidence scores, threshold and level names, content type labels — worded where they are read, in the reader's language. Raw input text is never included. The inputHash (SHA-256) is the only reference to original content. The classifier's own words (AI-generated, may reference input themes) are kept apart as `classifierOutput.rawReason`: raw model output, never shown as a screen's text; the platform's notes on an answer are `classifierOutput.note` (a key). The review assistant's prompt renders the reasons in English at its boundary (model input, `review-assist.ts`).
+The reasons are catalog keys and values (`platform/moderation/reasons.ts`, `screens.moderation.*`; TASK-209) carrying metadata only — severity levels, confidence scores, threshold and level names, content type labels — worded where they are read, in the reader's language. Raw input text is never included. The inputHash — a keyed HMAC-SHA256 under `RECORD_HASH_KEY` (TASK-215, A-6), cleared when the account is erased — is the only reference to original content. The classifier's own words (AI-generated, they can quote or paraphrase the input) are not kept or logged (TASK-215, A-5): moderators and appeals get the categories, severity and confidence as codes, and the platform's notes on an answer as `classifierOutput.note` (a key). The review assistant's prompt renders the reasons in English at its boundary (model input, `review-assist.ts`).
 
 ## Gotchas
 

@@ -96,7 +96,7 @@
  * @module platform/auth
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   isCommitOutcomeUnknown,
   withOwnerTx,
@@ -118,6 +118,7 @@ import {
   type IdentityDirectory,
 } from "@/platform/auth/identity-directory";
 import { sameId } from "@/platform/auth/same-id";
+import { recordHash } from "@/platform/auth/record-hash";
 import { logCaught } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
 
@@ -197,11 +198,13 @@ export function acceptableEmail(email: string): boolean {
   return local.length > 0 && labels.length >= 2 && labels.every((l) => l.length > 0);
 }
 
-/** A subject (or id) as recorded: a short keyed-free hash — enough to match, never the value. */
+/**
+ * A subject (or id) as recorded: its keyed hash (HMAC-SHA256 under RECORD_HASH_KEY, TASK-215,
+ * audit A-6) — enough to match, never the value. An unkeyed hash of a subject was confirmed by
+ * hashing a candidate (the subjects an erasure keeps, user_deletions.cognito_sub, among them).
+ */
 export function subjectHint(subject: string | null): string | null {
-  return subject
-    ? `sha256:${createHash("sha256").update(subject.toLowerCase()).digest("hex").slice(0, 16)}`
-    : null;
+  return subject ? recordHash("relink-subject", subject.toLowerCase()) : null;
 }
 
 /** A subject as printed for the operator: its first 8 characters. */

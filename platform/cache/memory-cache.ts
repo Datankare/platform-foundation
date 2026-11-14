@@ -24,6 +24,7 @@ import type {
   CacheProvider,
   CacheSetOptions,
 } from "./types";
+import { boundedDefaultTtl, boundedTtl } from "./ttl";
 
 interface InternalEntry {
   value: unknown;
@@ -52,7 +53,7 @@ export class InMemoryCacheProvider implements CacheProvider {
     maxEntries?: number;
   }) {
     this.namespace = options?.namespace ?? "pf:";
-    this.defaultTTLSeconds = options?.defaultTTLSeconds ?? 3600;
+    this.defaultTTLSeconds = boundedDefaultTtl(options?.defaultTTLSeconds);
     const max = options?.maxEntries ?? DEFAULT_MAX_ENTRIES;
     this.maxEntries = Number.isInteger(max) && max > 0 ? max : DEFAULT_MAX_ENTRIES;
   }
@@ -97,8 +98,7 @@ export class InMemoryCacheProvider implements CacheProvider {
   }
 
   private computeExpiresAt(ttlSeconds?: number): string | null {
-    const ttl = ttlSeconds ?? this.defaultTTLSeconds;
-    if (ttl <= 0) return null;
+    const ttl = boundedTtl(ttlSeconds, this.defaultTTLSeconds);
     return new Date(Date.now() + ttl * 1000).toISOString();
   }
 
@@ -133,7 +133,7 @@ export class InMemoryCacheProvider implements CacheProvider {
       if (!this.isExpired(existing)) return;
     }
 
-    const ttlSeconds = options?.ttlSeconds ?? this.defaultTTLSeconds;
+    const ttlSeconds = boundedTtl(options?.ttlSeconds, this.defaultTTLSeconds);
 
     this.makeRoom(prefixed);
     // Written again, it is the newest (Map order is insertion order: eviction takes the oldest).
@@ -142,7 +142,7 @@ export class InMemoryCacheProvider implements CacheProvider {
       value,
       createdAt: new Date().toISOString(),
       expiresAt: this.computeExpiresAt(ttlSeconds),
-      ttlSeconds: ttlSeconds > 0 ? ttlSeconds : undefined,
+      ttlSeconds,
     });
   }
 

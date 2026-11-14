@@ -20,6 +20,7 @@ import {
   shownName,
 } from "@/components/admin/UsersPanel";
 import { renderMessage } from "@/platform/errors/messages";
+import { loadSession, resetSessionStateForTests } from "@/platform/auth/context";
 import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 import { USER_ROW_ACTION_PERMISSIONS } from "@/app/api/admin/ai/tool-permissions";
 import { ROLE_PERMISSIONS } from "./helpers/test-identities";
@@ -33,7 +34,7 @@ type Listed = {
   roles: { id: string; name: string }[];
 };
 const LIST: RouteFixtureName =
-  "GET /api/admin/users — Ann and a super admin who never signed in";
+  "POST /api/admin/users/search — Ann and a super admin who never signed in";
 const listed = routeAnswer(LIST)[1] as Listed;
 const ANN = listed.users[0]!;
 const OLD_STAFF = listed.users[1]!;
@@ -69,10 +70,17 @@ let onErase: Handler;
 const listCalls = () =>
   fetchMock.mock.calls
     .map(([u, init]) => ({ url: String(u), init: init as RequestInit | undefined }))
-    .filter(
-      (c) => c.url.startsWith("/api/admin/users?") && (c.init?.method ?? "GET") === "GET"
-    )
-    .map((c) => new URL(c.url, "http://x").searchParams);
+    // TASK-215 (A-17): the list is read by POST /api/admin/users/search, its parameters in the
+    // body — never the URL.
+    .filter((c) => c.url === "/api/admin/users/search" && c.init?.method === "POST")
+    .map(
+      (c) =>
+        new URLSearchParams(
+          Object.entries(JSON.parse(String(c.init?.body)) as Record<string, unknown>).map(
+            ([k, v]) => [k, String(v)]
+          )
+        )
+    );
 
 beforeEach(() => {
   fetchMock.mockReset();
@@ -174,7 +182,8 @@ describe("what a row shows", () => {
   });
 
   it("a restriction with an end date says until when", async () => {
-    onList = () => respond("GET /api/admin/users — Ann suspended until 2 November");
+    onList = () =>
+      respond("POST /api/admin/users/search — Ann suspended until 2 November");
     await shown();
     expect(screen.getByText("Suspended until 2 Nov 2026")).toBeDefined();
   });
@@ -204,6 +213,39 @@ describe("search, sort and paging go to the server", () => {
     expect(params.get("offset")).toBe("0");
   });
 
+  it("[hostile] the search is a POST carrying the session's forgery token, its text in the body only (ADR-057, A-17)", async () => {
+    // The page's session, read as the page reads it (GET /api/auth/session).
+    resetSessionStateForTests();
+    const list = onList;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u === "/api/auth/session") return respond("GET /api/auth/session — signed in");
+      if (u.startsWith("/api/admin/users")) return list(u, init);
+      throw new Error(`unexpected request: ${u}`);
+    });
+    await loadSession();
+    await shown();
+    const term = "ann@example.com";
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: term } });
+    fireEvent.click(screen.getByRole("button", { name: t("search") }));
+    await waitFor(() => expect(listCalls()).toHaveLength(2));
+    const searches = fetchMock.mock.calls.filter(([u]) =>
+      String(u).startsWith("/api/admin/users")
+    );
+    for (const [u, init] of searches) {
+      const headers = new Headers((init as RequestInit).headers);
+      expect([String(u), (init as RequestInit).method]).toEqual([
+        "/api/admin/users/search",
+        "POST",
+      ]);
+      expect(headers.get("x-csrf-token")).toBe("csrf-token-of-the-session");
+      expect(headers.get("authorization")).toBeNull();
+    }
+    expect(JSON.parse(String((searches[1][1] as RequestInit).body)).q).toBe(term);
+    expect(searches.map(([u]) => String(u)).join(" ")).not.toContain("ann%40");
+    resetSessionStateForTests();
+  });
+
   it("the search box takes at most 100 characters (the server's bound)", async () => {
     await shown();
     expect(screen.getByRole("searchbox")).toHaveAttribute("maxLength", "100");
@@ -220,7 +262,7 @@ describe("search, sort and paging go to the server", () => {
   });
 
   it("next and previous pages move the offset; previous is off on the first page", async () => {
-    onList = () => respond("GET /api/admin/users — a page of 25, more to read");
+    onList = () => respond("POST /api/admin/users/search — a page of 25, more to read");
     await shown();
     expect(screen.getByRole("button", { name: t("previous") })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: t("next") }));
@@ -236,7 +278,8 @@ describe("search, sort and paging go to the server", () => {
 
   it("no users matching a search says so, with the term", async () => {
     await shown();
-    onList = () => respond("GET /api/admin/users — no account matches the search");
+    onList = () =>
+      respond("POST /api/admin/users/search — no account matches the search");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "zed" } });
     fireEvent.click(screen.getByRole("button", { name: t("search") }));
     expect(await screen.findByText(t("empty_search", { query: "zed" }))).toBeDefined();
@@ -246,7 +289,7 @@ describe("search, sort and paging go to the server", () => {
 describe("the detail panel", () => {
   it("identity, readable and stored role, standing, created, last sign-in, entitlements", async () => {
     onList = () =>
-      respond("GET /api/admin/users — Ann with Beta access until 1 December");
+      respond("POST /api/admin/users/search — Ann with Beta access until 1 December");
     await shown();
     const panel = openRow("Ann");
     // TASK-190: the account id is hidden by default, shown with "Show details" (UsersPanel showIds).
@@ -487,20 +530,23 @@ describe("erase account data", () => {
 
 describe("the list's own read", () => {
   it("a 503 is 'could not be read' with a retry — never an empty list", async () => {
-    onList = () => respond("GET /api/admin/users — refused (the permissions store down)");
+    onList = () =>
+      respond("POST /api/admin/users/search — refused (the permissions store down)");
     render(<UsersPanel hasPermission={everything} />);
     expect(
       await screen.findByText(renderMessage("screens.admin_console.unavailable_title"))
     ).toBeDefined();
     expect(screen.queryByText(t("empty"))).toBeNull();
-    onList = () => respond("GET /api/admin/users — Ann alone");
+    onList = () => respond("POST /api/admin/users/search — Ann alone");
     fireEvent.click(screen.getByRole("button", { name: /^Try reading .* again$/ }));
     expect(await screen.findByText("ann@example.com")).toBeDefined();
   });
 
   it.each([
-    ...refusalsOf("GET /api/admin/users").filter((n) => !n.endsWith("store down)")),
-    "GET /api/admin/users — the store failing" as RouteFixtureName,
+    ...refusalsOf("POST /api/admin/users/search").filter(
+      (n) => !n.endsWith("store down)")
+    ),
+    "POST /api/admin/users/search — the store failing" as RouteFixtureName,
   ])("%s: the refusal is shown, not an empty list", async (name) => {
     onList = () => respond(name);
     render(<UsersPanel hasPermission={everything} />);
@@ -614,14 +660,14 @@ describe("rows the routes refuse to change offer no change (TASK-185 review)", (
 
 describe("the role shown, the same-role answer, loading (TASK-185 review)", () => {
   it("the role chosen follows the account's role when the list is read again", async () => {
-    let list: RouteFixtureName = "GET /api/admin/users — Ann alone";
+    let list: RouteFixtureName = "POST /api/admin/users/search — Ann alone";
     onList = () => respond(list);
     const { rerender } = render(<UsersPanel hasPermission={everything} refreshKey={0} />);
     await screen.findByText("ann@example.com");
     const panel = openRow("Ann");
     const select = within(panel).getByRole("combobox", { name: t("change_role_label") });
     expect(select).toHaveValue(roleId("free"));
-    list = "GET /api/admin/users — Ann, now a moderator";
+    list = "POST /api/admin/users/search — Ann, now a moderator";
     rerender(<UsersPanel hasPermission={everything} refreshKey={1} />);
     await waitFor(() =>
       expect(
@@ -642,7 +688,7 @@ describe("the role shown, the same-role answer, loading (TASK-185 review)", () =
   });
 
   it("paging is off while a page is being read", async () => {
-    onList = () => respond("GET /api/admin/users — a page of 25, more to read");
+    onList = () => respond("POST /api/admin/users/search — a page of 25, more to read");
     await shown();
     let release: (v: unknown) => void = () => undefined;
     onList = () => new Promise((r) => (release = r));
@@ -653,7 +699,7 @@ describe("the role shown, the same-role answer, loading (TASK-185 review)", () =
     expect(screen.getByRole("button", { name: t("previous") })).toBeDisabled();
     expect(screen.getByText(t("loading"))).toBeDefined();
     await act(async () =>
-      release(respond("GET /api/admin/users — a page of 25, more to read"))
+      release(respond("POST /api/admin/users/search — a page of 25, more to read"))
     );
     await waitFor(() =>
       expect(screen.getByRole("button", { name: t("next") })).not.toBeDisabled()
@@ -664,10 +710,12 @@ describe("the role shown, the same-role answer, loading (TASK-185 review)", () =
     const { rerender } = render(<UsersPanel hasPermission={everything} refreshKey={0} />);
     await screen.findByText("ann@example.com");
     openRow("Ann");
-    onList = () => respond("GET /api/admin/users — refused (no permission)");
+    onList = () => respond("POST /api/admin/users/search — refused (no permission)");
     rerender(<UsersPanel hasPermission={everything} refreshKey={1} />);
     expect(
-      await screen.findByText(messageOf("GET /api/admin/users — refused (no permission)"))
+      await screen.findByText(
+        messageOf("POST /api/admin/users/search — refused (no permission)")
+      )
     ).toBeDefined();
     expect(screen.queryByText("ann@example.com")).toBeNull();
     expect(

@@ -24,6 +24,7 @@ import type {
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { PROBE_FAILED, logCaught } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
+import { boundedDefaultTtl, boundedTtl } from "./ttl";
 
 /** Redis command response from Upstash REST API */
 interface RedisResponse<T = unknown> {
@@ -61,7 +62,7 @@ export class RedisCacheProvider implements CacheProvider {
     this.url = config.url.replace(/\/$/, "");
     this.token = config.token;
     this.namespace = config.namespace ?? "pf:";
-    this.defaultTTLSeconds = config.defaultTTLSeconds ?? 3600;
+    this.defaultTTLSeconds = boundedDefaultTtl(config.defaultTTLSeconds);
     this.timeoutMs = config.timeoutMs ?? 5000;
   }
 
@@ -174,7 +175,7 @@ export class RedisCacheProvider implements CacheProvider {
   ): Promise<void> {
     const prefixed = this.prefixedKey(key);
     const serialized = this.serialize(value);
-    const ttl = options?.ttlSeconds ?? this.defaultTTLSeconds;
+    const ttl = boundedTtl(options?.ttlSeconds, this.defaultTTLSeconds);
 
     const command: string[] = ["SET", prefixed, serialized];
 

@@ -191,7 +191,11 @@ export async function getEffectivePasswordPolicy(
   try {
     const { rows } = await withTenantTx((tx) =>
       tx.query(
-        `select * from password_policy
+        // Named columns, never the whole row (TASK-215, audit S3): a row also holds whose policy
+        // it is (user_id, role_id, tenant_id), which toPolicy never reads.
+        `select rotation_days, min_length, require_uppercase, require_lowercase, require_number,
+                require_special, password_history_count
+           from password_policy
           where user_id::text = $1
              or (role_id::text = $2 and user_id is null)
              or (role_id is null and user_id is null)
@@ -306,7 +310,11 @@ export async function getGlobalPasswordPolicy(): Promise<PasswordPolicy> {
     // An unconfigured or unreachable store is the same case as an unreadable row: the defaults
     // (the strict built-in policy) apply — sign-up never fails open, and never answers a 500.
     const { rows } = await withTenantTx((tx) =>
-      tx.query("select * from password_policy where role_id is null and user_id is null")
+      tx.query(
+        `select rotation_days, min_length, require_uppercase, require_lowercase, require_number,
+                require_special, password_history_count
+           from password_policy where role_id is null and user_id is null`
+      )
     );
     data = rows[0];
   } catch (err) {

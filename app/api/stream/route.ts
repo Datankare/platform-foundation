@@ -47,6 +47,7 @@ import { screeningRefusal } from "@/lib/screening-refusal";
 import { buildStreamSystemPrompt } from "@/prompts";
 import { logger, generateRequestId } from "@/lib/logger";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { type ResponseSchema, NOT_JSON } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const STREAM_BODY_SCHEMA: InputSchemaNode = {
@@ -73,6 +74,9 @@ function isTransientStreamFailure(err: unknown): boolean {
     (err as { kind?: unknown }).kind === "transient"
   );
 }
+
+/** A server-sent event stream, not one JSON body. */
+const POST_RESPONSE: ResponseSchema = NOT_JSON;
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const requestId = generateRequestId();
@@ -113,7 +117,6 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
       requestId,
       decision: safety.decision,
       reasons: safety.reasons,
-      rawReason: safety.rawReason,
     });
     // TASK-211 (N-119): blocked, held for a moderator or not judged — each its own answer.
     const refusal = screeningRefusal(safety);
@@ -247,4 +250,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
       "X-Request-Id": requestId,
     },
   });
-});
+}, POST_RESPONSE);

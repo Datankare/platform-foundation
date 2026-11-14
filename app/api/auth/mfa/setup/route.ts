@@ -8,6 +8,22 @@ import { requireAuth } from "@/platform/auth/middleware";
 import { mfaSetup } from "@/platform/auth/mfa-routes";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    qrCodeUri: {
+      type: "string",
+    },
+    secretCode: {
+      type: "string",
+    },
+    success: {
+      type: "boolean",
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_SESSION);
@@ -16,4 +32,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   const auth = await requireAuth(request, { privileged: true });
   if (auth.error) return auth.error;
   return mfaSetup(request, auth);
-});
+}, POST_RESPONSE);

@@ -39,7 +39,8 @@ jest.mock("@/lib/logger", () => ({
 import { NextRequest } from "next/server";
 import { fakeData } from "./helpers/fake-data";
 import { authAs, ROLE_PERMISSIONS } from "@/__tests__/helpers/test-identities";
-import { GET as usersGET } from "@/app/api/admin/users/route";
+import { GET as usersListGET } from "@/app/api/admin/users/route";
+import { POST as usersSearchPOST } from "@/app/api/admin/users/search/route";
 import {
   handleSearch,
   parseSearchFilters,
@@ -59,6 +60,24 @@ import { AUDIT_ACTIONS } from "@/platform/auth/audit-actions";
 import { SEARCHABLE_TABLES } from "@/app/api/admin/ai/tool-permissions";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
 import { shown } from "@/platform/errors/shown-text";
+
+/**
+ * TASK-215 (audit A-17): the Users list's search text travels in a POST body, never the URL — a
+ * list request whose URL carries `q` or `text` is sent as the screen sends it, to
+ * POST /api/admin/users/search with the parameters in its body; any other stays a GET.
+ */
+const usersGET = (request: NextRequest): Promise<Response> => {
+  const url = new URL(request.url);
+  if (!url.searchParams.has("q") && !url.searchParams.has("text"))
+    return usersListGET(request);
+  return usersSearchPOST(
+    new NextRequest(new URL("/api/admin/users/search", url), {
+      method: "POST",
+      headers: request.headers,
+      body: JSON.stringify(Object.fromEntries(url.searchParams)),
+    })
+  );
+};
 
 const ALL: VerifiedAdmin = {
   userId: "00000000-0000-4000-8000-0000000000ad",
@@ -439,5 +458,48 @@ describe("TASK-190 residual (a): the confirm panel shows a value the server will
       new URLSearchParams({ action: "role_changed", actor_id: "x", status: "active" })
     );
     expect(parsed).toEqual({ ok: true, filters: { status: "active" } });
+  });
+});
+
+// TASK-215 (audit A-17): what an administrator types never travels in a URL.
+describe("a search text is never read from a URL (TASK-215, A-17)", () => {
+  it.each(["q", "text"])(
+    "GET /api/admin/users refuses %s in the URL, reading nothing",
+    async (field) => {
+      fakeData().answer = () => [];
+      const res = await usersListGET(req(`/api/admin/users?${field}=ann%40example.com`));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        code: "request.field_not_accepted",
+        params: { field },
+      });
+      expect(pageRead()).toBeUndefined();
+    }
+  );
+
+  it("POST /api/admin/users/search reads the same search from its body", async () => {
+    fakeData().answer = () => [];
+    const res = await usersSearchPOST(
+      new NextRequest("http://localhost/api/admin/users/search", {
+        method: "POST",
+        headers: authAs("admin"),
+        body: JSON.stringify({ q: "ann@example.com", limit: 25 }),
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(pageRead()!.values[0]).toBe("ann@example.com");
+  });
+
+  it("POST /api/admin/users/search refuses a key the list does not take, and an object for a value", async () => {
+    const post = (body: unknown) =>
+      usersSearchPOST(
+        new NextRequest("http://localhost/api/admin/users/search", {
+          method: "POST",
+          headers: authAs("admin"),
+          body: JSON.stringify(body),
+        })
+      );
+    expect((await post({ q: "a", email: "x" })).status).toBe(400);
+    expect((await post({ q: { $ne: 1 } })).status).toBe(400);
   });
 });

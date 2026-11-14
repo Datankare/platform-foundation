@@ -14,6 +14,58 @@ import { withTenantTx } from "@/platform/data";
 import { internalError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { namedAccounts } from "@/platform/admin/account-names";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    restrictions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          created_at: {
+            type: "string",
+          },
+          created_by: {
+            type: "string",
+          },
+          created_by_account: {
+            type: "object",
+            properties: {
+              email: {
+                type: "string",
+              },
+              erased: {
+                type: "boolean",
+              },
+            },
+          },
+          feature: {
+            type: "string",
+          },
+          reason: {
+            type: ["null", "string"],
+          },
+          user: {
+            type: "object",
+            properties: {
+              email: {
+                type: "string",
+              },
+              erased: {
+                type: "boolean",
+              },
+            },
+          },
+          user_id: {
+            type: "string",
+          },
+        },
+      },
+    },
+  },
+};
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_account_restrictions");
@@ -51,4 +103,4 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   } catch (error) {
     return internalError(error, { request, context: "Admin per-account query failed" });
   }
-});
+}, GET_RESPONSE);

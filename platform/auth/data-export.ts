@@ -17,7 +17,8 @@
  * account.export_too_large), never cut off; `_meta` says the export is complete and how many
  * rows each section holds. Only the user's own data (M1, M3): no staff member's address, browser,
  * id or notes from the audit trail, no other participant's part of a shared session, and the
- * profile without who changed the account's standing.
+ * profile by named column (PROFILE_COLUMNS, TASK-215: never who changed the account's standing, the
+ * identity provider's subject or a parent's address).
  *
  * The platform's own notes in it are words (TASK-208, N-110): a record stores them as a catalog
  * key and values (platform/errors/recorded-text.ts) — a ban carried over to the account, who acted
@@ -33,6 +34,8 @@ import {
   EXPORT_MAX_ROWS,
   EXPORT_PAGE_SIZE,
   ExportTooLargeError,
+  PROFILE_COLUMNS,
+  PROFILE_EXPORT_SQL,
   USER_DATA_TABLES,
   exportUserTables,
 } from "@/platform/auth/user-data";
@@ -50,12 +53,78 @@ import {
 import { renderShown } from "@/platform/errors/shown-text";
 import { DEFAULT_LOCALE } from "@/platform/errors/messages";
 import { logger } from "@/lib/logger";
+import {
+  stored,
+  type ResponseSchema,
+  type ResponseSchemaNode,
+} from "@/platform/errors/response-schema";
 
 /** The error an export over EXPORT_MAX_ROWS rows answers with (nothing is disclosed). */
 export const EXPORT_TOO_LARGE = "export.too_large";
 
 /** The platform's own sections: the profile, the audit log and the register's exported tables. */
 const PLATFORM_SECTIONS = 2 + USER_DATA_TABLES.filter((t) => t.exportSql).length;
+
+/**
+ * What GET /api/account/export answers (TASK-215, audit A-13; platform/errors/response-schema.ts):
+ * the profile's exported columns (PROFILE_COLUMNS) and the role by name; each register section's
+ * rows, in the columns its exportSql names (USER_DATA_TABLES — the whole-row guard holds those to
+ * named columns); the audit log's rows as auditRowsForExport builds them; _meta. A registered
+ * module's section (registerExportModule) is the module's own export of the person's data — any
+ * other top-level key is read as one.
+ */
+export const ACCOUNT_EXPORT_SCHEMA: ResponseSchema = (() => {
+  const S: ResponseSchemaNode = { type: ["string", "null"] };
+  const profile: Record<string, ResponseSchemaNode> = { role: S };
+  for (const [column, c] of Object.entries(PROFILE_COLUMNS))
+    if (c.exported) profile[column] = { type: ["string", "number", "boolean", "null"] };
+  const row = stored(
+    "a row of the person's own data, in the columns its register entry exports"
+  );
+  const sections: Record<string, ResponseSchemaNode> = {};
+  for (const t of USER_DATA_TABLES)
+    if (t.exportSql) sections[t.name] = { type: "array", items: row };
+  return {
+    type: "object",
+    properties: {
+      profile: { type: "object", properties: profile },
+      ...sections,
+      auditLog: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: S,
+            action: S,
+            created_at: S,
+            actor_id: S,
+            by: S,
+            target_id: S,
+            ip_address: S,
+            user_agent: S,
+            details: stored(
+              "an audit record's details, as the export renders them for the person"
+            ),
+          },
+        },
+      },
+      _meta: {
+        type: "object",
+        properties: {
+          exportedAt: S,
+          userId: S,
+          moduleCount: { type: "number" },
+          format: S,
+          version: S,
+          complete: { type: "boolean" },
+          maxRows: { type: "number" },
+          sectionRows: { type: "object", values: { type: "number" } },
+        },
+      },
+    },
+    values: stored("a registered module's own section: its export of the person's data"),
+  };
+})();
 
 export interface ExportModule {
   moduleName: string;
@@ -174,11 +243,9 @@ async function collectUserData(
   const sectionRows: Record<string, number> = {};
   try {
     await withTenantSnapshot(async (tx) => {
-      // Who changed the account's standing is a moderator's id, not the user's data (M4).
-      const users = await rowsOf(
-        tx,
-        "select to_jsonb(u) - 'status_changed_by' as r from users u where u.id = $1::uuid and u.deleted_at is null"
-      );
+      // The account row's given columns, named (TASK-215, audit A-14: the whole row less one
+      // column gave the identity provider's subject and a parent's address) — PROFILE_COLUMNS.
+      const users = await rowsOf(tx, PROFILE_EXPORT_SQL);
       if (users.length === 1) exportData.profile = users[0];
       else errors.push("users: no live user row");
       const tables = await exportUserTables(tx, userId, {

@@ -45,6 +45,7 @@ import {
   permissionOrderSql,
   roleOrderSql,
 } from "@/platform/auth/catalog-order";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const PROMPT_BODY_SCHEMA: InputSchemaNode = {
@@ -172,6 +173,60 @@ async function planAccounts(
   return out;
 }
 
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    plan: {
+      type: "object",
+      properties: {
+        accounts: {
+          type: "object",
+          values: {
+            type: "object",
+            properties: {
+              email: {
+                type: ["null", "string"],
+              },
+              found: {
+                type: "boolean",
+              },
+            },
+          },
+        },
+        actions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              input: {
+                type: "object",
+                values: {
+                  type: ["boolean", "null", "number", "string", "array"],
+                  items: {
+                    type: ["boolean", "null", "number", "string"],
+                  },
+                },
+              },
+              tool: {
+                type: "string",
+              },
+            },
+          },
+        },
+        message: {
+          type: "string",
+        },
+        scopedOut: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+        },
+      },
+    },
+  },
+};
+
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const verified = await requireAdmin(request, "can_access_admin");
   if (verified.error) return verified.error;
@@ -273,4 +328,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     });
     return apiError("service.unavailable", { params: { service: "ai" }, request });
   }
-});
+}, POST_RESPONSE);

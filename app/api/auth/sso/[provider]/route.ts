@@ -29,6 +29,7 @@ import {
 } from "@/platform/auth/sso";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { type ResponseSchema, NOT_JSON } from "@/platform/errors/response-schema";
 
 function backToSignIn(request: NextRequest, code: ErrorCode): NextResponse {
   const url = new URL("/auth", request.nextUrl.origin);
@@ -37,6 +38,9 @@ function backToSignIn(request: NextRequest, code: ErrorCode): NextResponse {
   response.headers.set("Cache-Control", "no-store");
   return response;
 }
+
+/** A redirect to the identity provider's sign-in page. */
+const GET_RESPONSE: ResponseSchema = NOT_JSON;
 
 export const GET = tenantRoute(async function GET(
   request: NextRequest,
@@ -87,4 +91,4 @@ export const GET = tenantRoute(async function GET(
     maxAge: SSO_COOKIE_MAX_AGE_SECONDS,
   });
   return response;
-});
+}, GET_RESPONSE);

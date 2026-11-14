@@ -80,11 +80,26 @@ dbDescribe("platform/auth/audit (Postgres)", () => {
       actor_id: actor,
       target_id: target,
       details: { oldRole: "free", newRole: "admin", agent: "escalation-reaper" },
+    });
+    expect(typeof rows[0].created_at).toBe("string");
+    // TASK-215 (audit S3): the read names its columns — never the address or browser of whoever
+    // acted, nor anything a later migration adds.
+    expect(Object.keys(rows[0]).sort()).toEqual(
+      ["action", "actor_id", "created_at", "details", "id", "target_id"].sort()
+    );
+    const stored = await t.run(() =>
+      withTenantTx((tx) =>
+        tx.query<{ ip_address: string; user_agent: string; tenant_id: string }>(
+          "select host(ip_address) as ip_address, user_agent, tenant_id from audit_log where target_id = $1::uuid",
+          [target]
+        )
+      )
+    );
+    expect(stored.rows[0]).toEqual({
       ip_address: "10.0.0.7",
       user_agent: "jest",
       tenant_id: t.id,
     });
-    expect(typeof rows[0].created_at).toBe("string");
   });
 
   it("stores empty details and nulls for what was not given", async () => {
@@ -93,12 +108,16 @@ dbDescribe("platform/auth/audit (Postgres)", () => {
     const [row] = await t.run(() =>
       withTenantTx((tx) => auditRowsForUser(tx, target, 10))
     );
-    expect(row).toMatchObject({
-      actor_id: null,
-      details: {},
-      ip_address: null,
-      user_agent: null,
-    });
+    expect(row).toMatchObject({ actor_id: null, details: {} });
+    const stored = await t.run(() =>
+      withTenantTx((tx) =>
+        tx.query<{ ip_address: string | null; user_agent: string | null }>(
+          "select ip_address::text as ip_address, user_agent from audit_log where target_id = $1::uuid",
+          [target]
+        )
+      )
+    );
+    expect(stored.rows[0]).toEqual({ ip_address: null, user_agent: null });
   });
 
   it("refuses a placeholder id before writing", async () => {
@@ -238,8 +257,6 @@ dbDescribe("platform/auth/audit (Postgres)", () => {
         actorId: other,
         targetId: user,
         details: {},
-        ipAddress: undefined,
-        userAgent: undefined,
       });
     });
 

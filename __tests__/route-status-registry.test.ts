@@ -22,6 +22,8 @@ import { productionSources, read } from "./helpers/route-policy";
 
 /** `<file> status=<expression>` → why the status is not the registry's. */
 const BY_DESIGN: Readonly<Record<string, string>> = {
+  "platform/errors/response-schema.ts status=response.status":
+    "Re-issues a route's own answer with its undeclared fields removed (TASK-215, audit A-13): the status is the answer's own, which the route built — and this guard checked — where it built it.",
   "app/api/health/route.ts status=503":
     "The health report for monitors: 503 with the report when the instance is unhealthy, the status load balancers read (ADR-056 D4).",
   'app/api/health/route.ts status=report.status === "unhealthy" ? 503 : 200':

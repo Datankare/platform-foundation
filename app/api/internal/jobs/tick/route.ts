@@ -20,6 +20,7 @@ import { internalError } from "@/platform/errors";
 import { requireJobTick } from "@/platform/jobs/tick-auth";
 import { runDue } from "@/platform/jobs/runner";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The function's limit on Vercel, in seconds (a Pro plan allows up to 300). */
 export const maxDuration = 60;
@@ -36,14 +37,142 @@ async function tick(request: NextRequest): Promise<NextResponse> {
   }
 }
 
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    result: {
+      type: "object",
+      properties: {
+        claimed: {
+          type: "number",
+        },
+        continued: {
+          type: "number",
+        },
+        dead: {
+          type: "number",
+        },
+        durationMs: {
+          type: "number",
+        },
+        hung: {
+          type: "number",
+        },
+        lostLease: {
+          type: "number",
+        },
+        released: {
+          type: "number",
+        },
+        retried: {
+          type: "number",
+        },
+        scheduleErrors: {
+          type: "number",
+        },
+        scheduled: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              enqueued: {
+                type: "number",
+              },
+              kind: {
+                type: "string",
+              },
+            },
+          },
+        },
+        skipped: {
+          type: "number",
+        },
+        stoppedBy: {
+          type: "string",
+        },
+        succeeded: {
+          type: "number",
+        },
+        workerId: {
+          type: "string",
+        },
+      },
+    },
+  },
+};
+
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const refused = requireJobTick(request);
   if (refused) return refused;
   return tick(request);
-});
+}, GET_RESPONSE);
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    result: {
+      type: "object",
+      properties: {
+        claimed: {
+          type: "number",
+        },
+        continued: {
+          type: "number",
+        },
+        dead: {
+          type: "number",
+        },
+        durationMs: {
+          type: "number",
+        },
+        hung: {
+          type: "number",
+        },
+        lostLease: {
+          type: "number",
+        },
+        released: {
+          type: "number",
+        },
+        retried: {
+          type: "number",
+        },
+        scheduleErrors: {
+          type: "number",
+        },
+        scheduled: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              enqueued: {
+                type: "number",
+              },
+              kind: {
+                type: "string",
+              },
+            },
+          },
+        },
+        skipped: {
+          type: "number",
+        },
+        stoppedBy: {
+          type: "string",
+        },
+        succeeded: {
+          type: "number",
+        },
+        workerId: {
+          type: "string",
+        },
+      },
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const refused = requireJobTick(request);
   if (refused) return refused;
   return tick(request);
-});
+}, POST_RESPONSE);

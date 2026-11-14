@@ -38,6 +38,7 @@ import {
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { sameId } from "@/platform/auth/same-id";
+import { type ResponseSchema, SHOWN, stored } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const APPEAL_BODY_SCHEMA: InputSchemaNode = {
@@ -133,6 +134,61 @@ async function derivePreviousStatus(
  * gated on the account's standing: a restricted, suspended or banned account still sees its
  * decisions and appeals them (the decision under appeal is often why it is restricted).
  */
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    appealWindowHours: {
+      type: "number",
+    },
+    decisions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          appeal: {
+            type: ["null", "object"],
+            properties: {
+              decision: {
+                type: "string",
+              },
+              modifiedAction: {
+                type: "string",
+              },
+              resolvedAt: {
+                type: "string",
+              },
+              status: {
+                type: "string",
+              },
+              submittedAt: {
+                type: "string",
+              },
+            },
+          },
+          appealableUntil: {
+            type: "string",
+          },
+          contentType: {
+            type: "string",
+          },
+          decidedAt: {
+            type: "string",
+          },
+          id: {
+            type: "string",
+          },
+        },
+      },
+    },
+    maxReasonLength: {
+      type: "number",
+    },
+    minReasonLength: {
+      type: "number",
+    },
+  },
+};
+
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const limited = await enforceRateLimit(request, DEFAULT_RULES.API_GLOBAL);
   if (limited) return limited;
@@ -154,7 +210,82 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
       request,
     });
   }
-});
+}, GET_RESPONSE);
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    item: {
+      type: "object",
+      properties: {
+        appealReason: {
+          type: "string",
+        },
+        claimedAt: {
+          type: "string",
+        },
+        claimedBy: {
+          type: "string",
+        },
+        createdAt: {
+          type: "string",
+        },
+        decision: {
+          type: "string",
+        },
+        explanationChain: stored(
+          "a moderation decision's stored explanation chain: each phase and the platform's notes as catalogue keys"
+        ),
+        id: {
+          type: "string",
+        },
+        moderationResult: stored(
+          "a moderation decision's stored record (review_queue.moderation_result): its action, categories and the platform's notes as catalogue keys"
+        ),
+        modifiedAction: {
+          type: "string",
+        },
+        notesShown: SHOWN,
+        originalDecisionId: {
+          type: "string",
+        },
+        previousAccountStatus: {
+          type: "string",
+        },
+        priority: {
+          type: "string",
+        },
+        relatedStrikeId: {
+          type: "string",
+        },
+        requestId: {
+          type: "string",
+        },
+        resolvedAt: {
+          type: "string",
+        },
+        resolvedBy: {
+          type: "string",
+        },
+        reviewerNotes: {
+          type: "string",
+        },
+        source: {
+          type: "string",
+        },
+        status: {
+          type: "string",
+        },
+        targetUserId: {
+          type: "string",
+        },
+        updatedAt: {
+          type: "string",
+        },
+      },
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
@@ -238,4 +369,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     });
     return apiError("internal.error", { params: { requestId }, request });
   }
-});
+}, POST_RESPONSE);

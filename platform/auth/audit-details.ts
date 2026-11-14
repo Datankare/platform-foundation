@@ -153,6 +153,9 @@ export const PLATFORM_AUDIT_DETAIL_KINDS: Readonly<Record<string, DetailKind>> =
   // Jobs and the operator console.
   kind: "code",
   jobId: "id",
+  // An operator's decision on an external call of unknown outcome (TASK-215, audit B-12).
+  effectId: "id",
+  effectKey: "code",
   tenantId: "id",
   enqueued: "number",
   claimed: "number",
@@ -374,6 +377,14 @@ export const PLATFORM_AUDIT_DETAILS_SCHEMA: DetailsSchema = {
   ],
   "admin_action:job_replayed": ["jobId", "kind", "tenantId"],
   "admin_action:job_discarded": ["jobId", "kind", "tenantId"],
+  // An operator's decision on an external call whose outcome was unknown (TASK-215, audit B-12).
+  "admin_action:effect_resolved": [
+    "effectId",
+    "tenantId",
+    "operationId",
+    "effectKey",
+    "decision",
+  ],
   // The operator console (platform/tenancy/admin.ts recorded()).
   "admin_action:tenant_provisioned": ["tenantId", "slug", "hosts"],
   "admin_action:tenant_domain_added": ["tenantId", "host"],

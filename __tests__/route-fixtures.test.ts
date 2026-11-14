@@ -65,6 +65,12 @@ jest.mock("@/platform/auth/account-status-guard", () =>
 jest.mock("@/platform/rate-limit", () =>
   require("@/__tests__/helpers/test-identities").mockRateLimit()
 );
+// The operator's list of external calls of unknown outcome reads every tenant (owner connection):
+// none here (TASK-215; its own test is __tests__/db/effect-settlement.db.test.ts).
+jest.mock("@/platform/agents/effect-settlement", () => ({
+  ...jest.requireActual("@/platform/agents/effect-settlement"),
+  listUnresolvedEffects: jest.fn(async () => []),
+}));
 // The audit log beneath audited(): written, unless a producer makes it unavailable (TASK-207).
 const mockAudit: { down?: boolean } = {};
 jest.mock("@/platform/auth/audit", () => {
@@ -251,6 +257,7 @@ import { fakeData } from "@/__tests__/helpers/fake-data";
 import { identityWithRole } from "@/__tests__/helpers/test-identities";
 import { GET as sessionGET } from "@/app/api/admin/session/route";
 import { GET as usersGET } from "@/app/api/admin/users/route";
+import { POST as usersSearchPOST } from "@/app/api/admin/users/search/route";
 import { GET as rolesGET } from "@/app/api/admin/roles/route";
 import { GET as entitlementsGET } from "@/app/api/admin/entitlements/route";
 import { GET as auditGET } from "@/app/api/admin/audit/route";
@@ -788,9 +795,9 @@ const ADMIN_CONSOLE: Readonly<Record<string, () => Promise<RouteFixture>>> = {
     );
     return record(await tenantGET(req("/api/admin/tenant", "GET", "moderator")));
   },
-  "GET /api/admin/users — no accounts": async () => {
+  "POST /api/admin/users/search — no accounts": async () => {
     rows(() => []);
-    return record(await usersGET(req("/api/admin/users", "GET", "super_admin")));
+    return record(await listUsers("super_admin"));
   },
   "GET /api/admin/roles — the roles": async () => {
     rows((sql) =>
@@ -1017,9 +1024,16 @@ function dualControlledActions(actions: readonly string[]): void {
   );
 }
 
+/** The Users screen's read (TASK-215, A-17): a POST of the list's parameters, never a URL. */
 const listUsers = (caller: Parameters<Call>[0], query = "") =>
-  usersGET(
-    req(`/api/admin/users?sort=created&dir=desc&limit=25&offset=0${query}`, "GET", caller)
+  usersSearchPOST(
+    req("/api/admin/users/search", "POST", caller, {
+      sort: "created",
+      dir: "desc",
+      limit: 25,
+      offset: 0,
+      ...Object.fromEntries(new URLSearchParams(query.replace(/^&/, ""))),
+    })
   );
 const changeRole = (caller: Parameters<Call>[0], roleId: string = ROLE_ID.moderator) =>
   usersPATCH(req("/api/admin/users", "PATCH", caller, { userId: ANN.id, roleId }));
@@ -1045,27 +1059,28 @@ const MANY = [
 
 /** The Users screen (components/admin/UsersPanel.tsx). */
 const USERS_SCREEN: Readonly<Record<string, () => Promise<RouteFixture>>> = {
-  "GET /api/admin/users — Ann and a super admin who never signed in": async () => {
-    rows(usersTables([ANN, OLD_STAFF]));
-    return record(await listUsers("super_admin"));
-  },
-  "GET /api/admin/users — a page of 25, more to read": async () => {
+  "POST /api/admin/users/search — Ann and a super admin who never signed in":
+    async () => {
+      rows(usersTables([ANN, OLD_STAFF]));
+      return record(await listUsers("super_admin"));
+    },
+  "POST /api/admin/users/search — a page of 25, more to read": async () => {
     rows(usersTables(MANY));
     return record(await listUsers("super_admin"));
   },
-  "GET /api/admin/users — the next page": async () => {
+  "POST /api/admin/users/search — the next page": async () => {
     rows(usersTables([ANN]));
     return record(await listUsers("super_admin", "&offset=25"));
   },
-  "GET /api/admin/users — Ann alone": async () => {
+  "POST /api/admin/users/search — Ann alone": async () => {
     rows(usersTables([ANN]));
     return record(await listUsers("super_admin"));
   },
-  "GET /api/admin/users — Ann, now a moderator": async () => {
+  "POST /api/admin/users/search — Ann, now a moderator": async () => {
     rows(usersTables([userRow({ role_id: ROLE_ID.moderator })]));
     return record(await listUsers("super_admin"));
   },
-  "GET /api/admin/users — Ann suspended until 2 November": async () => {
+  "POST /api/admin/users/search — Ann suspended until 2 November": async () => {
     rows(
       usersTables([
         userRow({
@@ -1076,7 +1091,7 @@ const USERS_SCREEN: Readonly<Record<string, () => Promise<RouteFixture>>> = {
     );
     return record(await listUsers("super_admin"));
   },
-  "GET /api/admin/users — Ann with Beta access until 1 December": async () => {
+  "POST /api/admin/users/search — Ann with Beta access until 1 December": async () => {
     rows(
       usersTables(
         [ANN, OLD_STAFF],
@@ -1092,17 +1107,17 @@ const USERS_SCREEN: Readonly<Record<string, () => Promise<RouteFixture>>> = {
     );
     return record(await listUsers("super_admin"));
   },
-  "GET /api/admin/users — no account matches the search": async () => {
+  "POST /api/admin/users/search — no account matches the search": async () => {
     rows(usersTables([]));
     return record(await listUsers("super_admin", "&q=zed"));
   },
-  "GET /api/admin/users — the store failing": async () => {
+  "POST /api/admin/users/search — the store failing": async () => {
     rows(() => {
       throw new Error("users unavailable");
     });
     return record(await listUsers("super_admin"));
   },
-  ...guardRefusals("GET /api/admin/users", (c) => listUsers(c)),
+  ...guardRefusals("POST /api/admin/users/search", (c) => listUsers(c)),
   "PATCH /api/admin/users — changed": async () => {
     dualControlledActions([]);
     rows(usersTables([ANN, OLD_STAFF]));
@@ -2426,19 +2441,19 @@ const executeSearch = () =>
   );
 
 const ONE_LIST: Readonly<Record<string, () => Promise<RouteFixture>>> = {
-  "GET /api/admin/users — Ann and Mo, a moderator": async () => {
+  "POST /api/admin/users/search — Ann and Mo, a moderator": async () => {
     rows(usersTables([ANN_29, MO]));
     return record(await listUsers("super_admin"));
   },
-  "GET /api/admin/users — the moderators: Mo": async () => {
+  "POST /api/admin/users/search — the moderators: Mo": async () => {
     rows(usersTables([MO]));
     return record(await listUsers("super_admin", "&role=moderator"));
   },
-  "GET /api/admin/users — no banned account": async () => {
+  "POST /api/admin/users/search — no banned account": async () => {
     rows(usersTables([]));
     return record(await listUsers("super_admin", "&status=banned"));
   },
-  "GET /api/admin/users — Mo, the roles with QA Lead": async () => {
+  "POST /api/admin/users/search — Mo, the roles with QA Lead": async () => {
     const tables = usersTables([MO]);
     rows((sql, values) =>
       /^select id, name, display_name from roles order by/.test(sql)
@@ -2447,7 +2462,7 @@ const ONE_LIST: Readonly<Record<string, () => Promise<RouteFixture>>> = {
     );
     return record(await listUsers("super_admin", "&role=qa&status=active"));
   },
-  "GET /api/admin/users — a page of 25 free accounts, more to read": async () => {
+  "POST /api/admin/users/search — a page of 25 free accounts, more to read": async () => {
     rows(
       usersTables(
         Array.from({ length: 26 }, (_, i) =>
@@ -3339,11 +3354,15 @@ const PRODUCERS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
     return record(await erasuresGET(req("/api/operator/erasures", "GET", "super_admin")));
   },
   "POST /api/operator/tenants/[id]/erasures/[userId]/attestation — asked": async () => {
+    // A stuck step as recorded: the provider's own error text and the next retry beside its
+    // state. The answer gives the state and the retry, never that text (TASK-215, A-13).
     mockAttest.mockResolvedValueOnce({
       ok: true,
       value: {
         attempts: 4,
         poolUnverified: true,
+        error: "UserNotFoundException: user 0f0fc9b2 not found in pool eu-west-1_old",
+        retryAt: "2026-01-02T00:00:00.000Z",
         attestationRequest: {
           by: identityFor("super_admin").userId,
           at: "2026-01-01T00:00:00.000Z",

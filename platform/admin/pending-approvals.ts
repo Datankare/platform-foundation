@@ -362,7 +362,8 @@ async function holdsNoOneMayDecide(
                                          lower(coalesce(x.email, ''))))
            ),
            ranked as (
-             select c.*, row_number() over (partition by c.hold_id order by c.id) as k,
+             select c.hold_id, c.id, c.cognito_sub, c.role_id,
+                    row_number() over (partition by c.hold_id order by c.id) as k,
                     count(*) over (partition by c.hold_id)::int as total
                from candidates c
            )

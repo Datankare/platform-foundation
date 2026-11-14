@@ -42,6 +42,8 @@ import {
   type TenantStatus,
 } from "./directory";
 import { sameId } from "@/platform/auth/same-id";
+import { tenantExportColumns } from "@/platform/auth/user-data";
+import { APP_TENANT_EXPORT } from "./app-tenant-export";
 import { OPERATOR_ACCESS, noApproverRefusal } from "@/platform/admin/eligible-approvers";
 
 /** The verified operator acting. */
@@ -748,11 +750,27 @@ export async function purgeDueTenants(
 
 // ── Export ────────────────────────────────────────────────────────────
 
+/** A tenant table no export register classifies: the export is refused, never guessed at. */
+export class UnclassifiedTenantTableError extends Error {
+  constructor(readonly table: string) {
+    super(
+      `tenant export: ${table} has no classified column (platform/auth/user-data.ts TENANT_EXPORT_COLUMNS)`
+    );
+    this.name = "UnclassifiedTenantTableError";
+  }
+}
+
 /**
  * Write every row a tenant owns to `write`, as newline-delimited JSON — one
  * `{ "table": …, "row": … }` per line — from one consistent snapshot, read through a cursor so a
  * large tenant is never held in memory. `write` may wait (a slow reader); the snapshot waits
  * with it. Returns the number of rows written.
+ *
+ * A row is its exported columns only, by name (TASK-215, audit A-7): the register
+ * TENANT_EXPORT_COLUMNS (platform/auth/user-data.ts) and an app's own (./app-tenant-export.ts) say which, and
+ * why the others are not — never a network address, a job's payload or lease, an erasure's kept
+ * hash or subject. A table none of whose columns is exported is not read; one no register
+ * classifies refuses the whole export (UnclassifiedTenantTableError) before any line is written.
  */
 export async function writeTenantExport(
   tenantId: string,
@@ -773,15 +791,23 @@ export async function writeTenantExport(
          from public.tenants t where t.id = $1::uuid`,
       [tenantId]
     );
-    await write(JSON.stringify({ export: head[0]?.header ?? null }) + "\n");
     const { rows: tables } = await tx.query<{ table_name: string }>(
       "select table_name from public.tenant_tables()"
     );
+    const columns = new Map<string, readonly string[]>();
+    for (const { table_name } of tables) {
+      const named = tenantExportColumns(table_name, APP_TENANT_EXPORT);
+      if (named === undefined) throw new UnclassifiedTenantTableError(table_name);
+      columns.set(table_name, named);
+    }
+    await write(JSON.stringify({ export: head[0]?.header ?? null }) + "\n");
     let count = 0;
     for (const { table_name } of tables) {
+      const named = columns.get(table_name) as readonly string[];
+      if (named.length === 0) continue;
       await tx.query(
-        "declare tenant_export no scroll cursor for select r from public.tenant_export_rows($1, $2::uuid) r",
-        [table_name, tenantId]
+        "declare tenant_export no scroll cursor for select r from public.tenant_export_rows($1, $2::uuid, $3::text[]) r",
+        [table_name, tenantId, named]
       );
       for (;;) {
         const { rows } = await tx.query<{ r: unknown }>("fetch 500 from tenant_export");

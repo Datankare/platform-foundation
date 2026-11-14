@@ -22,7 +22,11 @@ jest.mock("@/platform/auth/platform-config", () => ({ getConfigOrThrow: jest.fn(
 jest.mock("@/platform/agents", () => ({
   getApprovalPolicyStore: jest.fn(),
   listWorkflows: jest.fn(() => []),
-  buildCapabilities: jest.fn(() => ({ capabilities: [] })),
+  buildCapabilities: jest.fn(() => ({
+    goals: [],
+    providerSelections: { ai: "mock" },
+    notReported: [],
+  })),
 }));
 jest.mock("@/platform/providers/registry", () => ({
   getActiveProviders: jest.fn(() => ({
@@ -53,6 +57,8 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+// hostile:self n/a: these read-only pages target no account, the caller's or another's
+// hostile:id-spelling n/a: no route here reads an id from its path, query or body
 describe("GET /api/admin/agent-registry", () => {
   it("returns the trusted-agent list when authorized", async () => {
     mockConfig.mockResolvedValue([["a1", {}]]);
@@ -91,13 +97,13 @@ describe("GET /api/admin/agent-registry", () => {
     expect(res.status).toBe(200);
     expect((await res.json()).agents).toEqual([]);
   });
-  it("answers 503 when the registry cannot be read — never an empty list (review 13 P)", async () => {
+  it("[hostile:store-down] answers 503 when the registry cannot be read — never an empty list (review 13 P)", async () => {
     mockConfig.mockRejectedValue(new Error("config store down"));
     const res = await agentRegistryGET(req("/api/admin/agent-registry"));
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ code: "service.unavailable" });
   });
-  it("refuses a moderator, who lacks the page's permission", async () => {
+  it("[hostile:role] refuses a moderator, who lacks the page's permission", async () => {
     expect(
       (await agentRegistryGET(req("/api/admin/agent-registry", "moderator"))).status
     ).toBe(403);
@@ -123,7 +129,11 @@ describe("GET /api/admin/capabilities", () => {
   it("returns the built capabilities document", async () => {
     const res = await capabilitiesGET(req("/api/admin/capabilities"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ capabilities: [] });
+    expect(await res.json()).toEqual({
+      goals: [],
+      providerSelections: { ai: "mock" },
+      notReported: [],
+    });
   });
   it("refuses a moderator, who lacks the page's permission", async () => {
     expect(

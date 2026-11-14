@@ -45,7 +45,7 @@ export const RETENTION_REGISTER: Readonly<Record<string, RetentionEntry>> = {
   // ── Rules applied by a job ────────────────────────────────────────────────────────────────
   agent_trajectories: {
     kind: "rule",
-    rule: "finished trajectories deleted after agent.trajectory.retention_days; abandoned open ones ended first",
+    rule: "finished trajectories deleted after agent.trajectory.retention_days; abandoned open ones ended first; an app session's runs are deleted with their session (app_sessions' delete trigger, migration 073), and one left by a race with that delete by data.retention an hour on (deleteOrphanedSessionRuns)",
     by: "agents.trajectory-retention",
   },
   jobs: {
@@ -60,8 +60,8 @@ export const RETENTION_REGISTER: Readonly<Record<string, RetentionEntry>> = {
   },
   rate_limit_events: {
     kind: "rule",
-    rule: "a bucket's events older than its window deleted on every count",
-    by: "the database: rate_limit_hit (migrations 039, 049)",
+    rule: "every event older than retention.rate_limit_events_days deleted, in every tenant, whether or not its bucket is counted again (a bucket's events past its window are also deleted when that bucket is next counted: rate_limit_hit, migrations 039, 049)",
+    by: "data.retention",
   },
   audit_log: {
     kind: "rule",
@@ -90,7 +90,7 @@ export const RETENTION_REGISTER: Readonly<Record<string, RetentionEntry>> = {
   },
   effect_ledger: {
     kind: "rule",
-    rule: "resolved entries (confirmed, failed) deleted after retention.effect_ledger_days; pending and indeterminate ones kept until a person resolves them",
+    rule: "resolved entries (confirmed, failed) deleted after retention.effect_ledger_days; a pending one is settled indeterminate after effects.pending_timeout_minutes (platform/agents/effect-settlement.ts), and an indeterminate one waits for an operator to mark it confirmed or failed (the operator console's Jobs page), then is deleted as a resolved one",
     by: "data.retention",
   },
   guest_usage: {
@@ -105,7 +105,7 @@ export const RETENTION_REGISTER: Readonly<Record<string, RetentionEntry>> = {
   },
   app_sessions: {
     kind: "rule",
-    rule: "deleted retention.app_sessions_days after the session was last updated",
+    rule: "deleted retention.app_sessions_days after the session was last updated — its agent runs (agent_trajectories, subject_kind 'session') with it, by the table's delete trigger (migration 073)",
     by: "data.retention",
   },
   agent_budgets: {
@@ -192,6 +192,93 @@ export const RETENTION_REGISTER: Readonly<Record<string, RetentionEntry>> = {
     kind: "keep",
     why: "one row per prepaid provider (a running count, TASK-212): bounded, and no person's data",
   },
+};
+
+/**
+ * Every store outside the database's tables, and how long it keeps what it holds (TASK-215, the
+ * S4 sweep by store: B-13, B-14). The tables are RETENTION_REGISTER's; these are the rest — the
+ * platform's own stores, the browser, and the services a request's data is sent to (each keeps it
+ * under the owner's agreement with it, not the platform's). Held to the code by
+ * __tests__/retention-stores.test.ts: each cache backend bounds every entry, and every store the
+ * code can select or write (RETENTION_STORE_SOURCES) names its entry here.
+ */
+export const RETENTION_STORES: Readonly<Record<string, string>> = {
+  "shared cache (Valkey or Redis, platform/cache)":
+    "every entry expires: its TTL, or the store's default (CACHE_DEFAULT_TTL, an hour), never more than seven days — a missing or zero TTL was kept for good (platform/cache/ttl.ts)",
+  "AI answers (platform/cache/ai-cache.ts)":
+    "entries in the shared cache under a hash of the request: an hour by default (a use case's own TTL), never more than seven days",
+  "in-memory cache (one instance)":
+    "the same bounds as the shared cache, and at most its entry limit; gone when the instance stops",
+  "permission and configuration caches (one instance)":
+    "each entry until its TTL (or an invalidation stamp), and gone when the instance stops",
+  "rate limiter (Valkey, Redis or memory)":
+    "a bucket's key expires with its window (EXPIRE window seconds; the memory limiter sweeps expired windows); the database limiter's rows are rate_limit_events'",
+  "Realtime channels (Supabase Realtime)":
+    "nothing stored: messages are relayed, not kept",
+  "the database's tables":
+    "each table's rule or reason in RETENTION_REGISTER (an app's in its manifest's retention); a memory store, for local and CI runs only, keeps nothing past its instance",
+  "the browser":
+    "httpOnly cookies no script can read: the session's id (__Host-pf_session; its tokens are sealed on the server, auth_sessions — ADR-057) until the session's end or sign-out, an SSO attempt's state for ten minutes, and a restricted account's marker for thirty days. The forgery-check token is held in the page's memory only. Nothing is kept in localStorage, sessionStorage or a script-readable cookie: what a page before ADR-057 kept there (pf_access_token, pf_refresh_token, pf_user) is deleted on its first load, and the legacy cookies are cleared. Playform's translate session id is held in the page's memory only",
+  "identity provider (Amazon Cognito)":
+    "an account's identity while the account exists; deleted from the pool when the account is erased (user_deletions.external_erasures, TASK-193)",
+  "AI model provider (Anthropic)":
+    "what a request sends (a prompt, a text to screen) is the provider's to keep under the owner's agreement with it; the platform keeps what its tables record (RETENTION_REGISTER) and the AI-answer cache above",
+  "embeddings provider (OpenAI)":
+    "a document's text sent to be embedded is the provider's to keep under the owner's agreement with it; the vectors are document_embeddings'",
+  "translation and speech providers (Google Cloud)":
+    "a text to translate or speak, or a recording to transcribe, is sent per request and is the provider's to keep under the owner's agreement with it; the platform keeps none of it outside its tables",
+  "song identification (ACRCloud)":
+    "a recording's sample is sent per request and is the provider's to keep under the owner's agreement with it; no recording is stored (an app's identify route holds it for the request only); the billed requests are counted (provider_usage)",
+  "audio conversion service (AUDIO_CONVERTER_URL)":
+    "a recording is sent per request to the deployment's conversion service, which answers with the converted audio; what that service keeps is set where it is deployed",
+  "logs and error reports (the deployment's log drain and Sentry)":
+    "kept by the provider for its configured period (the owner sets it: docs/APP_ENV_REFERENCE.md); what reaches them is redacted (lib/logger.ts, lib/log-fields.ts)",
+};
+
+/**
+ * Where each store comes from in the code, and its entry in RETENTION_STORES (TASK-215, B-13,
+ * B-14): every setting that selects a provider or a store (a `*_PROVIDER`, `*_STORE`, `*_LEDGER`,
+ * `*_REPORTER` or `*_CONVERTER` setting, or a module slot's `envVar`), and every file that writes
+ * the browser's storage or sets a cookie. __tests__/retention-stores.test.ts finds them in the code and fails on one
+ * named here by none — a new store has no retention until it is stated. An app names its own in
+ * its manifest's `retentionStores` (platform/modules/app-manifest.json).
+ */
+export const RETENTION_STORE_SOURCES: Readonly<Record<string, string>> = {
+  AUTH_PROVIDER: "identity provider (Amazon Cognito)",
+  NEXT_PUBLIC_AUTH_PROVIDER: "identity provider (Amazon Cognito)",
+  CACHE_PROVIDER: "shared cache (Valkey or Redis, platform/cache)",
+  AI_PROVIDER: "AI model provider (Anthropic)",
+  ERROR_REPORTER: "logs and error reports (the deployment's log drain and Sentry)",
+  REALTIME_PROVIDER: "Realtime channels (Supabase Realtime)",
+  EMBEDDING_PROVIDER: "embeddings provider (OpenAI)",
+  TRANSLATION_PROVIDER: "translation and speech providers (Google Cloud)",
+  TTS_PROVIDER: "translation and speech providers (Google Cloud)",
+  STT_PROVIDER: "translation and speech providers (Google Cloud)",
+  SONG_ID_PROVIDER: "song identification (ACRCloud)",
+  AUDIO_CONVERTER: "audio conversion service (AUDIO_CONVERTER_URL)",
+  RATE_LIMIT_STORE: "rate limiter (Valkey, Redis or memory)",
+  MODERATION_STORE: "the database's tables",
+  STRIKE_STORE: "the database's tables",
+  REVIEW_QUEUE_STORE: "the database's tables",
+  APP_STATE_STORE: "the database's tables",
+  TRAJECTORY_STORE: "the database's tables",
+  BUDGET_STORE: "the database's tables",
+  PROPOSAL_STORE: "the database's tables",
+  EFFECT_LEDGER: "the database's tables",
+  APPROVAL_POLICY_STORE: "the database's tables",
+  GUEST_USAGE_STORE: "the database's tables",
+  JOB_STORE: "the database's tables",
+  TENANT_DIRECTORY_STORE: "the database's tables",
+  SOCIAL_STORE: "the database's tables",
+  // What a page keeps in the browser: the cookies the server sets, and the one file that touches
+  // the page's storage (only to delete what a page before ADR-057 kept there).
+  "platform/auth/legacy-session-cleanup.ts": "the browser",
+  "platform/auth/session.ts": "the browser",
+  "platform/auth/auth-response.ts": "the browser",
+  "platform/auth/restricted-marker.ts": "the browser",
+  "platform/auth/mfa-routes.ts": "the browser",
+  "app/api/auth/sso/[provider]/route.ts": "the browser",
+  "app/api/auth/sso/callback/route.ts": "the browser",
 };
 
 /** One rule the data.retention job applies. */
@@ -310,6 +397,18 @@ export const RETENTION_RULES: readonly RetentionRule[] = [
                            where coalesce(updated_at, created_at) < $1 limit $2)`,
   },
   {
+    // TASK-215: a bucket's old events were deleted only when that bucket was counted again (and by
+    // a 1-in-100 sweep of the current tenant on some later count), so a one-time visitor's address
+    // could stay indefinitely in a quiet tenant. Now every tenant's, on a schedule.
+    table: "rate_limit_events",
+    setting: "retention.rate_limit_events_days",
+    defaultDays: 1,
+    minDays: 1,
+    maxDays: 30,
+    sql: `delete from rate_limit_events
+           where ctid in (select ctid from rate_limit_events where at < $1 limit $2)`,
+  },
+  {
     table: "agent_budgets",
     setting: "retention.agent_budgets_days",
     defaultDays: 90,
@@ -340,6 +439,38 @@ export interface RetentionRun {
   readonly changed: Readonly<Record<string, number>>;
   /** A rule changed a full batch, or the run stopped: there may be more. */
   readonly more: boolean;
+}
+
+/** How long a session's run may exist without its session before it is an orphan (a race's). */
+export const ORPHAN_SESSION_RUN_MINUTES = 60;
+
+/**
+ * In the current tenant: delete the runs of app sessions that no longer exist, opened over an hour
+ * ago (TASK-215, audit B-5). A session's runs go with it by app_sessions' delete trigger (073); a
+ * run opened by a request that still held a session while another deleted it commits after the
+ * trigger ran, and nothing else ends a session's run (the trajectory reaper leaves them to the
+ * session). A run is opened after its session is stored, so one an hour old with no session is such
+ * an orphan. At most `batch` rows; `more` when a full batch went.
+ *
+ * @scheduled data.retention
+ */
+export async function deleteOrphanedSessionRuns(
+  batch = RETENTION_BATCH
+): Promise<{ readonly deleted: number; readonly more: boolean }> {
+  const { rowCount } = await withTenantTx((tx) =>
+    tx.query(
+      `delete from agent_trajectories
+        where ctid in (select t.ctid from agent_trajectories t
+                        where t.subject_kind = 'session'
+                          and t.created_at < now() - make_interval(mins => $2::int)
+                          and not exists (select 1 from app_sessions s
+                                           where s.id = t.subject_id and s.tenant_id = t.tenant_id)
+                        limit $1)`,
+      [batch, ORPHAN_SESSION_RUN_MINUTES]
+    )
+  );
+  const deleted = rowCount ?? 0;
+  return { deleted, more: deleted >= batch };
 }
 
 /**

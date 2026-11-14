@@ -57,7 +57,7 @@ const sessionOf = (name: RouteFixtureName) =>
 
 /** Each panel's data route and the permission its route checks (the server's, unchanged). */
 const PANEL_ROUTES: Record<string, string> = {
-  "/api/admin/users": "admin_manage_users",
+  "/api/admin/users/search": "admin_manage_users",
   "/api/admin/roles": "admin_manage_roles",
   "/api/admin/entitlements": "admin_manage_entitlements",
   "/api/admin/audit": "admin_view_audit",
@@ -92,7 +92,7 @@ const json = (name: RouteFixtureName) => {
 const PANEL_ANSWERS: ReadonlyMap<string, RouteFixtureName> = new Map([
   ["/api/admin/approvals", "GET /api/admin/approvals — none held"],
   ["/api/admin/tenant", "GET /api/admin/tenant — to a moderator"],
-  ["/api/admin/users", "GET /api/admin/users — no accounts"],
+  ["/api/admin/users/search", "POST /api/admin/users/search — no accounts"],
   ["/api/admin/roles", "GET /api/admin/roles — the roles"],
   ["/api/moderation/review", "GET /api/moderation/review — one pending escalation"],
 ]);
@@ -195,7 +195,7 @@ describe("the console's first panel (TASK-184)", () => {
     );
     expect(screen.queryByText(/Try:/)).toBeNull();
     expect(requested()).not.toContain("/api/admin/roles");
-    expect(requested()).not.toContain("/api/admin/users");
+    expect(requested()).not.toContain("/api/admin/users/search");
     expect(panelReads()).toEqual(["/api/admin/approvals"]);
     await noRefusedRead();
     // Only the sections it may open are offered; the second one reads its own route.
@@ -238,9 +238,9 @@ describe("the console's first panel (TASK-184)", () => {
   it("the dev-bypass admin ('*') opens on the shell's first section, Users — read once, no 403", async () => {
     serve(admin("GET /api/admin/session — the development bypass"), ["*"]);
     render(<AdminPage />);
-    await waitFor(() => expect(panelReads()).toEqual(["/api/admin/users"]));
+    await waitFor(() => expect(panelReads()).toEqual(["/api/admin/users/search"]));
     await settle();
-    expect(panelReads()).toEqual(["/api/admin/users"]);
+    expect(panelReads()).toEqual(["/api/admin/users/search"]);
     expect(requested()).not.toContain("/api/admin/roles");
     await noRefusedRead();
   });

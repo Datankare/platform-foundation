@@ -42,6 +42,7 @@ export function productionDeployment(): void {
     GUEST_TOKEN_SECRET: "g".repeat(64),
     ERASURE_HASH_KEY: "e".repeat(64),
     SESSION_ENCRYPTION_KEY: "s".repeat(64),
+    RECORD_HASH_KEY: "h".repeat(64),
     CRON_SECRET: "c".repeat(64),
     // A deployment shares its cache (review 8 L3); nothing here reaches it.
     CACHE_PROVIDER: "upstash",

@@ -36,11 +36,30 @@ import { fakeData } from "./helpers/fake-data";
 import { findRole, findUser, LookupUnavailableError } from "@/platform/auth/role-lookup";
 import { handleChangeUserRole } from "@/app/api/admin/ai/handlers/roles";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
-import { GET as usersGET, PATCH as usersPATCH } from "@/app/api/admin/users/route";
+import { GET as usersListGET, PATCH as usersPATCH } from "@/app/api/admin/users/route";
+import { POST as usersSearchPOST } from "@/app/api/admin/users/search/route";
 import { GET as auditGET } from "@/app/api/admin/audit/route";
 import { GET as rolesGET } from "@/app/api/admin/roles/route";
 import { GET as perAccountGET } from "@/app/api/admin/per-account/route";
 import { GET as entGET, PATCH as entPATCH } from "@/app/api/admin/entitlements/route";
+
+/**
+ * TASK-215 (audit A-17): the Users list's search text travels in a POST body, never the URL — a
+ * list request whose URL carries `q` or `text` is sent as the screen sends it, to
+ * POST /api/admin/users/search with the parameters in its body; any other stays a GET.
+ */
+const usersGET = (request: NextRequest): Promise<Response> => {
+  const url = new URL(request.url);
+  if (!url.searchParams.has("q") && !url.searchParams.has("text"))
+    return usersListGET(request);
+  return usersSearchPOST(
+    new NextRequest(new URL("/api/admin/users/search", url), {
+      method: "POST",
+      headers: request.headers,
+      body: JSON.stringify(Object.fromEntries(url.searchParams)),
+    })
+  );
+};
 
 const USER = "00000000-0000-4000-8000-00000000b001";
 const ROLE_OPS = "00000000-0000-4000-8000-000000000001";

@@ -98,7 +98,7 @@ describe("classifyContent", () => {
     expect(result.categories).toContain("violence");
     expect(result.categories).toContain("hate");
     expect(result.severity).toBe("high");
-    expect(result.rawReason).toBe("graphic violence");
+    expect(JSON.stringify(result)).not.toContain("graphic violence");
   });
 
   it("passes correct tier and use case to orchestrator", async () => {
@@ -165,7 +165,7 @@ describe("checkSafety", () => {
     );
     const result = await checkSafety("bad text");
     expect(result.safe).toBe(false);
-    expect(result.rawReason).toBe("hate speech");
+    expect(JSON.stringify(result)).not.toContain("hate speech");
   });
 
   it("fails closed on error — returns safe:false", async () => {

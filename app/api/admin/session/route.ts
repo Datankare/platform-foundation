@@ -15,6 +15,33 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { syncAccountAddress } from "@/platform/auth/email-verification";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    permissions: {
+      type: "array",
+      items: {
+        type: ["array", "null", "number", "object", "string"],
+        properties: {
+          code: {
+            type: "string",
+          },
+        },
+        items: {
+          type: "string",
+        },
+      },
+    },
+    roleName: {
+      type: "string",
+    },
+    userId: {
+      type: "string",
+    },
+  },
+};
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const verified = await requireAdmin(request, "can_access_admin");
@@ -28,4 +55,4 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   });
   response.headers.set("Cache-Control", "no-store");
   return response;
-});
+}, GET_RESPONSE);

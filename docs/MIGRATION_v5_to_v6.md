@@ -682,6 +682,82 @@ select (select checksum from public.applied_migrations
          where module_name = 'platform') as erasure_covers;
 ```
 
+**Release candidate (TASK-215):** set `RECORD_HASH_KEY` first (below: boot refuses production
+with a real auth provider without it), deploy the code, then apply `071`, `072` and `073`, each on
+its own, after 070. The code and 071 go together: the
+code calls the new `tenant_export_rows(table, tenant, columns)`, and 071 drops the old form — an
+operator's tenant export between the two fails, so run none in between. 072 goes after the code: the
+code no longer writes the classifier model's words or an unkeyed hash, and 072 removes those written
+before (applied again later, it removes any written in between).
+
+```bash
+pbcopy < supabase/migrations/071_tenant_export_named_columns.sql
+```
+
+071 replaces the operator's tenant export function with one that reads only the named, classified
+columns of each table (audit A-7); no table changes. Then this answers one row: the checksum
+`node scripts/migration-checksum.mjs supabase/migrations/071_tenant_export_named_columns.sql`
+prints, `true`, `true` and `false`:
+
+```sql
+select (select checksum from public.applied_migrations
+         where filename = '071_tenant_export_named_columns.sql') as checksum,
+       to_regprocedure('public.tenant_export_rows(text, uuid)') is null as whole_row_form_gone,
+       to_regprocedure('public.tenant_export_rows(text, uuid, text[])') is not null as named_form_present,
+       has_function_privilege('app_tenant', 'public.tenant_export_rows(text, uuid, text[])', 'EXECUTE') as app_may_export;
+```
+
+```bash
+pbcopy < supabase/migrations/072_record_text_and_hashes.sql
+```
+
+072 removes the classifier model's own words from every moderation decision and review case
+(audit A-5), clears the unkeyed hashes of screened text (they cannot be rehashed without the text;
+nothing reads them) and an identity re-link's unkeyed subject hints, and lets
+`content_safety_audit.input_hash` be empty (audit A-6). Locks: content_safety_audit briefly, then one
+pass each over it, review_queue and audit_log; `lock_timeout` 5 s. Then this answers one row: the
+checksum the script prints, and `0` four times:
+
+```sql
+select (select checksum from public.applied_migrations
+         where filename = '072_record_text_and_hashes.sql') as checksum,
+       (select count(*) from public.content_safety_audit
+         where classifier_output ?| array['rawReason', 'reason']) as decisions_with_model_words,
+       (select count(*) from public.review_queue
+         where moderation_result -> 'classifierOutput' ?| array['rawReason', 'reason']) as cases_with_model_words,
+       (select count(*) from public.content_safety_audit
+         where input_hash is not null
+           and input_hash !~ '^hmac-sha256:[0-9a-f]{16}:[0-9a-f]{64}$') as unkeyed_hashes,
+       (select count(*) from public.audit_log
+         where details ->> 'type' = 'identity_relinked'
+           and (details ->> 'previousSubject' like 'sha256:%' or details ->> 'newSubject' like 'sha256:%'
+                or details ->> 'mergedAccount' like 'sha256:%')) as unkeyed_hints;
+```
+
+```bash
+pbcopy < supabase/migrations/073_retention_lifecycles.sql
+```
+
+073 seeds `retention.rate_limit_events_days` (1) and `effects.pending_timeout_minutes` (60),
+operator-only; adds the trigger that deletes an app session's agent runs with the session (audit B-5);
+and deletes, once, the runs of sessions already gone. Then this answers one row: the checksum the
+script prints, `2`, `1` and `0`:
+
+```sql
+select (select checksum from public.applied_migrations
+         where filename = '073_retention_lifecycles.sql') as checksum,
+       (select count(*) from public.platform_config
+         where key in ('retention.rate_limit_events_days', 'effects.pending_timeout_minutes')
+           and not tenant_overridable) as settings,
+       (select count(*) from pg_trigger
+         where tgname = 'app_sessions_end_trajectories'
+           and tgrelid = 'public.app_sessions'::regclass) as trigger_present,
+       (select count(*) from public.agent_trajectories t
+         where t.subject_kind = 'session'
+           and not exists (select 1 from public.app_sessions s
+                            where s.id = t.subject_id and s.tenant_id = t.tenant_id)) as orphaned_session_runs;
+```
+
 Every one is idempotent: one already applied (046 on a database on v5.1.x) changes nothing when
 run again. An app's own migrations go in between, by name (`052a_<app>_…` after 052 — §1b).
 
@@ -820,6 +896,8 @@ openssl rand -hex 32 | tr -d '\n' | pbcopy
 | `ERASURE_HASH_KEY_PREVIOUS`                          | optional                                                                   | optional                      | Rotation only (review 8 L6): move the old `ERASURE_HASH_KEY` here and set a new one; bans the old key hashed still match and are rehashed under the new key when they match. Keep it while an erased ban under the old key may still be needed                                                                                                                                                |
 | `SESSION_ENCRYPTION_KEY`                             | **Required** — its own secret                                              | **Required** — its own secret | Boot refuses production with a real auth provider without it (ADR-057 D2, TASK-214): the identity provider's tokens are encrypted with it before a sign-in session is stored. `openssl rand -hex 32`, one per environment, the same on every instance, never shared between environments                                                                                                      |
 | `SESSION_ENCRYPTION_KEY_PREVIOUS`                    | optional                                                                   | optional                      | Rotation only: move the old `SESSION_ENCRYPTION_KEY` here and set a new one; sessions the old key sealed still open. Remove it 30 days later (the longest session lifetime)                                                                                                                                                                                                                   |
+| `RECORD_HASH_KEY`                                    | **Required** — its own secret                                              | **Required** — its own secret | Boot refuses production with a real auth provider without it (TASK-215, audit A-6): a moderation decision keeps the screened text, and a re-link record an identity's subject, as an HMAC under it, with the key's id. `openssl rand -hex 32`. Set it before deploying; migration 072 clears the unkeyed hashes written before                                                                |
+| `RECORD_HASH_KEY_PREVIOUS`                           | optional                                                                   | optional                      | Rotation only (TASK-215): move the old `RECORD_HASH_KEY` here and set a new one; hashes the old key made still match. Remove it when nothing hashed under the old key needs matching (ROTATION_RUNBOOK, "Record-hash key")                                                                                                                                                                    |
 | `REFRESH_COOKIE_KEY`                                 | keep through the ADR-057 deploy, then remove                               | same                          | No longer required (ADR-057 D9): it only verifies the refresh cookie browsers held before the deploy, to move them onto a server-side session without a new sign-in. Remove it 30 days after that deploy. A deployment that never ran an earlier release does not set it                                                                                                                      |
 | `REFRESH_COOKIE_KEY_PREVIOUS`                        | optional                                                                   | optional                      | Only if a rotation was under way at the ADR-057 deploy; remove it with `REFRESH_COOKIE_KEY`                                                                                                                                                                                                                                                                                                   |
 | `PROVENANCE_SIGNING_KEY_PREVIOUS`                    | optional                                                                   | optional                      | Rotation only: the previous provenance key, so what it signed still verifies (review 7 L6)                                                                                                                                                                                                                                                                                                    |
@@ -915,6 +993,7 @@ in Vercel and redeploy — never by turning a check off.
 | **Release candidate — external dependency failures (TASK-197).** Migration 063 (§1 step 2). **(a) Readiness:** `instrumentation.ts` builds its probes with `buildReadinessProbes()` (`@/platform/providers/readiness-probes`) and passes its `required` and `degradedOnly` to `initObservability` — the AI provider, Google, an Upstash rate-limit store and the CA bundles are probed with the deployed credentials (optional: degraded). **(b) Coverage:** a module slot of your own declares `coverage` for each value (a probe name, `{ exempt }` with a reason, or `"local"`). **(c) Errors:** an external call that fails throws `externalFailure(service, reason, …)` (`@/platform/observability/external-failure`); `internalError` answers it `service.unavailable`. **(d) Credentials:** keep your own `docs/credential-register.json` (sync-exclude it) and run `scripts/check-credential-expiry.mjs` weekly; set `SMOKE_HEALTHY_PROBES` in your deploy smoke.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Without (a) the new probes are not registered; without (c) a refused key is a 500 with no alert                                                                                                                                                                                                                                                                                        |
 | **Release candidate — erasure, retention and dual-control readiness (TASK-203).** Migration 064 (§1 step 2). **(a) Bodies:** read every JSON body with `readJsonBody(request, SCHEMA)` (`body-schema-baseline.json` is at zero; the guard fails on any other read); a key your server sets goes in `notAccepted` (a path, at any depth). **(b) Retention:** declare every table of your own in `platform/modules/app-manifest.json` `"retention"` (`{ "<table>": "<its rule, or why it is kept>" }`) — `retention-coverage` fails on one missing. **(c) Your auth provider:** implement the optional `checkErasureAccess()` and `checkClientSecret()` for readiness (`platform/auth/admin-key-readiness.ts` has the shared parts). **(d) Approvals:** a held action of your own calls `noApproverRefusal` before it holds, and your readiness route passes your held actions to `checkTenancyReadiness({ heldActions })`. **(e) Purge handlers:** `CachePurgeHandler`, `RateLimitPurgeHandler`, the AI handlers and `aiCache.clearAll`/`purgeUserData` are removed; a pipeline result can be `indeterminate`. **(f) Styles:** the policy allows no inline style without the response's nonce (SEC-017): render no `style` attribute — set a computed value on the element's style object from script — and keep the `no-inline-style-attributes` guard green. **(g) Dependencies:** take the overrides (glob, minimatch, qs, `deepmerge` → `vendor/deepmerge`, with `.prettierignore` and eslint's `vendor/**`) into your own `package.json` and register them in your override register; `npm audit` then finds 0.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Without (a) CI fails; without (b) the retention test fails; without (d) a request no one could approve is held to lapse                                                                                                                                                                                                                                                                |
 | **Release candidate — server-side sessions (TASK-214, ADR-057).** Migration 070 (§1 step 2), **applied before the deploy**. **(a) Settings:** set `SESSION_ENCRYPTION_KEY` (`openssl rand -hex 32`, its own per environment; §1 step 3) — production boot refuses a real auth provider without it; keep `REFRESH_COOKIE_KEY` for 30 days, then remove it. **(b) The IAM key** gains `AdminUserGlobalSignOut` and `AdminSetUserMFAPreference` ([TENANCY_OPERATIONS](TENANCY_OPERATIONS.md) §3.3, with its policy-simulator check); until then sign-in works and operator readiness reports `sessions` not ready. **(c) Your client code:** no token exists in the browser — remove every read of `pf_access_token` and every `Authorization: Bearer` header on a call to your own API; call it with `apiFetch` (`@/platform/auth/api-fetch`), which sends the session cookie and, on a state-changing request, the session's `x-csrf-token`. `useAuth()` gives `session` (who, not a token), `signOut`, `signOutEverywhere`. `__tests__/no-client-tokens.test.ts` fails on a credential in storage, a script-readable cookie or a response body; what your app legitimately keeps is declared in your own `client-credential-register.json` (sync-exclude it). **(d) Your routes:** `requireAuth`/`requireActor` no longer return `accessToken` and never read a bearer — a route that authenticated a machine by a user's bearer token must take the machine's own credential and be listed in the register's `bearerReaders` (`__tests__/user-route-credentials.test.ts`). **(e) Your auth provider** implements `renewSession(refreshToken, subject)` (refused / unavailable / renewed), `signOutEverywhere(userId)`, `disableMfa(userId)` and `confirmCurrentFactor(userId, …)` by the user's id, not a token, and returns `userId` from `confirmForgotPassword`; optional `checkSessionAccess()` for readiness. The contract kit (`__tests__/contract/auth-provider-contract.ts`) checks them. **(f) Your tests** sign a caller in with `__tests__/helpers/session.ts` (`startTestSession`, `sessionHeadersFor`); E2E with `e2e/helpers/session.ts`. **(g) Users signed in before the deploy** are moved onto a session at their next page load (their refresh cookie is exchanged once); nothing to do. **(h) Your layout** mounts `<SessionIdleWarning />` inside the auth provider (staff are warned before an idle sign-out).                                                                                                                                                                          |
+| **Release candidate — data minimisation and retention (TASK-215).** Migrations 071–073 (§1 step 2), **after 070 and after the deploy**. **(a) Setting:** set `RECORD_HASH_KEY` (`openssl rand -hex 32`, its own per environment; §1 step 3) with `SESSION_ENCRYPTION_KEY`, before the deploy — production boot refuses a real auth provider without it. **(b) Your routes declare what they answer:** `tenantRoute(handler, SCHEMA)` (`@/platform/errors/response-schema`); an undeclared field fails outside production and is removed and logged in production; `response-schema-baseline.json` starts at your count and only shrinks. **(c) Your tables in a tenant export:** classify every column in `platform/tenancy/app-tenant-export.ts` (a consumer seam) — an unclassified table refuses the export. **(d) Your log fields:** classify each field name your code logs in `platform/observability/app-log-fields.ts`. **(e) Your stores outside the tables:** a provider or store setting, or a file that writes the browser's storage or sets a cookie, states its retention in `platform/modules/app-manifest.json` `"retentionStores"`. **(f) URLs:** no text a person typed in a query string (`__tests__/url-parameters.test.ts`); send it in a POST body through `apiFetch`, which adds the forgery-check header.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 #### §1b example — `identityProviders` from GetUser's `identities` (TASK-176 trusted-address sync)
 
@@ -1085,3 +1164,9 @@ written **inside free text** — a note, a message, a moderator's comment quotin
 or replaced, in the erasure or in the export: free text is another person's writing (rewriting it
 would change what they wrote), and finding an address in prose means guessing — a near miss
 (`joann@` for `ann@`) is another person. Delete such a record itself when a request requires it.
+
+What the erased account itself wrote does not stay (TASK-215): its moderation decisions keep no
+hash of the screened text and no model words; its own moves in a session it shared with others keep
+their action and time, with their input and output emptied. A shared session's **state** is the
+participants' together and stays; an app that keeps a participant's words in its state erases them
+in its own deletion module.

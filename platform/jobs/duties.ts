@@ -18,7 +18,8 @@
  *   agents.trajectory-retention    each tenant*    abandoned open trajectories ended (TASK-193), then
  *                                                  finished ones past retention deleted
  *   data.retention                 each tenant*    every other table's retention rule applied
- *                                                  (./retention.ts RETENTION_RULES, TASK-203)
+ *                                                  (./retention.ts RETENTION_RULES, TASK-203);
+ *                                                  stale pending effects settled (TASK-215)
  *   config.expire-approvals        platform        stale configuration approvals expired (TASK-036)
  *   tenancy.purge-due              platform        deleted tenants past their purge time purged
  *   jobs.prune                     platform        succeeded jobs past jobs.retention_days deleted
@@ -41,7 +42,8 @@
 
 import { expireStaleApprovals } from "@/platform/admin/config-approval";
 import { applyTrajectoryRetention } from "@/platform/agents/trajectory-retention";
-import { applyRetention } from "./retention";
+import { applyRetention, deleteOrphanedSessionRuns } from "./retention";
+import { settleStaleEffects } from "@/platform/agents/effect-settlement";
 import { expireLapsedAccountStatuses } from "@/platform/auth/account-status-guard";
 import {
   eraseMentionsInOtherTenants,
@@ -220,7 +222,7 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
   {
     kind: "data.retention",
     description:
-      "Applies every table's retention rule that no other duty applies: audit and consent records lose their IP address and user agent, and interactions, AI metrics, content-safety decisions, resolved effects, idle guests and sessions, and past budget counters are deleted after their governed age (retention.*).",
+      "Applies every table's retention rule that no other duty applies: audit and consent records lose their IP address and user agent, and interactions, AI metrics, content-safety decisions, resolved effects, idle guests and sessions (with their sessions' agent runs), past budget counters and rate-limit counters are deleted after their governed age (retention.*). External calls left pending past effects.pending_timeout_minutes are settled as of unknown outcome, and those waiting for an operator are alerted on.",
     runsForSuspended: true,
     schedule: {
       scope: "each-tenant",
@@ -230,11 +232,21 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
     },
     handler: async (ctx) => {
       const r = await applyRetention(ctx.signal);
+      // TASK-215 (audit B-12): an external call left pending ends as of unknown outcome, and one
+      // of unknown outcome waits for an operator — alerted while any does.
+      const effects = await settleStaleEffects();
+      // TASK-215 (audit B-5): a session's run that a race with its session's delete left behind.
+      const orphans = await deleteOrphanedSessionRuns();
       return {
-        summary: Object.fromEntries(
-          Object.entries(r.changed).map(([table, n]) => [table, n])
-        ),
-        ...more(r.more),
+        summary: {
+          ...Object.fromEntries(
+            Object.entries(r.changed).map(([table, n]) => [table, n])
+          ),
+          effectsSettled: effects.settled,
+          effectsWaiting: effects.waiting,
+          orphanedSessionRuns: orphans.deleted,
+        },
+        ...more(r.more || effects.more || orphans.more),
       };
     },
   },

@@ -16,12 +16,45 @@ import {
   enforceRateLimit,
 } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const PROCESS_BODY_SCHEMA: InputSchemaNode = {
   type: "object",
   properties: {
     text: { type: "string" },
+  },
+};
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    success: {
+      type: "boolean",
+    },
+    translations: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          audioBase64: {
+            type: "string",
+          },
+          flag: {
+            type: "string",
+          },
+          language: {
+            type: "string",
+          },
+          languageCode: {
+            type: "string",
+          },
+          text: {
+            type: "string",
+          },
+        },
+      },
+    },
   },
 };
 
@@ -118,7 +151,6 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
         requestId,
         decision: safety.decision,
         reasons: safety.reasons,
-        rawReason: safety.rawReason,
       });
       return refused;
     }
@@ -169,4 +201,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     });
     return apiError("internal.error", { params: { requestId }, request });
   }
-});
+}, POST_RESPONSE);

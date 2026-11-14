@@ -65,6 +65,8 @@ const OWNER_CALLERS: Readonly<Record<string, string>> = {
     "who could approve a dual-controlled action across the deployment (staffOfDeployment: the accounts holding platform_operate in every tenant, read-only), for the refusal up front and operator readiness (TASK-203, N-24)",
   "platform/admin/dual-control-readiness.ts":
     "operator readiness's dual-control check: every tenant's name and its staff, read-only, to name each tenant where an action has no eligible approver (GET /api/operator/readiness, platform_operate; TASK-203, N-24)",
+  "platform/agents/effect-settlement.ts":
+    "the operator console's external calls of unknown outcome across tenants, read-only, and an operator's decision on one, recorded first — behind GET /api/operator/jobs and POST /api/operator/jobs/effects/[id] (platform_operate; TASK-215, audit B-12)",
   "platform/jobs/postgres-store.ts":
     "the job runner: claiming, settling and scheduling every tenant's jobs; operators' cross-tenant job views (ADR-056 D2)",
 };

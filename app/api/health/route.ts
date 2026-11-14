@@ -45,6 +45,7 @@ import {
 } from "@/platform/observability/readiness";
 import { keepAliveForProbes } from "@/platform/observability/keep-probes-alive";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** Per-probe bound for this route (the registry's default). */
 const HEALTH_TIMEOUT_MS = 5_000;
@@ -56,6 +57,65 @@ const HEALTH_TIMEOUT_MS = 5_000;
  * app/api); ADR-056's Health paragraph lists the codes.
  */
 const DETAIL_NOTICE = "probe_detail_withheld";
+
+/** The report, healthy or not: an unhealthy one is the same body at 503. */
+const GET_BODY: ResponseSchema = {
+  type: "object",
+  properties: {
+    boot: {
+      type: "string",
+    },
+    checks: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          checkedAt: {
+            type: "string",
+          },
+          name: {
+            type: "string",
+          },
+          required: {
+            type: "boolean",
+          },
+          status: {
+            type: "string",
+          },
+        },
+      },
+    },
+    commit: {
+      type: "null",
+    },
+    detail: {
+      type: "string",
+    },
+    draining: {
+      type: "boolean",
+    },
+    probeCount: {
+      type: "number",
+    },
+    ready: {
+      type: "boolean",
+    },
+    requestId: {
+      type: "string",
+    },
+    status: {
+      type: "string",
+    },
+    timestamp: {
+      type: "string",
+    },
+    version: {
+      type: "string",
+    },
+  },
+};
+
+const GET_RESPONSE: ResponseSchema = { ...GET_BODY, onError: GET_BODY };
 
 export const GET = tenantRoute(async function GET() {
   const requestId = generateRequestId();
@@ -133,4 +193,4 @@ export const GET = tenantRoute(async function GET() {
     },
     { status: httpStatus, headers: { "cache-control": "no-store" } }
   );
-});
+}, GET_RESPONSE);

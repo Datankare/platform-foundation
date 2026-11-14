@@ -139,6 +139,10 @@
       "self_approval": "Another operator must approve a deletion you requested.",
       "suspended": "Access for this organisation is suspended. Contact your administrator.",
       "unknown_host": "This address is not set up. Check the address and try again."
+    },
+    "effects": {
+      "not_found": "That external call was not found.",
+      "not_indeterminate": "Only an external call whose outcome is unknown can be marked, and this one is not (another operator may have marked it)."
     }
   },
   "screens": {
@@ -591,7 +595,17 @@
         "lease_expired": "The worker running the last attempt stopped before it finished (its lease expired).",
         "uncoded": "A failure recorded before failures were coded.",
         "uncoded_show": "Show the stored text"
-      }
+      },
+      "effects_heading": "External calls with an unknown outcome",
+      "effects_intro": "Each called a service outside the platform, and the service neither confirmed nor denied it; nothing will call it again. Check each with the service, then mark what happened.",
+      "effects_none": "None: every external call's outcome is known.",
+      "col_call": "Call",
+      "col_since": "Since",
+      "took_effect": "Took effect",
+      "no_effect": "Did not take effect",
+      "took_effect_label": "Mark {key} as having taken effect",
+      "no_effect_label": "Mark {key} as not having taken effect",
+      "effect_confirm": "Mark {key} as: {outcome}? Check with the service first: this is recorded and cannot be undone."
     },
     "mfa": {
       "title": "Two-step verification is required",
@@ -1494,6 +1508,9 @@
         "enforcement_enabled": "Master switch for COPPA enforcement. When false, consent gate is bypassed (for development only)."
       },
       "default_language": "Default UI language code",
+      "effects": {
+        "pending_timeout_minutes": "Minutes an external call may stay pending before it is settled as of unknown outcome, for an operator to mark on the Jobs page."
+      },
       "guest": {
         "translate_allowance": "Translate requests a guest may make before signing in (one per request, whatever the number of target languages). Enforced before any paid call; at the limit the guest is asked to sign in. The platform clamps it to 1–10 whatever this row says."
       },
@@ -1621,6 +1638,7 @@
         "effect_ledger_days": "Days a resolved external effect (confirmed or failed) is kept in the effect ledger; pending and indeterminate ones stay until resolved (TASK-203).",
         "guest_usage_days": "Days a guest's usage count is kept after the guest was last seen (TASK-203).",
         "network_identifiers_days": "Days an IP address and user agent are kept on audit and consent records; the records themselves are kept (accountability), these two fields cleared (TASK-203).",
+        "rate_limit_events_days": "Days a counted request (a rate-limit event, which can name a network address) is kept, in every tenant, whether or not its counter is used again.",
         "user_interactions_days": "Days a user interaction (an input, its output, a rating) is kept before it is deleted (TASK-203)."
       },
       "signups_enabled": "When false, new registrations are blocked",

@@ -15,6 +15,25 @@ import {
 import { logger } from "@/lib/logger";
 import { apiError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    mappings: {
+      type: "array",
+      items: {
+        type: "array",
+        items: {
+          type: ["array", "string"],
+          items: {
+            type: "string",
+          },
+        },
+      },
+    },
+  },
+};
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_config");
@@ -36,4 +55,4 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     return apiError("service.unavailable", { params: { service: "config" }, request });
   }
   return NextResponse.json({ mappings: pairs });
-});
+}, GET_RESPONSE);

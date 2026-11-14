@@ -223,13 +223,15 @@ async function seed(t: TestTenant, user: string, other: string): Promise<void> {
     // Review 7 M4: the user, as a moderator, changed another account's standing.
     [`update users set status_changed_by = $1 where id = $2::uuid`, [user, other]],
     // An app session's runs (scope 'user', no scope id): the user's own session's, and the
-    // shared one's, naming the user in a step.
+    // shared one's, naming the user in a step — a move of the user's, with what they entered
+    // (sessionMoveText, TASK-215).
     [
       `insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, steps)
        values ('session-created', 'session', 's-own-' || $1::text, 'user',
                jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text)))),
               ('session-created', 'session', 's-shared-' || $1::text, 'user',
-               jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text)),
+               jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text),
+                                                    'input', jsonb_build_object('text', 'a move')),
                                  jsonb_build_object('actor', jsonb_build_object('actorId', $2::text))))`,
       [user, other],
     ],

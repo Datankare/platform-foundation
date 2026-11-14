@@ -27,12 +27,34 @@ import {
 import { suspendAllAgents } from "@/platform/admin/agent-kill-switch";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { logger } from "@/lib/logger";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const SUSPEND_BODY_SCHEMA: InputSchemaNode = {
   type: "object",
   properties: {
     reason: { type: "string" },
+  },
+};
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    republished: {
+      type: "boolean",
+    },
+    suspended: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
+    withdrawn: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
   },
 };
 
@@ -69,4 +91,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     }
     return internalError(error, { request, context: "Agent suspension failed" });
   }
-});
+}, POST_RESPONSE);

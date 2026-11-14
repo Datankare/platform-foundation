@@ -281,6 +281,7 @@ const realAuth = (): void => {
   process.env.GUEST_TOKEN_SECRET = "g".repeat(64);
   process.env.ERASURE_HASH_KEY = "e".repeat(64);
   process.env.SESSION_ENCRYPTION_KEY = "k".repeat(64);
+  process.env.RECORD_HASH_KEY = "h".repeat(64);
   process.env.CRON_SECRET = "c".repeat(64);
   // TASK-139: a deployment declares its cache — shared (review 8 L3: memory is refused there).
   process.env.CACHE_PROVIDER = "upstash";

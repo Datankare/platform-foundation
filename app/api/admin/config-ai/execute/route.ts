@@ -44,6 +44,13 @@ import { requiredPermissionForKey } from "@/platform/admin/pending-approvals";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { isOperator } from "@/platform/admin/config-scope";
 import { configToolTargetKey } from "@/platform/admin/hold-keys";
+import {
+  type ResponseSchema,
+  RUN_STEP,
+  SHOWN_PARAMS,
+  errorBodyWith,
+  TOOL_RESULT,
+} from "@/platform/errors/response-schema";
 
 // ---------------------------------------------------------------------------
 // Permission routing
@@ -134,6 +141,71 @@ function serverSetPaths(body: Readonly<Record<string, unknown>>): string[] {
     ? Object.keys(CONFIG_SERVER_SET_INPUTS[body.toolId] ?? {}).map((k) => `input.${k}`)
     : [];
 }
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    agentId: {
+      type: "string",
+    },
+    approval: {
+      type: "object",
+      properties: {
+        operationId: {
+          type: "string",
+        },
+        proposalId: {
+          type: "string",
+        },
+        requiredApprover: {
+          type: "string",
+        },
+      },
+    },
+    code: {
+      type: "string",
+    },
+    data: TOOL_RESULT,
+    durationMs: {
+      type: "number",
+    },
+    error: {
+      type: "string",
+    },
+    errorCode: {
+      type: "string",
+    },
+    errorParams: SHOWN_PARAMS,
+    held: {
+      type: "boolean",
+    },
+    message: {
+      type: "string",
+    },
+    params: SHOWN_PARAMS,
+    steps: {
+      type: "array",
+      items: RUN_STEP,
+    },
+    success: {
+      type: "boolean",
+    },
+    toolId: {
+      type: "string",
+    },
+    trajectoryId: {
+      type: "string",
+    },
+  },
+  onError: errorBodyWith({
+    toolId: { type: "string" },
+    data: TOOL_RESULT,
+    durationMs: { type: "number" },
+    trajectoryId: { type: "string" },
+    agentId: { type: "string" },
+    steps: { type: "array", items: RUN_STEP },
+  }),
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const requestId = generateRequestId();
@@ -346,4 +418,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     });
     return apiError("internal.error", { request });
   }
-});
+}, POST_RESPONSE);

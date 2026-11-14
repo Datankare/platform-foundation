@@ -22,6 +22,7 @@ import {
 import { setSchedule } from "@/platform/jobs/operator";
 import { jobsResponse } from "@/platform/jobs/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { type ResponseSchema, SETTING_VALUE } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const SCHEDULE_BODY_SCHEMA: InputSchemaNode = {
@@ -34,6 +35,28 @@ const SCHEDULE_BODY_SCHEMA: InputSchemaNode = {
 };
 
 type Params = { params: Promise<{ kind: string }> };
+
+const PATCH_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    approval: {
+      type: "null",
+    },
+    held: {
+      type: "boolean",
+    },
+    key: {
+      type: "string",
+    },
+    pending: {
+      type: "boolean",
+    },
+    success: {
+      type: "boolean",
+    },
+    value: SETTING_VALUE,
+  },
+};
 
 export const PATCH = tenantRoute(async function PATCH(
   request: NextRequest,
@@ -83,4 +106,4 @@ export const PATCH = tenantRoute(async function PATCH(
   } catch (error) {
     return internalError(error, { request, context: "Schedule change failed" });
   }
-});
+}, PATCH_RESPONSE);

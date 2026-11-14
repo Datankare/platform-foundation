@@ -14,7 +14,7 @@
  * A reason recorded before the keys, which migration 067 could not match to a template exactly,
  * stays as it was stored: shown as "a reason recorded before reasons were coded", its stored text
  * behind a disclosure (as a job's uncoded failure, TASK-207 N-108). The classifier model's own
- * words are kept apart, as `rawReason`, and no screen shows them.
+ * words are not kept (TASK-215, audit A-5: they can quote what the person wrote).
  *
  * The review assistant's prompt is model input, not screen text: it renders these in English at
  * that boundary (platform/moderation/review-assist.ts), as the prompt always read them.

@@ -26,6 +26,7 @@ import {
   roleOrderSql,
   type ListedPermission,
 } from "@/platform/auth/catalog-order";
+import { type ResponseSchema, SHOWN } from "@/platform/errors/response-schema";
 
 type RoleRow = {
   id: string;
@@ -42,6 +43,76 @@ type PermissionRow = { id: string; code: string; display_name: string; category:
 const ROLES_SQL = `select id, name, display_name, description, description_note, created_at,
                           updated_at
                      from roles order by ${roleOrderSql()}`;
+
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    availablePermissions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          category: {
+            type: "string",
+          },
+          code: {
+            type: "string",
+          },
+          displayName: {
+            type: "string",
+          },
+        },
+      },
+    },
+    roles: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          createdAt: {
+            type: "string",
+          },
+          description: {
+            type: ["null", "string"],
+          },
+          descriptionNote: SHOWN,
+          displayName: {
+            type: "string",
+          },
+          id: {
+            type: "string",
+          },
+          name: {
+            type: "string",
+          },
+          permissionCount: {
+            type: "number",
+          },
+          permissions: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                category: {
+                  type: "string",
+                },
+                code: {
+                  type: "string",
+                },
+                displayName: {
+                  type: "string",
+                },
+              },
+            },
+          },
+          updatedAt: {
+            type: "string",
+          },
+        },
+      },
+    },
+  },
+};
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_roles");
@@ -121,4 +192,4 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     // Every permission, named by the catalog, in the catalog's order (TASK-209, N-113).
     availablePermissions: [...permMap.values()],
   });
-});
+}, GET_RESPONSE);

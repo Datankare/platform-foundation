@@ -3,23 +3,23 @@
  *
  * ADR-016: Every moderation decision permanently logged.
  * Dual-write: structured logger + ModerationStore.
- * Privacy: input content is SHA-256 hashed — raw content never stored.
+ * Privacy: raw content is never stored — only a keyed hash of it (HMAC-SHA256 under
+ * RECORD_HASH_KEY, platform/auth/record-hash.ts; TASK-215, audit A-6: an unkeyed SHA-256 of a short
+ * text was confirmed by hashing a guess), which the account's erasure clears.
  * P11: Audit failures must never block the moderation pipeline.
  */
 
 import type { ModerationAuditRecord, ModerationResult } from "./types";
 import { getModerationStore } from "./store";
 import { logger } from "@/lib/logger";
+import { recordHash } from "@/platform/auth/record-hash";
 
 /**
- * Create a SHA-256 hash of the input text.
+ * The screened text as a decision keeps it: HMAC-SHA256 under RECORD_HASH_KEY (TASK-215, A-6) —
+ * `hmac-sha256:<key id>:<hex>`, never the text and never an unkeyed hash of it.
  */
 export async function hashInput(text: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(text);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return recordHash("screened-text", text);
 }
 
 /**

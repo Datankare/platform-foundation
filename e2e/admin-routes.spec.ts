@@ -159,7 +159,8 @@ test("1. every console section opens and reads its view (N-38, N-39)", async ({
     [/^Tenants/, "/api/operator/tenants"],
     [/^Jobs/, "/api/operator/jobs"],
     // Last: the console opens on Users, so it is read again only once another section was open.
-    [/^Users$/, "/api/admin/users"],
+    // The Users list is a POST of its parameters (TASK-215, A-17: no search text in a URL).
+    [/^Users$/, "/api/admin/users/search"],
   ];
   for (const [name, path] of sections) {
     let status = 0;
@@ -321,6 +322,29 @@ test("3. the jobs console: a schedule turned off and on, run now; an unknown dea
     { action: "replay" }
   );
   expect([dead.status, codeOf(dead)]).toEqual([404, "jobs.not_found"]);
+
+  // TASK-215 (audit B-12): an operator marks an external call of unknown outcome; an unknown one
+  // is not found, and the console's read lists the calls waiting.
+  expect(
+    Array.isArray((listed.body as { unresolvedEffects?: unknown }).unresolvedEffects)
+  ).toBe(true);
+  const effect = await apiFetch(
+    request,
+    ADMIN_A,
+    "POST",
+    "/api/operator/jobs/effects/00000000-0000-4000-8000-0000000000fe",
+    { outcome: "no_effect" }
+  );
+  expect([effect.status, codeOf(effect)]).toEqual([404, "effects.not_found"]);
+
+  // TASK-215 (audit A-17): the Users search goes in a body; a search text in the URL is refused.
+  const searched = await apiFetch(request, ADMIN_A, "POST", "/api/admin/users/search", {
+    q: "e2e",
+    limit: 5,
+  });
+  expect(searched.status).toBe(200);
+  const inUrl = await apiFetch(request, ADMIN_A, "GET", "/api/admin/users?q=e2e");
+  expect([inUrl.status, codeOf(inUrl)]).toEqual([400, "request.field_not_accepted"]);
 });
 
 test("4. the tenancy operator routes on a single-tenant deployment (N-39)", async ({

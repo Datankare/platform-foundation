@@ -38,6 +38,13 @@ import type { ConfigToolResult } from "@/platform/admin/types";
 import { generateId } from "@/platform/agents/utils";
 import { apiError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import {
+  type ResponseSchema,
+  RUN_STEP,
+  SHOWN,
+  SHOWN_PARAMS,
+  TOOL_RESULT,
+} from "@/platform/errors/response-schema";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -94,6 +101,74 @@ interface ConfigAIResponse {
 // ---------------------------------------------------------------------------
 // Route handler
 // ---------------------------------------------------------------------------
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    agentId: {
+      type: "string",
+    },
+    pendingConfirmation: {
+      type: "boolean",
+    },
+    response: SHOWN,
+    steps: {
+      type: "array",
+      items: RUN_STEP,
+    },
+    toolResults: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          approval: {
+            type: "object",
+            properties: {
+              operationId: {
+                type: "string",
+              },
+              proposalId: {
+                type: "string",
+              },
+              requiredApprover: {
+                type: "string",
+              },
+            },
+          },
+          data: TOOL_RESULT,
+          durationMs: {
+            type: "number",
+          },
+          error: {
+            type: "string",
+          },
+          errorCode: {
+            type: "string",
+          },
+          errorParams: SHOWN_PARAMS,
+          held: {
+            type: "boolean",
+          },
+          success: {
+            type: "boolean",
+          },
+          toolId: {
+            type: "string",
+          },
+        },
+      },
+    },
+    totalCost: {
+      type: "number",
+    },
+    totalLatencyMs: {
+      type: "number",
+    },
+    trajectoryId: {
+      type: "string",
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const requestId = generateRequestId();
@@ -191,7 +266,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     });
     return apiError("internal.error", { request });
   }
-});
+}, POST_RESPONSE);
 
 // ---------------------------------------------------------------------------
 // Helpers

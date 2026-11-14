@@ -20,7 +20,7 @@ describe("an optional field given as null", () => {
     const out = parseClassifierResponse(raw);
     expect(isJudgement(out)).toBe(true);
     expect(out).toMatchObject({ safe: true, categories: [], severity: "low" });
-    expect(out.rawReason ?? "").toBe("");
+    expect("rawReason" in out).toBe(false);
   });
 
   it("a null reason on an unsafe answer is a judgement too", () => {

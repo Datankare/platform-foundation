@@ -119,7 +119,8 @@ describe("safety.ts — fail-closed invariants", () => {
     } satisfies AIResponse);
     const result = await checkSafety("violent text");
     expect(result.safe).toBe(false);
-    expect(result.rawReason).toBe("violent content");
+    // TASK-215 (A-5): the model's words are not kept, so no route can log them.
+    expect(JSON.stringify(result)).not.toContain("violent content");
   });
 
   it("fails closed when orchestrator throws", async () => {

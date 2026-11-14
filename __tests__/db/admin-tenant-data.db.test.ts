@@ -67,7 +67,8 @@ import {
   handleUnblockUserFeature,
 } from "@/app/api/admin/ai/handlers/restrictions";
 import { handleSearch } from "@/app/api/admin/ai/handlers/search";
-import { GET as usersGET, PATCH as usersPATCH } from "@/app/api/admin/users/route";
+import { GET as usersListGET, PATCH as usersPATCH } from "@/app/api/admin/users/route";
+import { POST as usersSearchPOST } from "@/app/api/admin/users/search/route";
 import { GET as auditGET } from "@/app/api/admin/audit/route";
 import { GET as perAccountGET } from "@/app/api/admin/per-account/route";
 import { POST as gdprPOST } from "@/app/api/admin/gdpr/route";
@@ -95,6 +96,24 @@ import {
   type TestCatalog,
 } from "../helpers/db-admin";
 import type { TestIdentity } from "../helpers/test-identities";
+
+/**
+ * TASK-215 (audit A-17): the Users list's search text travels in a POST body, never the URL — a
+ * list request whose URL carries `q` or `text` is sent as the screen sends it, to
+ * POST /api/admin/users/search with the parameters in its body; any other stays a GET.
+ */
+const usersGET = (request: NextRequest): Promise<Response> => {
+  const url = new URL(request.url);
+  if (!url.searchParams.has("q") && !url.searchParams.has("text"))
+    return usersListGET(request);
+  return usersSearchPOST(
+    new NextRequest(new URL("/api/admin/users/search", url), {
+      method: "POST",
+      headers: request.headers,
+      body: JSON.stringify(Object.fromEntries(url.searchParams)),
+    })
+  );
+};
 
 const RUN = newRun();
 let a: TestTenant;
@@ -737,10 +756,19 @@ dbDescribe(`${SUITE} GET /api/admin/audit`, () => {
     expect(body.hasMore).toBe(true);
   });
 
+  it("returns nothing for an action no entry has, without an error", async () => {
+    expect(await entries("/api/admin/audit?q=nothing_like_an_action")).toEqual([]);
+  });
+
+  // TASK-215 (A-17): a URL carries an account id or part of an action's name, never text.
   it.each(["x,actor_id.neq.0", "nothing-like-an-action", "%", "' or 1=1 --"])(
-    "returns nothing for %p, without an error",
+    "refuses %p as no id and no action name (request.invalid_value)",
     async (term) => {
-      expect(await entries(`/api/admin/audit?q=${encodeURIComponent(term)}`)).toEqual([]);
+      const res = await auditGET(
+        req(`/api/admin/audit?q=${encodeURIComponent(term)}`, superAdmin, { tenant: t })
+      );
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("request.invalid_value");
     }
   );
 
@@ -1329,7 +1357,7 @@ dbDescribe(
 
 // ── TASK-185: the Users screen's list — status, sign-in, search, sort and paging bounds ─────────
 
-dbDescribe(`${SUITE} GET /api/admin/users — the Users screen (TASK-185)`, () => {
+dbDescribe(`${SUITE} POST /api/admin/users/search — the Users screen (TASK-185)`, () => {
   const list = async (path: string, caller: TestIdentity = superAdmin) => {
     const res = await usersGET(req(path, caller));
     return { status: res.status, body: await res.json() };

@@ -12,6 +12,27 @@ import { internalError } from "@/platform/errors";
 import { purgeDueTenants } from "@/platform/tenancy/admin";
 import { operatorOf, operatorResponse } from "@/platform/tenancy/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    result: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          rows: {
+            type: "number",
+          },
+          tenantId: {
+            type: "string",
+          },
+        },
+      },
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const guard = await requireAdmin(request, "platform_operate");
@@ -21,4 +42,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   } catch (error) {
     return internalError(error, { request, context: "Tenant purge failed" });
   }
-});
+}, POST_RESPONSE);

@@ -144,6 +144,30 @@ Requests = Requests with results + Requests with no results / 2" (docs.acrcloud.
 - **`ACRCLOUD_HOST` doesn't change** if staying in the same region. Don't update unnecessarily.
 - **ACRCloud has no self-service secret rotation.** Must delete and recreate the project to get new credentials.
 
+## Record-hash key — `RECORD_HASH_KEY` (TASK-215, audit A-6)
+
+The HMAC key of what a record keeps instead of a value: a moderation decision's screened text
+(`content_safety_audit.input_hash`) and an identity re-link's subjects. Per database (environments
+that share a database share it). It has no expiry; rotate it when it may have been exposed, or on
+the owner's schedule. Never print it; paste it only into the host's secret store.
+
+### Rotation Procedure
+
+1. Copy the current value to `RECORD_HASH_KEY_PREVIOUS` in every project that uses this database
+   (Vercel → the project → Settings → Environment Variables), without printing it.
+2. Generate a new key and set it as `RECORD_HASH_KEY` in the same projects, then redeploy each
+   (uncheck "Use existing Build Cache"):
+
+   ```bash
+   openssl rand -hex 32 | pbcopy
+   ```
+
+3. Check: `/api/health/ready` answers 200 (the environment contract refuses a deployment where the
+   two are the same value, or the current one is missing). A new decision's hash names the new key's
+   id (`hmac-sha256:<id>:…`); hashes made before still match through the previous key.
+4. Remove `RECORD_HASH_KEY_PREVIOUS` when nothing hashed under the old key needs matching any more
+   (nothing reads those hashes but a lookup by the same text): the old hashes then match nothing.
+
 ---
 
-_Last updated: October 20, 2026 (Playform sync token replaced; TASK-121)_
+_Last updated: November 13, 2026 (record-hash key added; TASK-215)_

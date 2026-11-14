@@ -15,7 +15,10 @@
 
 /** Time-to-live options for cache entries */
 export interface CacheTTLOptions {
-  /** TTL in seconds. Undefined = no expiry. */
+  /**
+   * TTL in seconds. Missing, not a number or not positive: the store's default; never more than
+   * seven days (platform/cache/ttl.ts — every entry expires, TASK-215).
+   */
   ttlSeconds?: number;
 }
 

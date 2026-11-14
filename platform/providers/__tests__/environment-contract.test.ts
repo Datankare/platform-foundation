@@ -45,6 +45,7 @@ function valid(extra: Record<string, string | undefined> = {}): EnvSource {
     SUPABASE_SECRET_KEY: SECRET_KEY,
     GUEST_TOKEN_SECRET: GUEST_SECRET,
     ERASURE_HASH_KEY: "e".repeat(64),
+    RECORD_HASH_KEY: "h".repeat(64),
     REFRESH_COOKIE_KEY: "r".repeat(64),
     SESSION_ENCRYPTION_KEY: "k".repeat(64),
     CRON_SECRET: "c".repeat(64),
@@ -570,6 +571,7 @@ describe("required settings", () => {
         GUEST_TOKEN_SECRET: GUEST_SECRET,
         ERASURE_HASH_KEY: "e".repeat(64),
         SESSION_ENCRYPTION_KEY: "k".repeat(64),
+        RECORD_HASH_KEY: "h".repeat(64),
         CRON_SECRET: "c".repeat(64),
         CACHE_PROVIDER: "upstash",
         UPSTASH_REDIS_REST_URL: "https://cache.example.upstash.io",
@@ -595,6 +597,25 @@ describe("required settings", () => {
         /^ERASURE_HASH_KEY has the wrong shape — expected at least 32 random characters/
       ),
     ]);
+  });
+
+  it("a real auth provider requires RECORD_HASH_KEY; its previous key never equal (TASK-215, A-6)", () => {
+    expect(checkEnvironmentContract(valid({ RECORD_HASH_KEY: undefined }))).toEqual([
+      "RECORD_HASH_KEY is required by AUTH_PROVIDER=cognito (the keyed hash of screened text and re-link subjects)",
+    ]);
+    expect(checkEnvironmentContract(valid({ RECORD_HASH_KEY: "short" }))).toEqual([
+      expect.stringMatching(
+        /^RECORD_HASH_KEY has the wrong shape — expected at least 32 random characters/
+      ),
+    ]);
+    expect(
+      checkEnvironmentContract(valid({ RECORD_HASH_KEY_PREVIOUS: "h".repeat(64) }))
+    ).toEqual([
+      "RECORD_HASH_KEY_PREVIOUS is the same as RECORD_HASH_KEY — set it to the key before the current one, or unset it",
+    ]);
+    expect(
+      checkEnvironmentContract(valid({ RECORD_HASH_KEY_PREVIOUS: "q".repeat(64) }))
+    ).toEqual([]);
   });
 
   it("a real auth provider requires SESSION_ENCRYPTION_KEY; its previous key only beside it, never equal (ADR-057 D2)", () => {

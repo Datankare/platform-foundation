@@ -57,7 +57,7 @@ const CLOSERS: Readonly<Record<string, string>> = {
   "platform/effects/route.ts#routeGovernedEffect":
     "the caller's trajectory (an adaptive or content run); its hold's decision or expiry ends the hold's",
   "platform/app-framework/session.ts#createSession":
-    "the app session: a session has no end state yet (audit B-5, batch S4 of the TASK-193 sweep); the reaper skips session trajectories",
+    "the app session: its runs are deleted with it (app_sessions' delete trigger, migration 073, TASK-215) — by data.retention after retention.app_sessions_days idle, an erasure, or its app; the reaper skips them meanwhile",
   "platform/action-pipeline/index.ts#proposeOnce":
     "the library itself: its caller names the closer (each caller is a site here)",
   "platform/action-pipeline/index.ts#reviseProposal":
@@ -67,7 +67,7 @@ const CLOSERS: Readonly<Record<string, string>> = {
   "platform/admin/hold-withdrawal.ts#oneByOne":
     "withdrawBatch, its only caller, settles every withdrawn hold's trajectory",
   "lib/translate-session.ts#openTranslateSession":
-    "Playform's app session (createSession): its trajectory is the session's (audit B-5, batch S4)",
+    "Playform's app session (createSession): its trajectory is deleted with the session (migration 073, TASK-215)",
 };
 
 /** Files that implement the stores: their own calls are the transitions, not decisions on them. */

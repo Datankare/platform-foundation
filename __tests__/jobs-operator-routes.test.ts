@@ -30,6 +30,14 @@ jest.mock("@/platform/auth/account-status-guard", () =>
 jest.mock("@/platform/rate-limit", () =>
   require("@/__tests__/helpers/test-identities").mockRateLimit()
 );
+// The operator's list of external calls of unknown outcome reads every tenant (owner connection):
+// none here (TASK-215; its own test is __tests__/db/effect-settlement.db.test.ts).
+jest.mock("@/platform/agents/effect-settlement", () => ({
+  ...jest.requireActual("@/platform/agents/effect-settlement"),
+  listUnresolvedEffects: jest.fn(async () => []),
+  resolveIndeterminateEffect: (...a: unknown[]) => mockResolve(...a),
+}));
+const mockResolve = jest.fn();
 const mockAudited = jest.fn();
 const mockAuditLog = jest.fn();
 jest.mock("@/platform/auth/audit", () => {
@@ -53,6 +61,7 @@ import { GET as view } from "@/app/api/operator/jobs/route";
 import { PATCH as patchSchedule } from "@/app/api/operator/jobs/schedules/[kind]/route";
 import { POST as runNowRoute } from "@/app/api/operator/jobs/schedules/[kind]/run/route";
 import { POST as deadAction } from "@/app/api/operator/jobs/dead/[id]/route";
+import { POST as effectAction } from "@/app/api/operator/jobs/effects/[id]/route";
 import {
   InMemoryJobStore,
   registerJob,
@@ -610,5 +619,51 @@ describe("the operator service, directly", () => {
     expect(mine.every((j: { tenantId: string }) => j.tenantId === A)).toBe(true);
     expect(mine).toHaveLength(1);
     expect(await ops.listTenantJobHistory()).toEqual([]);
+  });
+});
+
+// TASK-215 (audit B-12): an operator marks an external call of unknown outcome.
+describe("POST /api/operator/jobs/effects/[id]", () => {
+  const call = (caller: CallerName, body: unknown, id = "e1") =>
+    effectAction(req(`/api/operator/jobs/effects/${id}`, "POST", caller, body), {
+      params: Promise.resolve({ id }),
+    });
+  beforeEach(() => mockResolve.mockReset());
+
+  it("an operator's decision is passed on, and answered with the entry's new status", async () => {
+    mockResolve.mockResolvedValue({ ok: true, status: "confirmed" });
+    const res = await call("super_admin", { outcome: "took_effect" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: "e1", status: "confirmed" });
+    expect(mockResolve).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: expect.any(String) }),
+      "e1",
+      "took_effect"
+    );
+  });
+
+  it("refuses an administrator who is not an operator, and changes nothing", async () => {
+    const res = await call("admin", { outcome: "no_effect" });
+    expect(res.status).toBe(403);
+    expect(mockResolve).not.toHaveBeenCalled();
+  });
+
+  it("refuses an outcome that is neither, and any other key", async () => {
+    expect((await call("super_admin", { outcome: "maybe" })).status).toBe(400);
+    expect((await call("super_admin", { outcome: "no_effect", note: "x" })).status).toBe(
+      400
+    );
+    expect(mockResolve).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["effects.not_found", 404, "effects.not_found"],
+    ["effects.not_indeterminate", 409, "effects.not_indeterminate"],
+    ["audit.unavailable", 503, "service.unavailable"],
+  ])("answers %s as %i %s", async (code, status, answered) => {
+    mockResolve.mockResolvedValue({ ok: false, code });
+    const res = await call("super_admin", { outcome: "no_effect" });
+    expect(res.status).toBe(status);
+    expect((await res.json()).code).toBe(answered);
   });
 });

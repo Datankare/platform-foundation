@@ -15,10 +15,82 @@
 
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
-import { decideApproval } from "@/platform/admin/approval-decision";
+import { DECISION_REFUSAL, decideApproval } from "@/platform/admin/approval-decision";
 import { COMMAND_BAR_HOLDS } from "@/app/api/admin/ai/command-bar";
 import { inTargetTenant } from "@/platform/tenancy/operator-target";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { type ResponseSchema, SETTING_VALUE } from "@/platform/errors/response-schema";
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  onError: DECISION_REFUSAL,
+  properties: {
+    applied: {
+      type: "boolean",
+    },
+    decision: {
+      type: "string",
+    },
+    outcome: {
+      type: "string",
+    },
+    pendingApproval: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+        },
+        changeComment: {
+          type: "string",
+        },
+        configKey: {
+          type: "string",
+        },
+        createdAt: {
+          type: "string",
+        },
+        currentValue: SETTING_VALUE,
+        expiresAt: {
+          type: "string",
+        },
+        id: {
+          type: "string",
+        },
+        impactSummary: {
+          type: "null",
+        },
+        proposedValue: SETTING_VALUE,
+        requestedBy: {
+          type: "string",
+        },
+        reviewComment: {
+          type: "null",
+        },
+        reviewedAt: {
+          type: "null",
+        },
+        reviewedBy: {
+          type: "null",
+        },
+        scope: {
+          type: "string",
+        },
+        status: {
+          type: "string",
+        },
+      },
+    },
+    requestId: {
+      type: "string",
+    },
+    source: {
+      type: "string",
+    },
+    status: {
+      type: "string",
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(
   request: NextRequest,
@@ -30,4 +102,4 @@ export const POST = tenantRoute(async function POST(
   return inTargetTenant(id, request, () =>
     decideApproval(request, guard.admin, approvalId, [COMMAND_BAR_HOLDS])
   );
-});
+}, POST_RESPONSE);

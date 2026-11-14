@@ -23,6 +23,17 @@ import { revokeTokenVerification } from "@/platform/auth/token-verification";
 import { internalError } from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+/** Every session of the account ended: how many, and whether the provider ended its own. */
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    success: { type: "boolean" },
+    sessionsEnded: { type: "number" },
+    providerSignedOut: { type: "boolean" },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
@@ -60,4 +71,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   clearSessionCookies(response);
   response.headers.set("Cache-Control", "no-store");
   return response;
-});
+}, POST_RESPONSE);

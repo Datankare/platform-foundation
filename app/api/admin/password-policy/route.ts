@@ -17,12 +17,80 @@ import {
 } from "@/platform/auth/password-policy";
 import { apiError, internalError, readJsonBody } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+const GET_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    policy: {
+      type: "object",
+      properties: {
+        minLength: {
+          type: "number",
+        },
+        passwordHistoryCount: {
+          type: "number",
+        },
+        requireLowercase: {
+          type: "boolean",
+        },
+        requireNumber: {
+          type: "boolean",
+        },
+        requireSpecial: {
+          type: "boolean",
+        },
+        requireUppercase: {
+          type: "boolean",
+        },
+        rotationDays: {
+          type: "number",
+        },
+      },
+    },
+  },
+};
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_config");
   if (denied) return denied;
   return NextResponse.json({ policy: await getGlobalPasswordPolicy() });
-});
+}, GET_RESPONSE);
+
+const PUT_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    policy: {
+      type: "object",
+      properties: {
+        minLength: {
+          type: "number",
+        },
+        passwordHistoryCount: {
+          type: "number",
+        },
+        requireLowercase: {
+          type: "boolean",
+        },
+        requireNumber: {
+          type: "boolean",
+        },
+        requireSpecial: {
+          type: "boolean",
+        },
+        requireUppercase: {
+          type: "boolean",
+        },
+        rotationDays: {
+          type: "number",
+        },
+      },
+    },
+    success: {
+      type: "boolean",
+    },
+  },
+};
 
 export const PUT = tenantRoute(async function PUT(request: NextRequest) {
   const verified = await requireAdmin(request, "admin_manage_config");
@@ -74,4 +142,4 @@ export const PUT = tenantRoute(async function PUT(request: NextRequest) {
     },
     () => apiError("service.unavailable", { params: { service: "audit" }, request })
   );
-});
+}, PUT_RESPONSE);

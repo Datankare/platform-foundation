@@ -430,7 +430,9 @@ export async function resolveSession(
       logger.warn("State-changing request refused: forgery check failed", {
         route: request.nextUrl.pathname,
         origin,
-        token: request.headers.get(CSRF_HEADER) ? "wrong" : "absent",
+        // Whether the forgery-check header came, never its value (a field named `token` is
+        // redacted by name: TASK-215, lib/log-fields.ts).
+        csrfHeader: request.headers.get(CSRF_HEADER) ? "wrong" : "absent",
       });
       return { error: apiError("auth.csrf_failed", { request }), reason: "forgery" };
     }

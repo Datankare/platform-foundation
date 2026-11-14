@@ -10,6 +10,8 @@ import { endSubjectSessions } from "@/platform/auth/session-revocation";
 import { revokeTokenVerification } from "@/platform/auth/token-verification";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+import { authResultSchema } from "@/platform/auth/auth-response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const RESET_BODY_SCHEMA: InputSchemaNode = {
@@ -20,6 +22,8 @@ const RESET_BODY_SCHEMA: InputSchemaNode = {
     newPassword: { type: "string" },
   },
 };
+
+const POST_RESPONSE: ResponseSchema = authResultSchema();
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
@@ -53,4 +57,4 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     request,
     context: "Password reset failed",
   });
-});
+}, POST_RESPONSE);

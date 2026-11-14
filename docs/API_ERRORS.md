@@ -20,7 +20,7 @@ Every error the API returns has this body (ADR-051 D3):
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 - An app built on the platform adds its own codes, `app.<area>.<name>`, documented in [APP_API_ERRORS.md](APP_API_ERRORS.md).
 
-**110 codes** in 15 areas.
+**112 codes** in 16 areas.
 
 ## Account
 
@@ -117,6 +117,13 @@ Every error the API returns has this body (ADR-051 D3):
 | `content.held_for_review` | 422  | This is waiting for a moderator to review it before it can be used. Nothing more is needed from you. | —                         | Say it is waiting for a moderator. Offer no appeal: nothing was decided against the account.                                                         |
 | `content.rejected`        | 422  | This content does not meet our guidelines.                                                           | `category` (id, optional) | Ask for different input. The screening blocked it and recorded the decision against the account: link to the account page, where it can be appealed. |
 | `content.withheld`        | 422  | The result was withheld: it could not be cleared to show. Try again, or ask in a different way.      | —                         | Say the result was withheld; the user may try again or ask differently. Offer no appeal: the user's own content was not blocked.                     |
+
+## Effects
+
+| Code                        | HTTP | Message (en)                                                                                                             | Params | What the caller should do                                                                                                                                               |
+| --------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------ | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `effects.not_found`         | 404  | That external call was not found.                                                                                        | —      | Refresh the Jobs page; the external call named does not exist (it may have been resolved and then deleted by retention).                                                |
+| `effects.not_indeterminate` | 409  | Only an external call whose outcome is unknown can be marked, and this one is not (another operator may have marked it). | —      | Refresh the Jobs page: only an external call whose outcome is unknown can be marked, and this one is pending or already resolved (another operator may have marked it). |
 
 ## Optional features
 

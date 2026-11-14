@@ -203,10 +203,15 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     table: "content_safety_audit",
     action: "anonymise",
     columns: ["content_safety_audit.user_id"],
+    // TASK-215 (audit A-5, A-6): the record kept its screened text's hash — unkeyed until then,
+    // so a guess of what the person wrote could be confirmed against it after the erasure — and the
+    // classifier model's own words, which can quote that text. The account's decisions lose both:
+    // the hash is cleared and any model words left from before are removed.
     reason:
-      "the decision record keeps no content (a hash of it), and is kept unattributed for the safety statistics",
+      "the decision record is kept unattributed for the safety statistics; it keeps nothing of what the person wrote — the screened text's hash is cleared, and no model words",
     count: "select count(*)::int as n from content_safety_audit where user_id = $1",
-    erase: "update content_safety_audit set user_id = null where user_id = $1",
+    erase:
+      "update content_safety_audit set user_id = null, input_hash = null, classifier_output = classifier_output - 'rawReason' - 'reason' where user_id = $1",
     exportSql:
       "select to_jsonb(t) - '_k' as r, t._k::text as k from (select id, direction, content_type, action_taken, categories_flagged, severity, created_at, ctid as _k from content_safety_audit where (user_id = $1) and ctid > $3::tid order by ctid limit $2::int) t",
   },
@@ -402,6 +407,27 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     columns: [],
     count: `select count(*)::int as n from agent_trajectories a where jsonb_typeof(a.steps) = 'array' and a.steps::text ilike ${LIKE_ID} and exists (select 1 from jsonb_array_elements(a.steps) s(step) where jsonb_typeof(s.step->'input') = 'object' and jsonb_path_exists(s.step->'input', '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and (s.step->'input') ?| (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end))`,
     erase: `update agent_trajectories a set steps = (select coalesce(jsonb_agg(case when jsonb_typeof(s.step->'input') = 'object' and jsonb_path_exists(s.step->'input', '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and (s.step->'input') ?| (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end) then jsonb_set(s.step, '{input}', (s.step->'input') - (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end)) else s.step end order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n)) where jsonb_typeof(a.steps) = 'array' and a.steps::text ilike ${LIKE_ID} and exists (select 1 from jsonb_array_elements(a.steps) s(step) where jsonb_typeof(s.step->'input') = 'object' and jsonb_path_exists(s.step->'input', '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and (s.step->'input') ?| (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end))`,
+    exportReason: "the run's steps the user took are exported as trajectorySteps",
+  },
+  // TASK-215 (audit A-5: what an erased account wrote, wherever it survives). A session the user
+  // shared with others stands for them (sharedAppSessions), and so does its run; the user's own
+  // moves in it (steps whose actor is the user) kept what they entered and what it produced — only
+  // their id was replaced (trajectorySteps), so their words stayed, unattributed. Those moves now
+  // keep their action and time; their input and output are emptied ({}, the step's shape kept).
+  // This runs before trajectorySteps replaces the id the moves are found by. The session's state is
+  // the participants' together (an app that keeps a participant's words in it erases them in its
+  // deletion module).
+  {
+    name: "sessionMoveText",
+    table: "agent_trajectories",
+    action: "anonymise",
+    reason:
+      "a shared session's run stands for the others in it; what the user entered in their own moves, and what those moves produced, is removed",
+    columns: [],
+    count:
+      "select count(*)::int as n from agent_trajectories a where a.subject_kind = 'session' and jsonb_typeof(a.steps) = 'array' and a.steps @> jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text))) and exists (select 1 from jsonb_array_elements(a.steps) s(step) where s.step->'actor'->>'actorId' = $1::text and (coalesce(s.step->'input', '{}'::jsonb) <> '{}'::jsonb or coalesce(s.step->'output', '{}'::jsonb) <> '{}'::jsonb))",
+    erase:
+      "update agent_trajectories a set steps = (select coalesce(jsonb_agg(case when s.step->'actor'->>'actorId' = $1::text then s.step || jsonb_build_object('input', '{}'::jsonb, 'output', '{}'::jsonb) else s.step end order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n)) where a.subject_kind = 'session' and jsonb_typeof(a.steps) = 'array' and a.steps @> jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text))) and exists (select 1 from jsonb_array_elements(a.steps) s(step) where s.step->'actor'->>'actorId' = $1::text and (coalesce(s.step->'input', '{}'::jsonb) <> '{}'::jsonb or coalesce(s.step->'output', '{}'::jsonb) <> '{}'::jsonb))",
     exportReason: "the run's steps the user took are exported as trajectorySteps",
   },
   {
@@ -810,7 +836,6 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
       "ai_metrics.trace_id",
       "content_safety_audit.request_id",
       "content_safety_audit.trajectory_id",
-      "content_safety_audit.input_hash",
       "review_queue.request_id",
       "review_queue.original_decision_id",
       "review_queue.related_strike_id",
@@ -839,7 +864,9 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "proposals.session_id":
     "the session a held action was proposed in (an id the caller chose, not an account)",
   "content_safety_audit.classifier_output":
-    "the classifier's verdict (categories, scores) — never the screened text",
+    "the classifier's verdict as codes — its categories, severity and confidence, and the platform's note as a catalog key. Not the screened text, and no longer the model's own words about it (TASK-215, audit A-5: before, its `rawReason` could quote what the person wrote; migration 072 removed it from the rows written before, and the account's erasure removes any left)",
+  "content_safety_audit.input_hash":
+    "a keyed hash of the screened text (RECORD_HASH_KEY, TASK-215, audit A-6) — never an account; cleared on the erased account's own decisions (moderationDecisions), so no guess of what they wrote can be confirmed against it",
   "content_safety_audit.reasoning":
     "the Guardian's reasoning as recorded before its keys (TASK-209), built from fixed phrases and the thresholds — never the screened text",
   "content_safety_audit.reasoning_shown":
@@ -1040,6 +1067,684 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "jobs.payload":
     "the platform enqueues no job naming a user; an app whose jobs do erases them in its deletion module",
 };
+
+/**
+ * What a person's own export (Article 15, data-export) gives of their account row: every column of
+ * `users`, given or not, and why (TASK-215, audit A-14). The profile was the whole row less one
+ * column — so every column the table had, and every one a migration added later, went into the
+ * file: the identity provider's subject, the tenant and role keys, and a child's parent's address.
+ * `__tests__/db/export-columns.db.test.ts` fails on a column of `users` this does not classify, and
+ * holds PROFILE_EXPORT_SQL to the columns given here: a new column is in no export until it is
+ * classified, with its reason.
+ */
+export const PROFILE_COLUMNS: Readonly<
+  Record<string, { readonly exported: boolean; readonly why: string }>
+> = {
+  id: { exported: true, why: "the account's own id: the export's reference to it" },
+  email: { exported: true, why: "the person's own address, given by them" },
+  display_name: { exported: true, why: "the person's own name, given by them" },
+  real_name: { exported: true, why: "the person's own name, given by them" },
+  avatar_url: { exported: true, why: "the person's own picture, given by them" },
+  language_preference: { exported: true, why: "the person's own setting" },
+  timezone: { exported: true, why: "the person's own setting" },
+  profile_visibility: { exported: true, why: "the person's own setting" },
+  display_name_visibility: { exported: true, why: "the person's own setting" },
+  avatar_visibility: { exported: true, why: "the person's own setting" },
+  language_visibility: { exported: true, why: "the person's own setting" },
+  timezone_visibility: { exported: true, why: "the person's own setting" },
+  email_opt_in: { exported: true, why: "the person's own choice" },
+  push_notifications_enabled: { exported: true, why: "the person's own choice" },
+  date_of_birth: { exported: true, why: "given by the person" },
+  age_verified: { exported: true, why: "a fact the platform holds about the person" },
+  age_verified_at: { exported: true, why: "a fact the platform holds about the person" },
+  parental_consent_status: {
+    exported: true,
+    why: "whether a parent consented to a child's account: a fact about the person",
+  },
+  content_rating_level: { exported: true, why: "the person's own setting" },
+  mfa_enabled: { exported: true, why: "a fact about the person's sign-in" },
+  email_verified: { exported: true, why: "a fact about the person's address" },
+  created_at: { exported: true, why: "when the account was made" },
+  updated_at: { exported: true, why: "when the account last changed" },
+  last_login_at: { exported: true, why: "when the person last signed in" },
+  account_status: {
+    exported: true,
+    why: "a decision about the person (Article 15(1): the data and the processing's result)",
+  },
+  restricted_until: { exported: true, why: "a decision about the person" },
+  suspended_until: { exported: true, why: "a decision about the person" },
+  banned_at: { exported: true, why: "a decision about the person" },
+  ban_reason: { exported: true, why: "the reason given for a decision about the person" },
+  ban_note: {
+    exported: true,
+    why: "the platform's note on a decision about the person (rendered in the requester's words)",
+  },
+  status_changed_at: { exported: true, why: "when a decision about the person was made" },
+  coppa_enforcement_active: {
+    exported: true,
+    why: "whether the children's-account rules apply to the person",
+  },
+  cognito_sub: {
+    exported: false,
+    why: "the identity provider's key for the sign-in, not something the person gave or the platform decided; the person sees their sign-in account at the provider, and a copy in an export file is a key into it",
+  },
+  parental_consent_email: {
+    exported: false,
+    why: "a parent's address: another person's data (Article 15(4)); the export says whether consent was given (parental_consent_status)",
+  },
+  status_changed_by: {
+    exported: false,
+    why: "the id of the moderator or administrator who changed the standing: another person's (review 7 M4); the decision and its time are exported",
+  },
+  role_id: {
+    exported: false,
+    why: "the role catalog's internal key; the role itself is exported by name (role)",
+  },
+  tenant_id: {
+    exported: false,
+    why: "the deployment's tenant key: how the platform stores the row, nothing about the person",
+  },
+  deleted_at: {
+    exported: false,
+    why: "always empty in an export: only a live account is exported (an erased one has nothing to give)",
+  },
+};
+
+/**
+ * The profile as an export gives it: PROFILE_COLUMNS' given columns, named (never the whole row),
+ * and the role by name. A literal, so the schema-parity check plans it; the export-columns test
+ * holds its keys to PROFILE_COLUMNS.
+ */
+export const PROFILE_EXPORT_SQL = `select jsonb_build_object(
+    'id', u.id, 'email', u.email, 'display_name', u.display_name, 'real_name', u.real_name,
+    'avatar_url', u.avatar_url, 'language_preference', u.language_preference,
+    'timezone', u.timezone, 'profile_visibility', u.profile_visibility,
+    'display_name_visibility', u.display_name_visibility,
+    'avatar_visibility', u.avatar_visibility, 'language_visibility', u.language_visibility,
+    'timezone_visibility', u.timezone_visibility, 'email_opt_in', u.email_opt_in,
+    'push_notifications_enabled', u.push_notifications_enabled,
+    'date_of_birth', u.date_of_birth, 'age_verified', u.age_verified,
+    'age_verified_at', u.age_verified_at, 'parental_consent_status', u.parental_consent_status,
+    'content_rating_level', u.content_rating_level, 'mfa_enabled', u.mfa_enabled,
+    'email_verified', u.email_verified, 'created_at', u.created_at, 'updated_at', u.updated_at,
+    'last_login_at', u.last_login_at, 'account_status', u.account_status,
+    'restricted_until', u.restricted_until, 'suspended_until', u.suspended_until,
+    'banned_at', u.banned_at, 'ban_reason', u.ban_reason, 'ban_note', u.ban_note,
+    'status_changed_at', u.status_changed_at,
+    'coppa_enforcement_active', u.coppa_enforcement_active,
+    'role', (select r.name from roles r where r.id = u.role_id)
+  ) as r
+  from users u where u.id = $1::uuid and u.deleted_at is null`;
+
+/** One column's place in a tenant's export: given or not, and why. */
+export interface TenantExportColumn {
+  readonly exported: boolean;
+  readonly why: string;
+}
+
+/** The same decision, for several columns of one table. */
+const tenantCols = (
+  table: string,
+  exported: boolean,
+  why: string,
+  columns: readonly string[]
+): Record<string, TenantExportColumn> =>
+  Object.fromEntries(columns.map((c) => [`${table}.${c}`, { exported, why }]));
+
+/** Why the tenant key itself is never in the file: its first line names the tenant. */
+const TENANT_KEY =
+  "the tenant key: the export's first line names the tenant, and another deployment keys it its own way";
+/** Why a network address and browser are not exported (audit A-7). */
+const NETWORK =
+  "a network address or browser: kept for security only for retention.network_identifiers_days, then cleared — an export would keep it past that, in a file the retention never reaches";
+/** What the tenant gets of a table that is its records: everything it holds about its accounts. */
+const RECORDS = "the tenant's own records";
+
+/**
+ * What the operator's export of a tenant (tenancy/admin.ts writeTenantExport, TASK-215, audit A-7)
+ * gives of each column of each table that holds a tenant's rows: every column, given or not, and
+ * why. The export read whole rows (`to_jsonb(r)`, migration 049) — erased accounts' residue,
+ * network addresses, job tokens and every column a later migration added. Now it reads only the
+ * columns given here (an app's own tables: its consumer seam, platform/tenancy/app-tenant-export.ts),
+ * named, through tenant_export_rows (migration 071). `__tests__/db/export-columns.db.test.ts`
+ * fails on a column of a tenant table that neither classifies, and on an entry naming no column: a
+ * new column is in no export until it is classified, with its reason.
+ */
+export const TENANT_EXPORT_COLUMNS: Readonly<Record<string, TenantExportColumn>> = {
+  ...tenantCols(
+    "agent_approval_policy",
+    true,
+    "the tenant's approval policy and who set it",
+    ["id", "version", "default_approver", "rules", "decided_by", "created_at"]
+  ),
+  ...tenantCols("agent_budgets", true, "the tenant's agents' spend counters", [
+    "id",
+    "agent_id",
+    "scope_type",
+    "scope_id",
+    "period",
+    "budget_tokens",
+    "used_tokens",
+    "budget_usd",
+    "used_usd",
+    "created_at",
+    "updated_at",
+    "used_steps",
+  ]),
+  ...tenantCols("agent_trajectories", true, "the tenant's agent runs and their steps", [
+    "id",
+    "trigger",
+    "scope_type",
+    "scope_id",
+    "status",
+    "steps",
+    "total_cost",
+    "started_at",
+    "completed_at",
+    "subject_kind",
+    "subject_id",
+    "version",
+    "created_at",
+    "updated_at",
+    "segment",
+    "previous_trajectory_id",
+    "step_offset",
+    "chain_root_id",
+  ]),
+  ...tenantCols("ai_metrics", true, "the tenant's AI usage", [
+    "id",
+    "name",
+    "timestamp",
+    "trace_id",
+    "values",
+    "tags",
+    "created_at",
+  ]),
+  ...tenantCols("app_sessions", true, "the tenant's app sessions", [
+    "id",
+    "state",
+    "version",
+    "produced_by",
+    "created_at",
+    "updated_at",
+    "meta",
+  ]),
+  ...tenantCols("audit_log", true, "the tenant's audit record: who did what, when", [
+    "id",
+    "action",
+    "actor_id",
+    "target_id",
+    "details",
+    "created_at",
+  ]),
+  ...tenantCols("audit_log", false, NETWORK, ["ip_address", "user_agent"]),
+  // TASK-214's sign-in sessions (ADR-057), classified by TASK-215: a credential, not a record — the
+  // session id's hash, the provider's tokens sealed under SESSION_ENCRYPTION_KEY, the forgery-check
+  // token — kept from minutes to days and revoked on sign-out; an export would carry a credential
+  // out of the deployment. Who signed in, and when, is the audit log's (exported above).
+  ...tenantCols(
+    "auth_sessions",
+    false,
+    "a sign-in session: a credential (its id's hash, the provider's sealed tokens, the forgery-check token), short-lived and revocable; sign-ins are the audit log's",
+    [
+      "id_hash",
+      "kind",
+      "subject",
+      "method",
+      "csrf_token",
+      "sealed_tokens",
+      "token_version",
+      "created_at",
+      "last_seen_at",
+      "revoked_at",
+      "revoked_reason",
+    ]
+  ),
+  ...tenantCols(
+    "config_pending_approvals",
+    true,
+    "the tenant's setting changes and decisions",
+    [
+      "id",
+      "config_key",
+      "current_value",
+      "proposed_value",
+      "requested_by",
+      "change_comment",
+      "impact_summary",
+      "status",
+      "reviewed_by",
+      "review_comment",
+      "reviewed_at",
+      "expires_at",
+      "created_at",
+      "scope",
+      "action",
+      "applied_at",
+      "change_shown",
+      "review_shown",
+    ]
+  ),
+  ...tenantCols("consent_records", true, "the tenant's proof of its accounts' consents", [
+    "id",
+    "user_id",
+    "consent_type",
+    "consent_version",
+    "granted",
+    "granted_at",
+    "revoked_at",
+  ]),
+  ...tenantCols("consent_records", false, NETWORK, ["ip_address", "user_agent"]),
+  ...tenantCols("content_safety_audit", true, "the tenant's moderation decisions", [
+    "id",
+    "direction",
+    "content_type",
+    "content_rating_level",
+    "user_id",
+    "triggered_by",
+    "classifier_output",
+    "categories_flagged",
+    "confidence",
+    "severity",
+    "action_taken",
+    "reasoning",
+    "severity_adjustment",
+    "context_factors",
+    "attribute_to_user",
+    "classifier_cost_usd",
+    "trajectory_id",
+    "agent_id",
+    "pipeline_latency_ms",
+    "request_id",
+    "created_at",
+    "reasoning_shown",
+    "context_factors_shown",
+  ]),
+  "content_safety_audit.input_hash": {
+    exported: false,
+    why: "a keyed hash of the screened text (A-6): it matches only under this deployment's key, and outside it could only be used to test guesses of what someone wrote",
+  },
+  ...tenantCols("document_embeddings", true, "the tenant's stored documents", [
+    "id",
+    "chunk_id",
+    "document_id",
+    "content",
+    "chunk_index",
+    "start_offset",
+    "end_offset",
+    "metadata",
+    "created_at",
+    "updated_at",
+    "scope_key",
+  ]),
+  "document_embeddings.embedding": {
+    exported: false,
+    why: "a vector this deployment's embedding model derived from content (exported); another deployment derives its own",
+  },
+  ...tenantCols("effect_ledger", true, "the tenant's external calls and their outcomes", [
+    "id",
+    "operation_id",
+    "effect_key",
+    "effect_type",
+    "status",
+    "request",
+    "receipt",
+    "error",
+    "attempts",
+    "created_at",
+    "resolved_at",
+  ]),
+  "effect_ledger.idempotency_key": {
+    exported: false,
+    why: "the key this deployment hands a downstream to recognise a repeated call; derived from the operation id (exported), and never to be reused by another",
+  },
+  ...tenantCols("group_invites", true, RECORDS, [
+    "id",
+    "group_id",
+    "inviter_id",
+    "invitee_id",
+    "status",
+    "created_at",
+    "resolved_at",
+  ]),
+  ...tenantCols("group_memberships", true, RECORDS, [
+    "id",
+    "group_id",
+    "user_id",
+    "role",
+    "joined_at",
+    "left_at",
+  ]),
+  ...tenantCols("groups", true, RECORDS, [
+    "id",
+    "name",
+    "description",
+    "metadata",
+    "owner_id",
+    "status",
+    "created_at",
+    "updated_at",
+  ]),
+  ...tenantCols("guest_usage", true, "the tenant's guest usage counts", [
+    "translations_used",
+    "first_used_at",
+    "last_used_at",
+  ]),
+  "guest_usage.guest_id": {
+    exported: false,
+    why: "an anonymous visitor's id, held by their device: a handle to their allowance, not the tenant's record",
+  },
+  ...tenantCols(
+    "job_schedule_outcomes",
+    true,
+    "when the tenant's recurring jobs last ran",
+    ["id", "kind", "status", "finished_at"]
+  ),
+  ...tenantCols(
+    "jobs",
+    true,
+    "the tenant's background work: what ran, when, and how it ended",
+    [
+      "id",
+      "kind",
+      "status",
+      "attempts",
+      "max_attempts",
+      "run_at",
+      "source",
+      "runs_for_suspended",
+      "created_at",
+      "updated_at",
+      "started_at",
+      "finished_at",
+    ]
+  ),
+  "jobs.payload": {
+    exported: false,
+    why: "a job's work item as this deployment's handlers read it (an app's may name accounts): internal, and meaningless elsewhere",
+  },
+  "jobs.idempotency_key": {
+    exported: false,
+    why: "this deployment's key against enqueuing a job twice: internal",
+  },
+  "jobs.locked_until": { exported: false, why: "a worker's lease: internal" },
+  "jobs.locked_by": {
+    exported: false,
+    why: "which of this deployment's instances held a job: internal",
+  },
+  "jobs.lease_token": {
+    exported: false,
+    why: "a worker's lease token (a credential for completing the job): internal",
+  },
+  "jobs.last_error": {
+    exported: false,
+    why: "the error text a handler raised, for operators: internal detail, never shown to a tenant",
+  },
+  "job_schedule_outcomes.last_error": {
+    exported: false,
+    why: "the error text a handler raised, for operators: internal detail, never shown to a tenant",
+  },
+  ...tenantCols("password_policy", true, "the tenant's password rules", [
+    "id",
+    "role_id",
+    "user_id",
+    "rotation_days",
+    "min_length",
+    "require_uppercase",
+    "require_lowercase",
+    "require_number",
+    "require_special",
+    "password_history_count",
+    "created_at",
+    "updated_at",
+  ]),
+  ...tenantCols("platform_config_history", true, "the tenant's setting history", [
+    "id",
+    "config_key",
+    "previous_value",
+    "new_value",
+    "changed_by",
+    "change_comment",
+    "change_source",
+    "created_at",
+    "scope",
+    "change_shown",
+  ]),
+  ...tenantCols("proposals", true, "the tenant's held actions and their decisions", [
+    "id",
+    "operation_id",
+    "session_id",
+    "trajectory_id",
+    "label",
+    "status",
+    "actor_id",
+    "actor_role",
+    "effects",
+    "effective_risk",
+    "payload",
+    "observed_version",
+    "decided_by",
+    "decided_at",
+    "decision_note",
+    "created_at",
+    "updated_at",
+    "actor_identity",
+    "last_run_error",
+    "run_atomic",
+    "reminded_at",
+    "decision_shown",
+  ]),
+  "proposals.run_token": {
+    exported: false,
+    why: "a claimed run's generation token (a lease on running the action): internal",
+  },
+  ...tenantCols("purge_log", true, "the tenant's record of each erasure that ran", [
+    "id",
+    "purge_id",
+    "user_id",
+    "requested_by",
+    "reason",
+    "status",
+    "steps_json",
+    "total_deleted",
+    "requested_at",
+    "completed_at",
+    "created_at",
+  ]),
+  ...tenantCols(
+    "rate_limit_events",
+    false,
+    "a counted request of the last day, keyed by an account or a network address: transient, deleted on a schedule (TASK-215), nothing a tenant keeps",
+    ["id", "bucket", "at"]
+  ),
+  ...tenantCols("review_queue", true, "the tenant's moderation cases", [
+    "id",
+    "source",
+    "priority",
+    "status",
+    "moderation_result",
+    "target_user_id",
+    "request_id",
+    "explanation_chain",
+    "appeal_reason",
+    "original_decision_id",
+    "claimed_by",
+    "claimed_at",
+    "resolved_by",
+    "resolved_at",
+    "decision",
+    "reviewer_notes",
+    "modified_action",
+    "previous_account_status",
+    "created_at",
+    "updated_at",
+    "related_strike_id",
+    "notes_shown",
+  ]),
+  ...tenantCols("tenant_config_overrides", true, "the tenant's own settings", [
+    "key",
+    "value",
+    "updated_by",
+    "updated_at",
+    "created_at",
+  ]),
+  ...tenantCols("user_ai_context", true, RECORDS, [
+    "user_id",
+    "preferences",
+    "patterns",
+    "updated_at",
+  ]),
+  ...tenantCols(
+    "user_deletions",
+    true,
+    "the tenant's record of its erasures: whose, when, and how far",
+    [
+      "user_id",
+      "requested_by",
+      "soft_deleted_at",
+      "purge_after",
+      "purged_at",
+      "modules",
+      "standing",
+      "purge_attempts",
+      "purge_retry_at",
+      "external_erasures",
+      "mentions_erased_at",
+    ]
+  ),
+  ...tenantCols(
+    "user_deletions",
+    false,
+    "what an erasure keeps so this deployment can hold a ban or refuse the identity again — a keyed hash of a banned address (it matches only under this deployment's key), the identity provider's subject and pool: never the tenant's record of a person it erased",
+    ["email_hash", "email_hash_key", "email_hash_scheme", "cognito_sub", "identity_pool"]
+  ),
+  "user_deletions.last_purge_error": {
+    exported: false,
+    why: "the steps a failed purge could not complete, for operators: internal detail",
+  },
+  ...tenantCols("user_devices", true, RECORDS, [
+    "id",
+    "user_id",
+    "device_name",
+    "is_trusted",
+    "last_used_at",
+    "created_at",
+  ]),
+  "user_devices.device_id": {
+    exported: false,
+    why: "a remembered device's key with the identity provider: a sign-in handle, not a record",
+  },
+  ...tenantCols("user_entitlements", true, RECORDS, [
+    "id",
+    "user_id",
+    "entitlement_group_id",
+    "granted_at",
+    "expires_at",
+    "revoked_at",
+    "granted_by",
+    "revoked_by",
+  ]),
+  ...tenantCols("user_feature_restrictions", true, RECORDS, [
+    "user_id",
+    "feature",
+    "reason",
+    "created_by",
+    "created_at",
+  ]),
+  ...tenantCols("user_interactions", true, RECORDS, [
+    "id",
+    "user_id",
+    "input",
+    "output",
+    "feature",
+    "rating",
+    "created_at",
+  ]),
+  ...tenantCols("user_strikes", true, RECORDS, [
+    "id",
+    "user_id",
+    "category",
+    "severity",
+    "moderation_audit_id",
+    "trajectory_id",
+    "agent_id",
+    "reason",
+    "expires_at",
+    "expired",
+    "created_at",
+    "guardian_decision_id",
+  ]),
+  ...tenantCols("users", true, "the tenant's accounts", [
+    "id",
+    "email",
+    "display_name",
+    "avatar_url",
+    "real_name",
+    "role_id",
+    "language_preference",
+    "timezone",
+    "profile_visibility",
+    "display_name_visibility",
+    "avatar_visibility",
+    "language_visibility",
+    "timezone_visibility",
+    "email_opt_in",
+    "push_notifications_enabled",
+    "date_of_birth",
+    "age_verified",
+    "age_verified_at",
+    "parental_consent_status",
+    "content_rating_level",
+    "mfa_enabled",
+    "email_verified",
+    "created_at",
+    "updated_at",
+    "last_login_at",
+    "deleted_at",
+    "account_status",
+    "restricted_until",
+    "suspended_until",
+    "banned_at",
+    "ban_reason",
+    "status_changed_by",
+    "status_changed_at",
+    "coppa_enforcement_active",
+    "ban_note",
+  ]),
+  "users.parental_consent_email": {
+    exported: true,
+    why: "the parent's address the tenant collected as the proof of a child's consent: the tenant's record, which it is accountable for",
+  },
+  "users.cognito_sub": {
+    exported: false,
+    why: "this deployment's identity provider's key for the sign-in: another deployment's pool gives every identity a new one (accounts are re-linked by address, TASK-174)",
+  },
+};
+
+/** The tenant key of every table, never exported (the export's first line names the tenant). */
+export const TENANT_KEY_COLUMN: TenantExportColumn = { exported: false, why: TENANT_KEY };
+
+/**
+ * A tenant table's exported columns, in the table's register order: the platform's, then the app's
+ * own (`appColumns`: platform/tenancy/app-tenant-export.ts, "<table>.<column>" → "exported: …" or
+ * "not exported: …"). Undefined when the table has no classified column at all — the export refuses
+ * such a table rather than guess.
+ */
+export function tenantExportColumns(
+  table: string,
+  appColumns: Readonly<Record<string, string>> = {}
+): readonly string[] | undefined {
+  const prefix = `${table}.`;
+  const platform = Object.entries(TENANT_EXPORT_COLUMNS).filter(([k]) =>
+    k.startsWith(prefix)
+  );
+  const app = Object.entries(appColumns).filter(([k]) => k.startsWith(prefix));
+  if (platform.length === 0 && app.length === 0) return undefined;
+  return [
+    ...platform.filter(([, v]) => v.exported).map(([k]) => k.slice(prefix.length)),
+    ...app.filter(([, v]) => /^exported:/.test(v)).map(([k]) => k.slice(prefix.length)),
+  ];
+}
 
 /**
  * The erasure's statements in other tenants (TASK-193, audit A-3): an operator's act is recorded in

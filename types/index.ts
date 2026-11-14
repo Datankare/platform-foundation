@@ -24,8 +24,6 @@ export interface SafetyResult {
    * Logged, never returned to the caller (content.rejected).
    */
   reasons?: readonly ShownText[];
-  /** The classifier model's own words, raw (logged; never shown or returned). */
-  rawReason?: string;
   /**
    * When not safe, what the screening decided (TASK-211, N-119): "block" — a decision recorded
    * against the account, appealable from the account page; "escalate" — held for a moderator in

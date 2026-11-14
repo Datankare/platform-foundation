@@ -30,6 +30,32 @@ import {
 import { STAFF_IDLE_WARNING_SECONDS } from "@/platform/auth/session-lifetimes";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
+
+/**
+ * What the session read answers (TASK-215, A-13): who is signed in, the forgery-check token this
+ * page must send (ADR-057 D5), and when the session ends — never a credential of the provider's.
+ */
+const SESSION_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    authenticated: { type: "boolean" },
+    user: {
+      type: "object",
+      properties: {
+        userId: { type: "string" },
+        email: { type: "string" },
+        emailVerified: { type: "boolean" },
+        isGuest: { type: "boolean" },
+      },
+    },
+    csrfToken: { type: "string" },
+    audience: { type: "string" },
+    idleExpiresAt: { type: ["number", "null"] },
+    absoluteExpiresAt: { type: "number" },
+    idleWarningSeconds: { type: "number" },
+  },
+};
 
 function noStore(response: NextResponse): NextResponse {
   response.headers.set("Cache-Control", "no-store");
@@ -97,10 +123,10 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   );
   if (limited) return limited;
   return describe(request, false);
-});
+}, SESSION_RESPONSE);
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_SESSION);
   if (limited) return limited;
   return describe(request, true);
-});
+}, SESSION_RESPONSE);

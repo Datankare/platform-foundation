@@ -3,7 +3,8 @@
 /**
  * components/admin/UsersPanel.tsx — The admin console's Users screen (TASK-185)
  *
- * Reads its own pages of GET /api/admin/users — searched, sorted and paged on the server — and
+ * Reads its own pages of POST /api/admin/users/search — searched, sorted and paged on the server,
+ * the search text in the body, never the URL (TASK-215, audit A-17) — and
  * shows each account's identity, role, status, address verification, created and last sign-in. A
  * row opens a detail panel with its entitlements and the actions the admin's permissions allow:
  *
@@ -303,20 +304,21 @@ export function UsersPanel({
 
   useEffect(() => {
     let current = true;
-    const qs = new URLSearchParams({
+    // TASK-215 (audit A-17): the search text and the filters go in the body of a POST, never in
+    // the URL — a URL is kept by every proxy and access log on the way.
+    const search = {
       sort,
       dir,
-      limit: String(USERS_PAGE_SIZE),
-      offset: String(offset),
+      limit: USERS_PAGE_SIZE,
+      offset,
       ...(query ? { q: query } : {}),
-      ...Object.fromEntries(
-        (JSON.parse(filterKey) as [string, string | number][]).map(([k, v]) => [
-          k,
-          String(v),
-        ])
-      ),
-    }).toString();
-    void apiFetch(`/api/admin/users?${qs}`)
+      ...Object.fromEntries(JSON.parse(filterKey) as [string, string | number][]),
+    };
+    void apiFetch("/api/admin/users/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(search),
+    })
       .then(async (res) => {
         if (!current) return;
         if (res.ok) {

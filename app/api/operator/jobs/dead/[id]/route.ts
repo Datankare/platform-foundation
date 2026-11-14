@@ -19,6 +19,7 @@ import {
 import { discardDeadJob, replayDeadJob } from "@/platform/jobs/operator";
 import { jobsResponse } from "@/platform/jobs/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const ACTION_BODY_SCHEMA: InputSchemaNode = {
@@ -29,6 +30,23 @@ const ACTION_BODY_SCHEMA: InputSchemaNode = {
 };
 
 type Params = { params: Promise<{ id: string }> };
+
+const POST_RESPONSE: ResponseSchema = {
+  type: "object",
+  properties: {
+    result: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+        },
+        kind: {
+          type: "string",
+        },
+      },
+    },
+  },
+};
 
 export const POST = tenantRoute(async function POST(
   request: NextRequest,
@@ -55,4 +73,4 @@ export const POST = tenantRoute(async function POST(
   } catch (error) {
     return internalError(error, { request, context: "Dead-letter action failed" });
   }
-});
+}, POST_RESPONSE);

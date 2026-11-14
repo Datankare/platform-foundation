@@ -126,6 +126,8 @@ export const REFUSAL_HANDLERS = {
   "feature.not_configured": "message",
   "guest.allowance_exhausted": "sign-in",
   "internal.error": "message",
+  "effects.not_found": "message",
+  "effects.not_indeterminate": "message",
   "jobs.not_dead": "message",
   "jobs.schedule_required": "message",
   "jobs.not_found": "message",

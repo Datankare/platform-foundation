@@ -297,8 +297,17 @@ dbDescribe("tenant lifecycle (ADR-053 D7)", () => {
     });
     expect(Date.parse(head.export.at)).not.toBeNaN();
     expect(rowLines).toHaveLength(3);
-    expect(rowLines.every((l) => l.table === "users" && l.row.tenant_id === t.id)).toBe(
-      true
+    // Named columns only (TASK-215, audit A-7): never the tenant key or the identity provider's
+    // subject; every account exported is one of this tenant's.
+    expect(rowLines.every((l) => l.table === "users")).toBe(true);
+    expect(rowLines.some((l) => "tenant_id" in l.row || "cognito_sub" in l.row)).toBe(
+      false
+    );
+    const theirs = await withOwnerTx("tenant-lifecycle", (tx) =>
+      tx.query<{ id: string }>("select id from users where tenant_id = $1::uuid", [t.id])
+    );
+    expect(rowLines.map((l) => l.row.id).sort()).toEqual(
+      theirs.rows.map((r) => r.id).sort()
     );
 
     // Not due yet: nothing purged.

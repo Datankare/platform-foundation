@@ -1,0 +1,5 @@
+{
+  "$comment": "TASK-215 (audit A-13): exported route handlers that declare no response schema, per file. Zero: every handler declares the body it answers with (tenantRoute's second argument, platform/errors/response-schema.ts). Only shrinks: a file over its count fails (__tests__/api-route-response-schema.test.ts); a count above zero is never added. Each repository keeps its own.",
+  "count": 0,
+  "files": {}
+}

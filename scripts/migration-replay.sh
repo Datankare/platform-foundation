@@ -634,6 +634,120 @@ SQL
 [ "$("${PSQL[@]}" -At -c "SELECT value FROM public.platform_config WHERE key = 'auth.session.staff_idle_seconds'")" = "1200" ] \
   || { echo "✗ 070 applied again replaced an operator's session lifetime"; exit 1; }
 "${PSQL[@]}" -c "UPDATE public.platform_config SET value = default_value WHERE key = 'auth.session.staff_idle_seconds'" >/dev/null
+step "071: a tenant's export reads named columns only; the whole-row form is gone and every refusal holds"
+"${PSQL[@]}" -At <<'SQL'
+DO $$
+DECLARE v_t uuid := gen_random_uuid(); v jsonb; refused boolean;
+BEGIN
+  IF to_regprocedure('public.tenant_export_rows(text, uuid)') IS NOT NULL THEN
+    RAISE EXCEPTION '071: the whole-row tenant_export_rows(text, uuid) still exists';
+  END IF;
+  IF has_function_privilege('app_tenant', 'public.tenant_export_rows(text, uuid, text[])', 'EXECUTE') THEN
+    RAISE EXCEPTION '071: app_tenant may read a tenant export';
+  END IF;
+  INSERT INTO public.tenants (id, slug, name) VALUES (v_t, 'replay-071', 'Replay 071');
+  INSERT INTO public.audit_log (action, details, ip_address, user_agent, tenant_id)
+    VALUES ('login_success', '{}', '192.0.2.71', 'replay-agent', v_t);
+  SELECT r INTO v FROM public.tenant_export_rows('audit_log', v_t, array['id', 'action']) r;
+  IF (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(v) k) <> array['action', 'id'] THEN
+    RAISE EXCEPTION '071: the export gave %', v;
+  END IF;
+  FOREACH v IN ARRAY array['["ip_address; select 1"]', '["tenant_id"]', '[]', '["id", "id"]']::jsonb[] LOOP
+    refused := false;
+    BEGIN
+      PERFORM public.tenant_export_rows('audit_log', v_t, array(SELECT jsonb_array_elements_text(v)));
+    EXCEPTION WHEN raise_exception THEN refused := true;
+    END;
+    IF NOT refused THEN RAISE EXCEPTION '071: % was exported', v; END IF;
+  END LOOP;
+  refused := false;
+  BEGIN
+    PERFORM public.tenant_export_rows('tenants', v_t, array['id']);
+  EXCEPTION WHEN raise_exception THEN refused := true;
+  END;
+  IF NOT refused THEN RAISE EXCEPTION '071: a table that is not a tenant table was exported'; END IF;
+  DELETE FROM public.audit_log WHERE tenant_id = v_t;
+  DELETE FROM public.tenants WHERE id = v_t;
+END $$;
+SQL
+
+step "072: no model words and no unkeyed hash of what a person wrote are left; keyed ones and a person's own records stay; applied again changes nothing"
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+INSERT INTO public.tenants (id, slug, name) VALUES ('00000000-0000-4000-8000-000000000072', 'replay-072', 'Replay 072');
+INSERT INTO public.content_safety_audit (tenant_id, input_hash, classifier_output, trajectory_id, agent_id, request_id)
+VALUES
+  ('00000000-0000-4000-8000-000000000072', repeat('a', 64), '{"safe": false, "rawReason": "quotes them", "categories": ["hate"]}', 't', 'guardian', 'replay-072-old'),
+  ('00000000-0000-4000-8000-000000000072', 'hmac-sha256:0123456789abcdef:' || repeat('b', 64), '{"safe": true, "reason": "older words"}', 't', 'guardian', 'replay-072-keyed');
+INSERT INTO public.users (id, cognito_sub, email, role_id, tenant_id)
+SELECT '00000000-0000-4000-8000-0000000072aa', 'replay-072', 'replay-072@example.test', r.id, '00000000-0000-4000-8000-000000000072'
+  FROM public.roles r WHERE r.is_default;
+INSERT INTO public.review_queue (tenant_id, target_user_id, request_id, source, priority, status, moderation_result)
+VALUES ('00000000-0000-4000-8000-000000000072', '00000000-0000-4000-8000-0000000072aa', 'replay-072', 'escalation', 'normal', 'pending',
+        '{"action": "escalate", "classifierOutput": {"safe": false, "rawReason": "quotes them", "severity": "high"}}');
+INSERT INTO public.audit_log (action, details, tenant_id)
+VALUES ('admin_action', ('{"type": "identity_relinked", "previousSubject": "sha256:0123456789abcdef", "newSubject": "hmac-sha256:0123456789abcdef:' || repeat('c', 64) || '", "reason": "a person''s own words stay"}')::jsonb, '00000000-0000-4000-8000-000000000072');
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/072_record_text_and_hashes.sql" >/dev/null
+r072() {
+  "${PSQL[@]}" -At <<'SQL'
+SELECT string_agg(request_id || '=' || coalesce(input_hash, 'null') || '|' || classifier_output::text, ';' ORDER BY request_id)
+  FROM public.content_safety_audit WHERE tenant_id = '00000000-0000-4000-8000-000000000072'
+UNION ALL SELECT moderation_result::text FROM public.review_queue WHERE tenant_id = '00000000-0000-4000-8000-000000000072'
+UNION ALL SELECT details::text FROM public.audit_log WHERE tenant_id = '00000000-0000-4000-8000-000000000072'
+UNION ALL SELECT (SELECT attnotnull FROM pg_attribute WHERE attrelid = 'public.content_safety_audit'::regclass AND attname = 'input_hash')::text
+SQL
+}
+expected072='replay-072-keyed=hmac-sha256:0123456789abcdef:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|{"safe": true};replay-072-old=null|{"safe": false, "categories": ["hate"]}
+{"action": "escalate", "classifierOutput": {"safe": false, "severity": "high"}}
+{"type": "identity_relinked", "reason": "a person'"'"'s own words stay", "newSubject": "hmac-sha256:0123456789abcdef:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "previousSubject": null}
+false'
+got072=$(r072)
+[ "$got072" = "$expected072" ] \
+  || { echo "✗ 072 left model words or an unkeyed hash (or changed what it should keep):"; diff <(echo "$expected072") <(echo "$got072") || true; exit 1; }
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/072_record_text_and_hashes.sql" >/dev/null
+[ "$(r072)" = "$expected072" ] \
+  || { echo "✗ 072 applied again changed its result:"; diff <(echo "$expected072") <(r072) || true; exit 1; }
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+DELETE FROM public.content_safety_audit WHERE tenant_id = '00000000-0000-4000-8000-000000000072';
+DELETE FROM public.review_queue WHERE tenant_id = '00000000-0000-4000-8000-000000000072';
+DELETE FROM public.audit_log WHERE tenant_id = '00000000-0000-4000-8000-000000000072';
+DELETE FROM public.users WHERE tenant_id = '00000000-0000-4000-8000-000000000072';
+DELETE FROM public.tenants WHERE id = '00000000-0000-4000-8000-000000000072';
+SQL
+
+step "073: a session's runs go with it, whatever deletes it; runs of sessions already gone are deleted once; the two settings are seeded operator-only"
+"${PSQL[@]}" -At <<'SQL'
+DO $$
+DECLARE v_t uuid := gen_random_uuid(); n int;
+BEGIN
+  INSERT INTO public.tenants (id, slug, name) VALUES (v_t, 'replay-073', 'Replay 073');
+  INSERT INTO public.app_sessions (id, tenant_id, state) VALUES ('replay-073-a', v_t, '{}'), ('replay-073-b', v_t, '{}');
+  INSERT INTO public.agent_trajectories (tenant_id, trigger, subject_kind, subject_id, scope_type, steps, status)
+  VALUES (v_t, 'session', 'session', 'replay-073-a', 'user', '[]', 'running'),
+         (v_t, 'session', 'session', 'replay-073-a', 'user', '[]', 'completed'),
+         (v_t, 'session', 'session', 'replay-073-b', 'user', '[]', 'running'),
+         (v_t, 'session', 'session', 'replay-073-gone', 'user', '[]', 'running'),
+         (v_t, 'agent', 'agent', 'replay-agent', 'platform', '[]', 'running');
+  DELETE FROM public.app_sessions WHERE id = 'replay-073-a' AND tenant_id = v_t;
+  SELECT count(*) INTO n FROM public.agent_trajectories WHERE tenant_id = v_t AND subject_id = 'replay-073-a';
+  IF n <> 0 THEN RAISE EXCEPTION '073: % run(s) of a deleted session stayed', n; END IF;
+  SELECT count(*) INTO n FROM public.agent_trajectories WHERE tenant_id = v_t AND subject_id IN ('replay-073-b', 'replay-agent', 'replay-073-gone');
+  IF n <> 3 THEN RAISE EXCEPTION '073: a live session''s or an agent''s run went (% left of 3)', n; END IF;
+  IF (SELECT count(*) FROM public.platform_config
+       WHERE key IN ('retention.rate_limit_events_days', 'effects.pending_timeout_minutes')
+         AND NOT tenant_overridable AND permission_tier = 'safety') <> 2 THEN
+    RAISE EXCEPTION '073: a setting is missing or tenant-overridable';
+  END IF;
+END $$;
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/073_retention_lifecycles.sql" >/dev/null
+[ "$("${PSQL[@]}" -At -c "SELECT string_agg(subject_id, ',' ORDER BY subject_id) FROM public.agent_trajectories WHERE subject_id LIKE 'replay-073%' OR subject_id = 'replay-agent'")" = "replay-073-b,replay-agent" ] \
+  || { echo "✗ 073 did not delete the run of a session already gone, or deleted another"; exit 1; }
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+DELETE FROM public.agent_trajectories WHERE subject_id IN ('replay-073-b', 'replay-agent');
+DELETE FROM public.app_sessions WHERE id LIKE 'replay-073%';
+DELETE FROM public.tenants WHERE slug = 'replay-073';
+SQL
 
 step "checks"
 "${PSQL[@]}" -At <<'SQL'
@@ -1405,9 +1519,18 @@ UNION ALL SELECT 'rows|' || (SELECT count(*) FROM public.tenants) || '|' || (SEL
 ORDER BY 1
 SQL
 }
+# One later migration redefines an object 049 creates: 071 (TASK-215) replaces 049's whole-row
+# tenant_export_rows with the named-column form and drops the old one. 049 applied again puts its
+# own back, so a re-application of 049 is followed by 071's — as a documented step re-applying 049
+# would be (071's header says so).
+redefines_049=(071_tenant_export_named_columns.sql)
 before=$(snapshot)
 "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/049_tenancy.sql" >/dev/null 2>&1 \
   || { echo "✗ 049 failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/049_tenancy.sql" >/dev/null; exit 1; }
+for r in "${redefines_049[@]}"; do
+  "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$r" >/dev/null 2>&1 \
+    || { echo "✗ $r failed when applied after 049 again:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$r" >/dev/null; exit 1; }
+done
 after=$(snapshot)
 if [ "$before" != "$after" ]; then
   echo "✗ applying 049 a second time changed the database:"
