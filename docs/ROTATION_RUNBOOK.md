@@ -63,8 +63,8 @@ Playform (verified 2026-10-20, issue #573).
 
 Each environment has its own project (TASK-044, done in TASK-203): production
 `playform-prod-songid` (above); staging `playform-staging-songid` in the `playform-staging` Vercel
-project, created by the owner (SECURITY_DEBT TASK-044's steps), with its own row in Playform's
-credential register; dev runs `SONG_ID_PROVIDER=mock` — no credential, no paid call. Rotate each
+project, created by the owner on 2026-11-14 with the production project's settings (SECURITY_DEBT
+TASK-044's steps), with its own rows in Playform's credential register; dev runs `SONG_ID_PROVIDER=mock` — no credential, no paid call. Rotate each
 project on its own, in its own Vercel project.
 
 ### Rotation History

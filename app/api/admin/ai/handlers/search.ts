@@ -103,7 +103,8 @@ export const SEARCH_ROW_LIMIT = 20;
  * The columns each table's search shows, in order — the allowlist (data minimisation). Each
  * mirrors the admin page that requires the same permission (SEARCHABLE_TABLES):
  *
- *   users              The Users screen's list (GET /api/admin/users): id, address, display
+ *   users              The Users screen's list (POST /api/admin/users/search — the same answer
+ *                      as GET /api/admin/users): id, address, display
  *                      name, role (its display name, else its name — TASK-190), standing (as the status guard reads it — an expired
  *                      restriction is "active", an erased account "deleted") and until when,
  *                      whether the address is verified, created, last sign-in. Never the date of

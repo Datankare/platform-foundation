@@ -7,6 +7,107 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-217 — A browser spec waits for a request no screen makes any more: Playform's live Journey C timed out on 56c, and nothing compared the two
+
+| Field        | Detail                                                                                                         |
+| ------------ | -------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-217                                                                                                       |
+| **Type**     | Defect (a spec left waiting for a request a screen stopped making; no check held specs to what screens send)   |
+| **Severity** | Medium (a deployment's live check failed: promotion waits on it; the app itself works)                         |
+| **Phase**    | Phase 5                                                                                                        |
+| **Target**   | v6.0.0 (RC)                                                                                                    |
+| **Status**   | Fixed on develop (batch 56c3)                                                                                  |
+| **Logged**   | 2026-11-14 (Playform Deploy smoke run 43617787204, "Live journey (dev)": Journey C timed out at its list wait) |
+
+Batch 56c3, in both repositories (Playform: its TASK-5019). TASK-215 (A-17) moved the Users screen's
+list read from `GET /api/admin/users` to `POST /api/admin/users/search`, its search text in the body.
+Playform's live Journey C (`e2e-live/admin-journey.live.spec.ts`) still waited for the GET, which no
+screen sends any more, and timed out on the dev deployment; Journeys A, B and D passed. Every check in
+both repositories had passed: none compared what a browser spec waits for with what the screens send.
+
+**The class: `__tests__/e2e-awaited-requests.test.ts` (`@guard`, shared byte for byte).** It reads, with
+the TypeScript parser, every spec and helper under `e2e/` and `e2e-live/` (whichever the repository
+has) and:
+
+- each `waitForResponse(…)` / `waitForRequest(…)` whose predicate names a path (the pathname compared
+  with `===`, or the URL's `endsWith` / `includes` / `startsWith`) and, where it names one, a method
+  (`….method() === "POST"`): some client module (app/ but its routes, components/, hooks/, lib/,
+  platform/, shared/, games/) must send that path with that method — a call of a function whose name
+  contains "fetch", `new EventSource` or `navigator.sendBeacon`, with its init's `method` (GET when it
+  gives none);
+- each request a spec makes itself (`request.get/post/…`, `request.fetch(path, { method })`, or a
+  helper called with a method and then a path): a route file under app/api/ must export that method.
+
+Paths and methods are read statically: strings, templates (`${…}` any text), a const of the file (an
+object's values, a property, either side of `?:` / `??`), a same-file function's returns, the rows of a
+`for (const [a, b] of LIST)` over a literal list (so a loop over the console's sections checks each
+row), and a spec helper's path parameter followed to its callers in the file. A target the scan cannot
+read is a finding unless `ALLOWED` names it with a reason, and an `ALLOWED` entry that names nothing is a
+finding too; `ALLOWED` is empty: every wait and call in both repositories is read. A client request whose method the scan cannot read (a spread init, a
+method variable) matches any method — the one leniency, stated in the guard. Without the fix, on
+Playform's 56c tree it reports exactly the failure:
+`e2e-live/admin-journey.live.spec.ts:153: waits for GET /api/admin/users (equals) — no screen or client module sends it`.
+platform-foundation has no `e2e-live/`; its `e2e/` passes, and the `[self-test]`s plant 56c's Journey C
+(the stale GET wait against a screen that sends the search POST and a PATCH of the same path: reported;
+the current POST wait: not), a loop, a map, a template, a helper, an unserved method, an unknown route,
+an unreadable path and an unused `ALLOWED` entry.
+
+**The 072 window (TASK-215's guide).** MIGRATION_v5_to_v6 now says to apply 072 immediately after the
+deploy: between the two, the purge of an account with a moderation decision fails — the code's erasure
+sets `content_safety_audit.input_hash = null`, which is `NOT NULL` until 072 drops it — nothing of it is
+kept (one transaction), the account stays erased, and the daily `gdpr.retention-purge` job runs it
+again (1 hour, then doubling) and completes it once 072 is applied.
+
+**The owner's steps of 2026-11-13 and 14, recorded.** The CI `GOOGLE_API_KEY` is now the CI-only key
+`playform-ci` (restricted to Translation, Text-to-Speech and Speech-to-Text; N-75): the register's row
+says so and no longer calls it "the only Google API key". SECURITY_DEBT TASK-044: the owner's steps 1–3
+done on 2026-11-14 (the staging project `playform-staging-songid`, staging's and dev's settings, the
+alert budgets 1000 and 5000); it stays open until step 4's proof at the staging deploy, as its step 5
+says. ROTATION_RUNBOOK records the staging project's creation. A stale comment in the command bar's
+search handler (`handlers/search.ts`: "the Users screen's list (GET /api/admin/users)") now names the
+screen's POST — a comment only.
+
+**Design check**
+
+- **Reach:** a new test (no runtime code); the guides, SECURITY_DEBT, ROTATION_RUNBOOK and the register
+  (documents); one comment in `app/api/admin/ai/handlers/search.ts` (no statement changes).
+- **Races:** none: the guard reads files; nothing runs.
+- **Dependencies down:** none: no runtime path changes.
+- **Erasure leftovers:** none new; the guide now names the one window (deploy → 072) in which a purge
+  fails, and what completes it.
+- **Screens × responses:** the guard holds every spec's wait to a screen's request, path and method; the
+  Users screen's list read is the search POST, which the specs now wait for.
+- **Journeys touched:** none of the app's; the specs' own waits are what the guard checks (Playform's
+  Journey C is fixed in TASK-5019).
+- **Weakens a tenant's protection?** No: a test and documents.
+
+**Threat model**
+
+- **Boundary:** the repositories' own test and documents; one comment in an admin route module (a
+  high-tier path — nothing executable changes).
+- **Actors that exist today:** none: the defect was ours (a stale wait), not an attacker's; one person
+  pushes, behind 2FA and the branch rulesets.
+- **Bypasses:** a wait the scan cannot read passing unnoticed — refused: an unreadable target is a
+  finding unless `ALLOWED` names it with a reason, and an unused entry fails; a client request whose
+  method is unreadable matches any method (stated, and the screens' methods are literal where it matters:
+  the Users list's POST, its PATCH).
+- **Forgeries:** none: no input is trusted.
+- **Legitimate flows:** every current wait and call in both repositories passes (`ALLOWED` empty); a spec
+  that waits for a request a screen sends, under a template, a map or a loop, is read.
+- **Agreed before code:** the owner's brief for batch 56c3 (2026-11-14): the Journey C fix, a class
+  guard with its without-fix evidence, the 072 sentence, the register rows.
+
+**Self-review**
+
+- **Consumers checked:** every `waitForResponse` / `waitForRequest` in both repositories' `e2e/` and
+  Playform's `e2e-live/` (read by the guard; the parse dump listed each), every client `fetch`-named call,
+  `EventSource` and `sendBeacon`; the guard-self-tests convention (tagged, a running `[self-test]` that
+  calls the scan with input).
+- **Hostile re-read:** a predicate that negates a path (`path !== "/api/admin/session"`, `!url.includes`)
+  is not a target; a template path (`/api/moderation/review${qs}`) matches with or without its query; a
+  path built on an origin is read from its `/api/`; a helper's parameter with no caller in the file is
+  unreadable, so reported.
+
 ### TASK-215 — Data minimisation and retention (S3, S4): named columns, classified exports and responses, no person's words or unkeyed hashes kept, every log field and URL parameter classified, and every lifecycle ended
 
 | Field        | Detail                                                                                                     |

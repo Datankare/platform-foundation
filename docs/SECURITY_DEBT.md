@@ -12,15 +12,15 @@ These are NOT ignored — each has a resolution plan and a hard deadline.
 
 ### TASK-044 — Per-environment ACRCloud projects for security isolation
 
-| Field        | Detail                                                                                 |
-| ------------ | -------------------------------------------------------------------------------------- |
-| **ID**       | TASK-044                                                                               |
-| **Type**     | Security — credential isolation                                                        |
-| **Severity** | Medium                                                                                 |
-| **Phase**    | Phase 8 — Consumer App Integration                                                     |
-| **Status**   | In progress — code and documents done (TASK-203, N-36); the owner's console steps open |
-| **Logged**   | 2026-04-25                                                                             |
-| **Source**   | TASK-026 rotation                                                                      |
+| Field        | Detail                                                                                                                              |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-044                                                                                                                            |
+| **Type**     | Security — credential isolation                                                                                                     |
+| **Severity** | Medium                                                                                                                              |
+| **Phase**    | Phase 8 — Consumer App Integration                                                                                                  |
+| **Status**   | In progress — code and documents done (TASK-203, N-36); the owner's steps 1–3 done 2026-11-14; proof at the staging deploy (step 4) |
+| **Logged**   | 2026-04-25                                                                                                                          |
+| **Source**   | TASK-026 rotation                                                                                                                   |
 
 **What:** All Vercel environments (Production, Preview, Development) share the same ACRCloud
 credentials (`playform-prod-songid`): (1) preview and dev calls consume production's paid credit,
@@ -34,16 +34,21 @@ check follow the selection. Playform's APP_ENV_REFERENCE names each environment'
 `docs/credential-register.json` has one row per project, and ROTATION_RUNBOOK rotates each project
 on its own.
 
-**Owner steps (open):**
+**Owner steps (1–3 done 2026-11-14; 4 and 5 at the staging deploy):**
 
-1. Create the `playform-staging-songid` ACRCloud project (Recorded Audio, Audio Fingerprinting,
-   the ACRCloud Music bucket — as ROTATION_RUNBOOK's "Create project").
-2. In the `playform-staging` Vercel project: set `ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET`
-   and `ACRCLOUD_HOST` to that project's, scoped to its environment only.
-3. In the `playform-dev` Vercel project: set `SONG_ID_PROVIDER=mock` and remove the three
-   `ACRCLOUD_*` values.
-4. Redeploy both, and check each one's `/api/health` lists `song-identification` as its provider
-   says (staging: the probe; dev: not probed — `mock` is local).
+1. Done 2026-11-14: the `playform-staging-songid` ACRCloud project created with the production
+   project's settings (host `identify-us-west-2`; Recorded Audio, Audio Fingerprinting, the ACRCloud
+   Music bucket — as ROTATION_RUNBOOK's "Create project").
+2. Done 2026-11-14: in the `playform-staging` Vercel project, `ACRCLOUD_HOST`,
+   `ACRCLOUD_ACCESS_KEY` and `ACRCLOUD_ACCESS_SECRET` (Sensitive) set to that project's, with
+   `SONG_ID_PROVIDER=acrcloud` and `ACRCLOUD_CREDIT_ALERT_AT=1000`; the `playform` project's two
+   ACRCloud secrets re-saved as Sensitive and its `ACRCLOUD_CREDIT_ALERT_AT=5000` (ROTATION_RUNBOOK,
+   "Credit": the balance was $49.98, at about $6.48 per 1,000 valid requests).
+3. Done 2026-11-14: in the `playform-dev` Vercel project, `SONG_ID_PROVIDER=mock` and no
+   `ACRCLOUD_*` value.
+4. At the staging deploy: redeploy, and check each one's `/api/health` lists `song-identification`
+   as its provider says (staging: the probe, and `song-id-credit`; dev: not probed — `mock` is
+   local). Nothing in the repository can prove this before then.
 5. Then move this row to Resolved.
 
 ---
@@ -273,4 +278,4 @@ The following items were migrated to TASKS.md (Sprint 3c) as they are not securi
 
 ---
 
-_Last updated: November 8, 2026 (TASK-203 — SEC-001 and its style-src remainder SEC-017 resolved; the npm audit advisories cleared; TASK-044's code and documents done, its owner steps open; SEC-012 and SEC-013 traced to build and lint only and kept accepted with the evidence; H-13 recorded as accepted)_
+_Last updated: November 14, 2026 (TASK-217 — TASK-044's owner steps 1–3 done, its proof at the staging deploy). Before: November 8, 2026 (TASK-203 — SEC-001 and its style-src remainder SEC-017 resolved; the npm audit advisories cleared; TASK-044's code and documents done, its owner steps open; SEC-012 and SEC-013 traced to build and lint only and kept accepted with the evidence; H-13 recorded as accepted)_

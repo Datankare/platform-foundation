@@ -304,6 +304,7 @@
     "__tests__/docs-integrity.test.ts",
     "__tests__/dual-control-keys-panel.test.tsx",
     "__tests__/dual-control-readiness.test.ts",
+    "__tests__/e2e-awaited-requests.test.ts",
     "__tests__/e2e-key-wiring.test.ts",
     "__tests__/effect-free-state.test.tsx",
     "__tests__/effect-ledger-conformance.test.ts",
