@@ -29,6 +29,7 @@ import {
   loadSession,
   noteSessionEnded,
   pendingSessionLoad,
+  sessionForChange,
 } from "./context";
 
 /** The refusals this transport handles itself, for every caller (refusal-coverage.test.ts). */
@@ -133,10 +134,10 @@ export async function apiFetch(
   // never starts a read: the provider does, when it mounts. A call made with no token yet (no
   // provider, or a read that failed) is refused by the server with auth.csrf_failed, and
   // answered below by reading the session and making the call again.
-  if (changing && currentSession().status === "loading") {
-    const reading = pendingSessionLoad();
-    if (reading) await reading;
-  }
+  // (The same wait as the auth context's own requests, sessionForChange — awaited only when a read
+  // is under way, so a call made with none goes at once.)
+  if (changing && currentSession().status === "loading" && pendingSessionLoad())
+    await sessionForChange();
   const held = currentSession();
   const token = changing && held.status === "signed-in" ? held.csrfToken : null;
   const response = await fetch(input, withSession(input, init, token));

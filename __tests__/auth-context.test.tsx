@@ -67,11 +67,13 @@ beforeEach(() => {
     const answer = handler(call);
     if (answer === "network-error") throw new TypeError("Failed to fetch");
     const status = answer.status ?? 200;
-    return {
+    const response = {
       ok: status < 400,
       status,
       json: async () => answer.body,
-    } as Response;
+      clone: () => response,
+    } as unknown as Response;
+    return response;
   }) as unknown as typeof fetch;
 });
 
@@ -366,21 +368,135 @@ describe("sign-out", () => {
     }
   });
 
-  it("the session is forgotten here whatever the server answers, or if it cannot be reached", async () => {
+  it("a sign-out the server did not perform is never claimed: the page stays signed in and says so, and can try again (TASK-219)", async () => {
     for (const failure of [
-      () => ({ status: 500, body: { code: "internal.error" } }),
-      () => "network-error" as const,
+      (c: Call) =>
+        c.url === "/api/auth/sign-out"
+          ? { status: 500, body: { code: "internal.error" } }
+          : { body: signedInBody() },
+      (c: Call) =>
+        c.url === "/api/auth/sign-out"
+          ? ("network-error" as const)
+          : { body: signedInBody() },
+      (c: Call) =>
+        c.url === "/api/auth/sign-out"
+          ? { status: 429, body: { code: "rate_limit.exceeded" } }
+          : { body: signedInBody() },
     ]) {
       resetSessionStateForTests(QUICK);
       handler = () => ({ body: signedInBody() });
       const { result, unmount } = await mounted();
       handler = failure;
+      let ended: boolean | undefined;
       await act(async () => {
-        await result.current.signOut();
+        ended = await result.current.signOut();
       });
-      expect(result.current.user).toBeNull();
+      expect(ended).toBe(false);
+      expect(result.current.isAuthenticated).toBe(true);
+      expect(screen.getByTestId("sign-out-failed").textContent).toContain(
+        "You are still signed in"
+      );
+      // Trying again from the notice, now answered: signed out, the notice gone.
+      handler = () => ({ body: { success: true } });
+      await act(async () => {
+        screen.getByRole("button", { name: "Sign out again" }).click();
+      });
+      await waitFor(() => expect(result.current.isAuthenticated).toBe(false));
+      expect(screen.queryByTestId("sign-out-failed")).toBeNull();
       unmount();
     }
+  });
+
+  it("a sign-out not answered, but the session found ended on a fresh read, is a sign-out", async () => {
+    handler = () => ({ body: signedInBody() });
+    const { result } = await mounted();
+    handler = (c) =>
+      c.url === "/api/auth/sign-out"
+        ? "network-error"
+        : { body: { authenticated: false } };
+    let ended: boolean | undefined;
+    await act(async () => {
+      ended = await result.current.signOut();
+    });
+    expect(ended).toBe(true);
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(screen.queryByTestId("sign-out-failed")).toBeNull();
+  });
+
+  it.each([
+    ["signOut", "/api/auth/sign-out"],
+    ["signOutEverywhere", "/api/auth/sign-out-everywhere"],
+  ] as const)(
+    "%s asked while the page's session read is still under way waits for it and sends its token (TASK-219, Deploy smoke run 43722206512)",
+    async (method, url) => {
+      let answerRead: () => void = () => undefined;
+      const read = new Promise<void>((resolve) => (answerRead = resolve));
+      handler = () => ({ body: signedInBody() });
+      global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const call: Call = {
+          url: String(input),
+          method: init?.method ?? "GET",
+          headers: Object.fromEntries(new Headers(init?.headers).entries()),
+          credentials: init?.credentials,
+        };
+        calls.push(call);
+        if (call.url === "/api/auth/session" && call.method === "GET") await read;
+        const body = call.url === url ? { success: true } : signedInBody();
+        const response = {
+          ok: true,
+          status: 200,
+          json: async () => body,
+          clone: () => response,
+        } as unknown as Response;
+        return response;
+      }) as unknown as typeof fetch;
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      expect(result.current.isLoading).toBe(true);
+      let done: Promise<boolean> | undefined;
+      act(() => {
+        done = result.current[method]();
+      });
+      // Nothing is sent before the read answers.
+      expect(calls.filter((c) => c.url === url)).toEqual([]);
+      await act(async () => {
+        answerRead();
+        await done;
+      });
+      expect(calls.filter((c) => c.url === url)).toEqual([
+        expect.objectContaining({
+          method: "POST",
+          headers: { "x-csrf-token": "csrf-1" },
+        }),
+      ]);
+      expect(await done).toBe(true);
+      expect(result.current.isAuthenticated).toBe(false);
+    }
+  );
+
+  it("refused auth.csrf_failed (the token replaced meanwhile): the session is read again and the sign-out sent once more with its current token", async () => {
+    handler = () => ({ body: signedInBody() });
+    const { result } = await mounted();
+    calls.length = 0;
+    let tries = 0;
+    handler = (c) => {
+      if (c.url === "/api/auth/sign-out")
+        return ++tries === 1
+          ? { status: 403, body: { code: "auth.csrf_failed" } }
+          : { body: { success: true } };
+      return { body: signedInBody({ csrfToken: "csrf-2" }) };
+    };
+    let ended: boolean | undefined;
+    await act(async () => {
+      ended = await result.current.signOut();
+    });
+    expect(ended).toBe(true);
+    expect(
+      calls.map((c) => `${c.method} ${c.url} ${c.headers["x-csrf-token"] ?? "-"}`)
+    ).toEqual([
+      "POST /api/auth/sign-out csrf-1",
+      "GET /api/auth/session -",
+      "POST /api/auth/sign-out csrf-2",
+    ]);
   });
 });
 

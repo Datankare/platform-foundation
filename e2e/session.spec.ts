@@ -260,6 +260,13 @@ test("sign out everywhere, from the account page: another device's session ends 
     // as them), on two devices — this browser and the phone, each its own sign-in.
     await signIn(page.context().request, DEVICES);
     await signIn(phone, DEVICES);
+    // The page's own read of its session held back 3 s, as on a cold deployment: the request
+    // still waits for it and carries the token (TASK-219).
+    await page.route("**/api/auth/session", async (route) => {
+      if (route.request().method() === "GET")
+        await new Promise((r) => setTimeout(r, 3000));
+      await route.continue().catch(() => undefined);
+    });
     await page.goto("/account");
     const devices = page.getByRole("region", { name: "Signed-in devices" });
     await devices.getByRole("button", { name: "Sign out everywhere" }).click();
@@ -270,6 +277,7 @@ test("sign out everywhere, from the account page: another device's session ends 
     );
     await devices.getByRole("button", { name: "Yes, sign out everywhere" }).click();
     const res = await done;
+    expect(res.request().headers()["x-csrf-token"]).toMatch(/^[\w-]{43}$/);
     expect(res.status()).toBe(200);
     expect(((await res.json()) as { sessionsEnded?: number }).sessionsEnded).toBe(2);
     await expect(page).toHaveURL(/\/auth/);

@@ -126,17 +126,23 @@ describe("the console's Sign Out ends the session (TASK-184)", () => {
     expect(stored()).toEqual([null, null, null]);
   });
 
-  it.each([
-    ["unreachable", () => Promise.reject(new Error("offline"))],
-    ["answering 500", async () => json("POST /api/auth/sign-out — the provider failing")],
-  ])(
-    "with the server's sign-out %s, the session still ends here and the console leaves for /auth",
-    async (_label, answer) => {
-      serve(answer);
-      fireEvent.click(await openConsole());
-      await waitFor(() => expect(leaveConsole).toHaveBeenCalledWith("/auth"));
-      expect(stored()).toEqual([null, null, null]);
-      expect(document.cookie).toBe("");
-    }
-  );
+  it("with the server's sign-out unreachable, the console stays signed in and says so — it never claims a sign-out the server did not perform (TASK-219)", async () => {
+    serve(() => Promise.reject(new Error("offline")));
+    fireEvent.click(await openConsole());
+    expect((await screen.findByTestId("sign-out-failed")).textContent).toContain(
+      "You are still signed in"
+    );
+    expect(leaveConsole).not.toHaveBeenCalled();
+    // Nothing about the session is written to the browser either way.
+    expect(stored()).toEqual([null, null, null]);
+    expect(document.cookie).toBe("");
+  });
+
+  it("with the identity provider failing, the server still ends the session (ADR-057): the console leaves for /auth", async () => {
+    serve(async () => json("POST /api/auth/sign-out — the provider failing"));
+    fireEvent.click(await openConsole());
+    await waitFor(() => expect(leaveConsole).toHaveBeenCalledWith("/auth"));
+    expect(stored()).toEqual([null, null, null]);
+    expect(document.cookie).toBe("");
+  });
 });

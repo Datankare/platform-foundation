@@ -30,6 +30,20 @@
  *     <App />
  *   </AuthContextProvider>
  *
+ * A request this context sends that changes state on the server — sign out, sign out everywhere,
+ * stay signed in — goes through `sessionChange` (TASK-219), as every screen's goes through
+ * apiFetch: it waits for the page's read of its session when one is under way, sends the
+ * session's forgery token, and, refused `auth.csrf_failed` (no token yet, or one the session has
+ * since replaced), reads the session again and sends once more with its current token. Before,
+ * these sent the token only if the page had already read it: a Sign out clicked while that read
+ * was still under way (a cold deployment: Playform's Deploy smoke run 43722206512, Journey B)
+ * was refused 403 and the page showed sign-in anyway, the session still live on the server.
+ *
+ * A sign-out the server did not perform is never claimed (ADR-057 D6, its browser part): the
+ * page is signed out only when the server ended the session, or a fresh read says it has none;
+ * otherwise it stays signed in and says so plainly — `SignOutFailedNotice`, shown by the provider
+ * whatever screen asked — with a way to try again.
+ *
  * ADR-012: Client-side auth state management. ADR-057: server-side sessions.
  */
 
@@ -40,9 +54,11 @@ import React, {
   useContext,
   useCallback,
   useMemo,
+  useState,
   useSyncExternalStore,
 } from "react";
 import { removeLegacyStoredSession } from "./legacy-session-cleanup";
+import { SignOutFailedNotice } from "./SignOutFailedNotice";
 
 /** Client-side user representation */
 export interface AuthUser {
@@ -85,8 +101,13 @@ export interface AuthContextValue {
    * the browser is signed in.
    */
   sessionStarted: () => Promise<boolean>;
-  /** Sign out — ends the session on the server, then forgets it here */
-  signOut: () => Promise<void>;
+  /**
+   * Sign out — ends the session on the server, then forgets it here. Resolves true when the
+   * session has ended (the server ended it, or a fresh read finds none); false when the server
+   * could not be asked or refused — the page stays signed in and the provider says so, with a
+   * way to try again: it never claims a sign-out that did not happen (TASK-219).
+   */
+  signOut: () => Promise<boolean>;
   /**
    * Sign out on every device — ends every session of the account on the server. Resolves true
    * when the server did it (this page is then signed out too); false when it could not be
@@ -186,21 +207,19 @@ function parseSession(data: unknown): SessionState | null {
   };
 }
 
-function askSession(method: "GET" | "POST"): Promise<Response> {
-  const headers: Record<string, string> = {};
-  if (method === "POST" && snapshot.status === "signed-in") {
-    headers["x-csrf-token"] = snapshot.csrfToken;
-  }
+function readSessionRequest(): Promise<Response> {
   return fetch("/api/auth/session", {
-    method,
+    method: "GET",
     credentials: "same-origin",
     cache: "no-store",
-    headers,
   });
 }
 
 async function readSession(method: "GET" | "POST"): Promise<SessionState | null> {
-  const res = await askSession(method);
+  const res =
+    method === "GET"
+      ? await readSessionRequest()
+      : await sessionChange("/api/auth/session");
   if (!res.ok) return null;
   return parseSession(await res.json().catch(() => null));
 }
@@ -222,7 +241,7 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
  */
 async function readStatus(): Promise<{ state: SessionState | null; forNow: boolean }> {
   try {
-    const res = await askSession("GET");
+    const res = await readSessionRequest();
     if (res.ok) {
       return { state: parseSession(await res.json().catch(() => null)), forNow: false };
     }
@@ -319,18 +338,51 @@ export function resetSessionStateForTests(
   listeners.clear();
 }
 
-async function post(path: string): Promise<void> {
+/**
+ * The session as it stands for a state-changing request: the page's read of it, when one is under
+ * way, waited for first (apiFetch waits the same way for every screen's own calls).
+ */
+export async function sessionForChange(): Promise<SessionState> {
+  if (snapshot.status === "loading") {
+    const reading = pendingSessionLoad();
+    if (reading) await reading.catch(() => undefined);
+  }
+  return snapshot;
+}
+
+/** The refusal code of a response, read from a copy (the caller may still read the body). */
+async function codeOf(response: Response): Promise<string | null> {
   try {
-    await fetch(path, {
-      method: "POST",
-      credentials: "same-origin",
-      headers:
-        snapshot.status === "signed-in" ? { "x-csrf-token": snapshot.csrfToken } : {},
-    });
+    const data = (await response.clone().json()) as { code?: unknown };
+    return typeof data.code === "string" ? data.code : null;
   } catch {
     /* justified */
-    // Offline: the session still ends here; the server's session ends by its lifetimes.
+    // Not JSON: no code.
+    return null;
   }
+}
+
+/**
+ * A POST to this origin that changes state, as the auth context sends one (TASK-219): after the
+ * session read under way, with the session's forgery token; refused `auth.csrf_failed`, the
+ * session is read again and the request sent once more with its current token. Throws on a
+ * network failure (the caller decides what that means).
+ */
+async function sessionChange(path: string): Promise<Response> {
+  const held = await sessionForChange();
+  const token = held.status === "signed-in" ? held.csrfToken : null;
+  const send = (csrf: string | null) =>
+    fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: csrf ? { "x-csrf-token": csrf } : {},
+    });
+  const res = await send(token);
+  if (res.status !== 403 || (await codeOf(res)) !== "auth.csrf_failed") return res;
+  const renewed = await loadSession();
+  if (renewed.status !== "signed-in" || renewed.csrfToken === token) return res;
+  return send(renewed.csrfToken);
 }
 
 export function AuthContextProvider({ children }: { children: React.ReactNode }) {
@@ -341,22 +393,40 @@ export function AuthContextProvider({ children }: { children: React.ReactNode })
     []
   );
 
-  // The server ends the session; it is forgotten here whatever the server answers, so a failed
-  // sign-out never leaves the page claiming one.
+  // Set when a sign-out the person asked for did not happen: the provider says so (TASK-219).
+  const [signOutFailed, setSignOutFailed] = useState(false);
+
+  // The server ends the session, and only then is it forgotten here: a sign-out refused or never
+  // answered leaves the page signed in, saying so — the cookie and the server's session are still
+  // live, and a page that showed sign-in would hand the next person at this computer the account.
   const signOut = useCallback(async () => {
-    await post("/api/auth/sign-out");
-    setState(SIGNED_OUT);
+    let ended = false;
+    try {
+      const res = await sessionChange("/api/auth/sign-out");
+      // 401: the session had already ended — there is nothing left to end.
+      ended = res.ok || res.status === 401;
+    } catch {
+      /* justified */
+      // Offline: not ended; a fresh read below decides.
+    }
+    if (!ended) {
+      // Ended some other way meanwhile (another tab, the server's lifetimes)?
+      const now = await loadSession().catch(() => snapshot);
+      ended = now.status === "signed-out";
+    }
+    if (ended) {
+      setSignOutFailed(false);
+      setState(SIGNED_OUT);
+      return true;
+    }
+    setSignOutFailed(true);
+    return false;
   }, []);
 
   const signOutEverywhere = useCallback(async () => {
     let done = false;
     try {
-      const res = await fetch("/api/auth/sign-out-everywhere", {
-        method: "POST",
-        credentials: "same-origin",
-        headers:
-          snapshot.status === "signed-in" ? { "x-csrf-token": snapshot.csrfToken } : {},
-      });
+      const res = await sessionChange("/api/auth/sign-out-everywhere");
       const data = (await res.json().catch(() => null)) as { success?: unknown } | null;
       done = res.ok && data?.success === true;
       // The session had already ended: there is nothing left to end from here.
@@ -398,7 +468,17 @@ export function AuthContextProvider({ children }: { children: React.ReactNode })
     [user, session, sessionStarted, signOut, signOutEverywhere, staySignedIn]
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      {signOutFailed && session.status === "signed-in" ? (
+        <SignOutFailedNotice
+          onRetry={() => void signOut()}
+          onDismiss={() => setSignOutFailed(false)}
+        />
+      ) : null}
+    </AuthContext.Provider>
+  );
 }
 
 /**

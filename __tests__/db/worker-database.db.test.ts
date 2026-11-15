@@ -7,8 +7,15 @@
  * @not-guard: checks at run time, on the database, what __tests__/db-isolation.test.ts checks in
  * the configuration: that this suite is connected to its jest worker's copy (helpers/db-workers.ts)
  * as app_tenant and as the owner, and that a catalogue row it writes is seen by no other database —
- * neither the one the copies were made from nor another worker's.
+ * neither the one the copies were made from nor another worker's — and that a jest run started
+ * inside this one (as __tests__/env-isolation.test.ts starts one) makes and drops copies of its
+ * own and leaves this run's in place (TASK-219: before, its teardown dropped every copy of the
+ * live run, CI run 43722156950).
  */
+import { spawnSync } from "child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { Client } from "pg";
 import { dbDescribe } from "../helpers/db";
 import {
@@ -16,6 +23,7 @@ import {
   copyDatabase,
   databaseLevel,
   databaseOf,
+  runDatabases,
   withDatabase,
   WORKERS_ENV,
   type WorkerDatabases,
@@ -125,5 +133,83 @@ dbDescribe("each jest worker has a database of its own (TASK-218)", () => {
     } finally {
       await ask(owner, "delete from platform_config where key = $1", [key]);
     }
+  });
+  it("a jest run started inside this one makes and drops its own copies, and leaves this run's in place (TASK-219)", async () => {
+    const run = workers();
+    const dir = mkdtempSync(join(tmpdir(), "nested-run-"));
+    const out = join(dir, "probe.json");
+    try {
+      const root = join(__dirname, "..", "..");
+      const child = spawnSync(
+        process.execPath,
+        [
+          join(root, "node_modules", "jest", "bin", "jest.js"),
+          "--runTestsByPath",
+          __filename,
+          "-t",
+          "probe: the database a nested run is given",
+          "--coverage=false",
+          "--silent",
+        ],
+        {
+          cwd: root,
+          env: { ...process.env, WORKER_DB_PROBE_OUT: out },
+          encoding: "utf8",
+          timeout: 120_000,
+        }
+      );
+      expect({
+        status: child.status,
+        err: child.status === 0 ? "" : child.stderr,
+      }).toEqual({
+        status: 0,
+        err: "",
+      });
+      const probe = JSON.parse(readFileSync(out, "utf8")) as {
+        db: string;
+        owner: number;
+        names: string[];
+      };
+      // Its own copy, made by its own process — not one of this run's, not the original.
+      expect(probe.owner).not.toBe(run.owner);
+      expect(Object.values(run.names)).not.toContain(probe.db);
+      expect(probe.db).not.toBe(run.base);
+      expect(probe.names).toContain(probe.db);
+      const c = new Client({
+        connectionString: withDatabase(process.env[BASE_OWNER_URL_ENV]!, "postgres"),
+      });
+      await c.connect();
+      try {
+        const { rows } = await c.query<{ datname: string }>(
+          "select datname from pg_database where datname = any($1)",
+          [[...Object.values(run.names), ...probe.names]]
+        );
+        const present = rows.map((r) => r.datname).sort();
+        // This run's copies all stand; the nested run's are gone with it.
+        expect(present).toEqual([...Object.values(run.names)].sort());
+      } finally {
+        await c.end();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 150_000);
+
+  it("probe: the database a nested run is given", async () => {
+    const out = process.env.WORKER_DB_PROBE_OUT;
+    if (!out) return; // only in the nested run above
+    const nested = runDatabases()!;
+    const [row] = await ask(
+      process.env.TEST_DATABASE_URL!,
+      "select current_database() as db"
+    );
+    writeFileSync(
+      out,
+      JSON.stringify({
+        db: row.db,
+        owner: nested.owner,
+        names: Object.values(nested.names),
+      })
+    );
   });
 });

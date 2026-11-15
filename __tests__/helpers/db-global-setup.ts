@@ -5,13 +5,15 @@
  * TEST_DATABASE_OWNER_URL), a copy of it for each worker this run may start, made as the owner
  * from the maintenance database `postgres` (a session on the copied database itself would block
  * the copy). The names go to the workers in TEST_DATABASE_WORKERS (they inherit this process's
- * environment); helpers/db-workers.ts says why, and how a copy keeps the database's own privileges. Without a database configured: nothing.
+ * environment); helpers/db-workers.ts says why, how a copy keeps the database's own privileges, and
+ * why a run started inside another makes its own (TASK-219). Without a database configured: nothing.
  */
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import {
   copyDatabase,
   databaseOf,
+  leaveEnclosingRun,
   quoteIdent,
   withDatabase,
   workerDatabaseName,
@@ -22,6 +24,9 @@ import {
 export default async function globalSetup(globalConfig: {
   maxWorkers: number;
 }): Promise<void> {
+  // A run started inside another (a test's own jest run) is a run of its own: it starts from the
+  // database the enclosing run copied, and makes copies of its own (TASK-219).
+  leaveEnclosingRun();
   const url = process.env.TEST_DATABASE_URL;
   const owner = process.env.TEST_DATABASE_OWNER_URL;
   if (!url || !owner || process.env[WORKERS_ENV]) return;
@@ -52,6 +57,12 @@ export default async function globalSetup(globalConfig: {
   } finally {
     await c.end();
   }
-  const workers: WorkerDatabases = { base, names };
+  const workers: WorkerDatabases = {
+    base,
+    names,
+    owner: process.pid,
+    baseUrl: url,
+    baseOwnerUrl: owner,
+  };
   process.env[WORKERS_ENV] = JSON.stringify(workers);
 }

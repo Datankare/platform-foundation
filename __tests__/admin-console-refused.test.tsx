@@ -12,7 +12,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const push = jest.fn();
 const replace = jest.fn();
-const signOut = jest.fn(async () => undefined);
+const signOut = jest.fn(async () => true);
 /** The page's sign-in session, as the auth context reports it (absent: a page not yet told). */
 const mockPageSession: { current?: { status: string } } = {};
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push, replace }) }));

@@ -26,7 +26,7 @@ import {
 } from "@/components/refusal/RefusalNotice";
 
 const replace = jest.fn();
-const signOut = jest.fn(async () => undefined);
+const signOut = jest.fn(async () => true);
 jest.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
 jest.mock("@/platform/auth/context", () => ({ useAuth: () => ({ signOut }) }));
 

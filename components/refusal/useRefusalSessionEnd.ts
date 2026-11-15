@@ -31,12 +31,18 @@ export function useRefusalSessionEnd(): void {
       handled = true;
       const code = (event as CustomEvent<{ code?: unknown }>).detail?.code;
       void (async () => {
+        // Sign-in is shown once the session has ended; a sign-out that did not happen leaves the
+        // screen signed in, and the provider says so, with a way to try again (TASK-219).
+        let ended = false;
         try {
-          await signOut();
+          ended = await signOut();
         } catch {
-          // The context forgets the session whatever the server answers; sign-in is shown.
+          /* justified */
+          // Not ended: the provider's notice stands.
         }
-        router.replace(sessionEndAddress(typeof code === "string" ? code : ""));
+        if (ended)
+          router.replace(sessionEndAddress(typeof code === "string" ? code : ""));
+        else handled = false;
       })();
     };
     window.addEventListener(SESSION_END_EVENT, onEnd);

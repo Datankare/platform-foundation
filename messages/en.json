@@ -1328,7 +1328,11 @@
       "idle_title": "Still there?",
       "idle_text": "{seconds, plural, one {You will be signed out in # second because this page has been idle.} other {You will be signed out in # seconds because this page has been idle.}} Anything you have typed stays here if you stay signed in.",
       "stay_signed_in": "Stay signed in",
-      "sign_out": "Sign out"
+      "sign_out": "Sign out",
+      "sign_out_failed_title": "You are still signed in",
+      "sign_out_failed_text": "Signing out did not finish, so this device is still signed in. Check your connection, then try again.",
+      "sign_out_try_again": "Sign out again",
+      "sign_out_dismiss": "Dismiss"
     },
     "readiness": {
       "names": {

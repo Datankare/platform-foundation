@@ -491,7 +491,9 @@ export default function AdminPage() {
           refusal={session.refusal}
           onRetry={() => setSessionAttempt((n) => n + 1)}
           onSignOut={() => {
-            void signOut().then(() => router.push("/auth"));
+            void signOut().then((ended) => {
+              if (ended) router.push("/auth");
+            });
           }}
         />
       </main>
@@ -502,7 +504,9 @@ export default function AdminPage() {
     return (
       <MfaEnrollment
         onSignOut={() => {
-          void signOut().then(() => router.push("/auth"));
+          void signOut().then((ended) => {
+            if (ended) router.push("/auth");
+          });
         }}
       />
     );
@@ -536,7 +540,9 @@ export default function AdminPage() {
           type="button"
           className="mt-4 rounded bg-blue-700 px-4 py-2 text-sm text-white"
           onClick={() => {
-            void signOut().then(() => router.push("/auth"));
+            void signOut().then((ended) => {
+              if (ended) router.push("/auth");
+            });
           }}
         >
           {renderMessage("screens.refusal.sign_out")}
@@ -557,9 +563,13 @@ export default function AdminPage() {
       onSignOut={() => {
         // The session ends — the server revokes it and this browser forgets its tokens — then a
         // full load to sign-in (TASK-184: it only left for "/", still signed in).
+        // Only once the server has ended it (TASK-219): a refused sign-out leaves the console
+        // signed in, and the provider says so.
         void signOut()
-          .catch(() => undefined)
-          .then(() => leaveConsole("/auth"));
+          .catch(() => false)
+          .then((ended) => {
+            if (ended) leaveConsole("/auth");
+          });
       }}
       onSectionChange={(section) => setActivePanel(section)}
     >

@@ -33,9 +33,9 @@ export default function HomeClient() {
   }, [isAuthenticated, isLoading, router]);
 
   const handleSignOut = useCallback(async () => {
-    // The server revokes the session (refresh cookie and access token), then it ends here.
-    await signOut();
-    router.replace("/auth");
+    // The server revokes the session, then it ends here; a sign-out that did not happen leaves
+    // the page as it is, and the provider says so (TASK-219).
+    if (await signOut()) router.replace("/auth");
   }, [signOut, router]);
 
   if (isLoading) {

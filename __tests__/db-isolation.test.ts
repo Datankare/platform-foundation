@@ -22,7 +22,15 @@
  *      (TEST_DATABASE_BASE_URL, TEST_DATABASE_BASE_OWNER_URL) outside the files that check the
  *      isolation itself.
  *
- * At run time, helpers/db-workers.ts refuses a configured database with no copies made, and
+ *   4. (TASK-219) a run's copies are dropped only by the process that made them: every place a
+ *      test, helper or script drops a database is listed below (DROPS) with whose database it
+ *      drops, a new one fails; the global teardown drops only when `roleInRun` says this process
+ *      is the run's owner; and the global setup first leaves an enclosing run (a jest run started
+ *      by a test makes copies of its own instead of taking, and then dropping, the live run's —
+ *      CI run 43722156950 lost every copy that way, to __tests__/env-isolation.test.ts's run).
+ *
+ * At run time, helpers/db-workers.ts refuses a configured database with no copies made, and a
+ * process outside the run that made them, and
  * __tests__/db/worker-database.db.test.ts checks that a suite is on its copy and that what it
  * writes no other database sees.
  */
@@ -40,6 +48,8 @@ import { join, relative, sep } from "path";
 import { walkFiles } from "./helpers/repo-files";
 import {
   databaseOf,
+  leaveEnclosingRun,
+  roleInRun,
   selectWorkerDatabase,
   withDatabase,
   workerDatabaseName,
@@ -56,7 +66,6 @@ const SELF = "__tests__/db-isolation.test.ts";
 /** The files that may read the copied database's own settings: the isolation's own. */
 const BASE_READERS = new Set([
   "__tests__/helpers/db-workers.ts",
-  "__tests__/helpers/db-global-teardown.ts",
   "__tests__/db/worker-database.db.test.ts",
   "__tests__/db-isolation.test.ts",
 ]);
@@ -152,8 +161,61 @@ export function connectionProblems(file: string, text: string): string[] {
   return out;
 }
 
+/** Each place that drops a database, with whose (TASK-219). Any other is a finding. */
+const DROPS: Readonly<Record<string, string>> = {
+  "__tests__/helpers/db-global-teardown.ts":
+    "the run's copies, only in the process that made them (roleInRun === owner)",
+  "__tests__/helpers/db-global-setup.ts":
+    "copies it has just made, when making the rest failed",
+  "__tests__/helpers/db-workers.ts":
+    "a copy copyDatabase has just made whose own entry differs",
+  "__tests__/db/worker-database.db.test.ts":
+    "its own scratch databases (<its copy>_src, _dst)",
+  "scripts/test-db.sh": "its own database and that database's copies, after its run",
+};
+
+/** Files that drop a database but are not listed, and listed files that no longer do. */
+export function dropProblems(
+  files: readonly { file: string; text: string }[],
+  allowed: Readonly<Record<string, string>> = DROPS
+): string[] {
+  const out: string[] = [];
+  const dropping = new Set(
+    files.filter((f) => /\bdrop\s+database\b/i.test(f.text)).map((f) => f.file)
+  );
+  for (const f of [...dropping].sort())
+    if (!(f in allowed))
+      out.push(
+        `${f}: drops a database — only the run that made a copy may drop it: list it in DROPS with whose database it drops, or leave it to the global teardown`
+      );
+  for (const f of Object.keys(allowed))
+    if (!dropping.has(f)) out.push(`DROPS "${f}": drops no database — remove it`);
+  return out;
+}
+
+/** The teardown drops only as the run's owner; the setup leaves an enclosing run first. */
+export function ownershipProblems(teardown: string, setup: string): string[] {
+  const out: string[] = [];
+  const check = teardown.search(/roleInRun\([^)]*\)\s*!==\s*"owner"/);
+  const drop = teardown.search(/\bdrop\s+database\b/i);
+  if (check < 0 || (drop >= 0 && drop < check))
+    out.push(
+      '__tests__/helpers/db-global-teardown.ts: drops before checking roleInRun(…) !== "owner" — a run started inside another would drop the live run\'s copies'
+    );
+  const leave = setup.search(/^\s*leaveEnclosingRun\(\);/m);
+  const read = setup.search(/process\.env\.TEST_DATABASE_(?:OWNER_)?URL/);
+  if (leave < 0 || (read >= 0 && read < leave))
+    out.push(
+      "__tests__/helpers/db-global-setup.ts: reads the settings before leaveEnclosingRun() — a run started inside another would take the live run's copies"
+    );
+  return out;
+}
+
 /** Every problem in a repository. */
-export function isolationProblems(root: string): string[] {
+export function isolationProblems(
+  root: string,
+  drops: Readonly<Record<string, string>> = DROPS
+): string[] {
   const out: string[] = [];
   const configs = jestConfigs(root);
   if (configs.length === 0) out.push("no jest configuration found");
@@ -169,6 +231,24 @@ export function isolationProblems(root: string): string[] {
     const f = relative(root, p).split(sep).join("/");
     out.push(...connectionProblems(f, readFileSync(p, "utf8")));
   }
+  const scanned = ["__tests__", "scripts", "e2e", "e2e-live"]
+    .flatMap((d) =>
+      walkFiles(join(root, d), (n) => /\.(?:ts|tsx|mjs|cjs|js|sh)$/.test(n))
+    )
+    .map((p) => ({
+      file: relative(root, p).split(sep).join("/"),
+      text: readFileSync(p, "utf8"),
+    }))
+    .filter((f) => f.file !== SELF);
+  out.push(...dropProblems(scanned, drops));
+  const read = (f: string) =>
+    existsSync(join(root, f)) ? readFileSync(join(root, f), "utf8") : "";
+  out.push(
+    ...ownershipProblems(
+      read("__tests__/helpers/db-global-teardown.ts"),
+      read("__tests__/helpers/db-global-setup.ts")
+    )
+  );
   return out;
 }
 
@@ -230,7 +310,16 @@ describe("the database isolation's self-tests (TASK-218)", () => {
         join(dir, "__tests__", "a.test.ts"),
         'const c = new Client({ connectionString: "postgresql://postgres@localhost/replay" });\nconst b = process.env.TEST_DATABASE_BASE_URL;\n'
       );
-      expect(isolationProblems(dir)).toEqual([
+      // The scratch repository's teardown and setup are the run-owning ones (TASK-219).
+      writeFileSync(
+        join(dir, "__tests__", "helpers", "db-global-teardown.ts"),
+        'if (w === null || roleInRun(w) !== "owner") return;\n'
+      );
+      writeFileSync(
+        join(dir, "__tests__", "helpers", "db-global-setup.ts"),
+        "leaveEnclosingRun();\n"
+      );
+      expect(isolationProblems(dir, {})).toEqual([
         expect.stringMatching(/^jest\.other\.config\.cjs: globalSetup must be/),
         "__tests__/helpers/db.ts: reads TEST_DATABASE_URL before selectWorkerDatabase()",
         expect.stringMatching(
@@ -258,20 +347,23 @@ describe("the database isolation's self-tests (TASK-218)", () => {
       TEST_DATABASE_URL: base,
       TEST_DATABASE_OWNER_URL: owner,
       JEST_WORKER_ID: id,
-      [WORKERS_ENV]: JSON.stringify({ base: "replay", names }),
+      [WORKERS_ENV]: JSON.stringify({ base: "replay", names, owner: 4242 }),
     });
+    // As a worker of the run's process (4242).
+    const asWorker = (e: Record<string, string | undefined>) =>
+      selectWorkerDatabase(e, 5001, 4242);
     const w2 = env("2");
-    selectWorkerDatabase(w2);
+    asWorker(w2);
     expect(w2.TEST_DATABASE_URL).toBe(withDatabase(base, "replay_w2_r1"));
     expect(w2.TEST_DATABASE_URL).toContain("app_tenant:pw@");
     expect(w2.TEST_DATABASE_URL).toContain("TimeZone");
     expect(databaseOf(w2.TEST_DATABASE_OWNER_URL!)).toBe("replay_w2_r1");
     // Idempotent: a second selection (helpers/db.ts after jest.setup.ts) changes nothing.
     const again = { ...w2 };
-    selectWorkerDatabase(again);
+    asWorker(again);
     expect(again).toEqual(w2);
     const w1 = env("1");
-    selectWorkerDatabase(w1);
+    asWorker(w1);
     expect(databaseOf(w1.TEST_DATABASE_URL!)).not.toBe(databaseOf(w2.TEST_DATABASE_URL!));
     // A long base name stays within Postgres's 63 bytes, and stays distinct per worker.
     const long = workerDatabaseName("x".repeat(70), 3, "r1");
@@ -287,23 +379,106 @@ describe("the database isolation's self-tests (TASK-218)", () => {
       })
     ).toThrow(/made no per-worker databases/);
     expect(() =>
-      selectWorkerDatabase({
-        TEST_DATABASE_URL: "postgresql://a@h/replay",
-        TEST_DATABASE_OWNER_URL: "postgresql://b@h/replay",
-        JEST_WORKER_ID: "3",
-        [WORKERS_ENV]: JSON.stringify({ base: "replay", names: { "1": "replay_w1_r" } }),
-      })
+      selectWorkerDatabase(
+        {
+          TEST_DATABASE_URL: "postgresql://a@h/replay",
+          TEST_DATABASE_OWNER_URL: "postgresql://b@h/replay",
+          JEST_WORKER_ID: "3",
+          [WORKERS_ENV]: JSON.stringify({
+            base: "replay",
+            names: { "1": "replay_w1_r" },
+            owner: 7,
+          }),
+        },
+        7,
+        1
+      )
     ).toThrow(/no per-worker database for jest worker 3/);
     expect(() =>
-      selectWorkerDatabase({
-        TEST_DATABASE_URL: "postgresql://a@h/other",
-        TEST_DATABASE_OWNER_URL: "postgresql://b@h/other",
-        JEST_WORKER_ID: "1",
-        [WORKERS_ENV]: JSON.stringify({ base: "replay", names: { "1": "replay_w1_r" } }),
-      })
+      selectWorkerDatabase(
+        {
+          TEST_DATABASE_URL: "postgresql://a@h/other",
+          TEST_DATABASE_OWNER_URL: "postgresql://b@h/other",
+          JEST_WORKER_ID: "1",
+          [WORKERS_ENV]: JSON.stringify({
+            base: "replay",
+            names: { "1": "replay_w1_r" },
+            owner: 7,
+          }),
+        },
+        7,
+        1
+      )
     ).toThrow(/names other, not replay/);
     const none: Record<string, string | undefined> = {};
     selectWorkerDatabase(none);
     expect(none).toEqual({});
+  });
+  it("[self-test] a process outside the run is refused a copy; a run started inside another leaves it and starts from its database (TASK-219)", () => {
+    const map = {
+      base: "replay",
+      names: { "1": "replay_w1_r", "2": "replay_w2_r" },
+      owner: 100,
+      baseUrl: "postgresql://app_tenant:pw@h/replay",
+      baseOwnerUrl: "postgresql://postgres:pw@h/replay",
+    };
+    expect(roleInRun(map, 100, 1)).toBe("owner");
+    expect(roleInRun(map, 200, 100)).toBe("worker");
+    expect(roleInRun(map, 300, 200)).toBe("outside");
+    // A jest run a test started (process 300, under worker 200): it inherits worker 1's copy and the map.
+    const inherited = (): Record<string, string | undefined> => ({
+      TEST_DATABASE_URL: "postgresql://app_tenant:pw@h/replay_w1_r",
+      TEST_DATABASE_OWNER_URL: "postgresql://postgres:pw@h/replay_w1_r",
+      TEST_DATABASE_BASE_URL: map.baseUrl,
+      TEST_DATABASE_BASE_OWNER_URL: map.baseOwnerUrl,
+      JEST_WORKER_ID: "1",
+      [WORKERS_ENV]: JSON.stringify(map),
+    });
+    expect(() => selectWorkerDatabase(inherited(), 300, 200)).toThrow(
+      /outside the jest run/
+    );
+    const env = inherited();
+    expect(leaveEnclosingRun(env, 300, 200)).toBe(true);
+    expect(env).toEqual({
+      TEST_DATABASE_URL: map.baseUrl,
+      TEST_DATABASE_OWNER_URL: map.baseOwnerUrl,
+      JEST_WORKER_ID: "1",
+    });
+    // The run's own process keeps its map; any other process leaves it.
+    expect(leaveEnclosingRun(inherited(), 100, 1)).toBe(false);
+    expect(leaveEnclosingRun(inherited(), 200, 100)).toBe(true);
+  });
+
+  it("[self-test] a new place that drops a database, a teardown that drops without the owner check, a setup that does not leave an enclosing run, are found (TASK-219)", () => {
+    const allowed = { "a/teardown.ts": "planted" };
+    expect(
+      dropProblems(
+        [
+          { file: "a/teardown.ts", text: "drop database x" },
+          {
+            file: "__tests__/x.test.ts",
+            text: 'await c.query("DROP DATABASE replay_w1_r")',
+          },
+          { file: "__tests__/y.test.ts", text: "select 1" },
+        ],
+        allowed
+      )
+    ).toEqual([expect.stringMatching(/^__tests__\/x\.test\.ts: drops a database/)]);
+    expect(dropProblems([], allowed)).toEqual([
+      'DROPS "a/teardown.ts": drops no database — remove it',
+    ]);
+    const goodTeardown =
+      'const w = runDatabases(); if (w === null || roleInRun(w) !== "owner") return;\nc.query("drop database x");';
+    const goodSetup = "leaveEnclosingRun();\nconst url = process.env.TEST_DATABASE_URL;";
+    expect(ownershipProblems(goodTeardown, goodSetup)).toEqual([]);
+    expect(ownershipProblems('c.query("drop database x");', goodSetup)).toEqual([
+      expect.stringMatching(/db-global-teardown\.ts: drops before checking/),
+    ]);
+    expect(
+      ownershipProblems(
+        goodTeardown,
+        "const url = process.env.TEST_DATABASE_URL;\nleaveEnclosingRun();"
+      )
+    ).toEqual([expect.stringMatching(/db-global-setup\.ts: reads the settings before/)]);
   });
 });

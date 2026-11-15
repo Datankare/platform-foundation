@@ -23,7 +23,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 
 const push = jest.fn();
 const replace = jest.fn();
-const signOut = jest.fn(async () => undefined);
+const signOut = jest.fn(async () => true);
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push, replace }) }));
 jest.mock("@/platform/auth/context", () => ({
   ...jest.requireActual("@/platform/auth/context"),

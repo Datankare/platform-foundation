@@ -7,6 +7,115 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-219 — A test's own jest run dropped every per-worker database of the live run; a sign-out clicked before the page's session read answered was refused, and the page claimed it anyway
+
+| Field        | Detail                                                                                                                                                    |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-219                                                                                                                                                  |
+| **Type**     | Defect (56c2's per-worker databases: a nested run's teardown; the auth context's own state-changing requests)                                             |
+| **Severity** | High (a sign-out shown as done while the session and cookie stayed live: on a shared computer the next person is signed in); Medium (CI's Layer 1 failed) |
+| **Phase**    | Phase 5                                                                                                                                                   |
+| **Target**   | v6.0.0 (RC)                                                                                                                                               |
+| **Status**   | Fixed on develop (batch 56c4)                                                                                                                             |
+| **Logged**   | 2026-11-15 (platform CI run 43722156950, Layer 1 — Unit tests; Playform Deploy smoke run 43722206512, Journey B)                                          |
+
+Batch 56c4, in both repositories (Playform: its TASK-5021).
+
+**1. A jest run started by a test dropped the live run's databases (TASK-218's defect).** CI's Layer 1
+failed 8 suites / 41 tests with `database "replay_w1_…" does not exist` (and w2, w3), each after
+`PASS __tests__/env-isolation.test.ts`. That test starts a jest run of its own with the test's
+environment, so the child inherited `TEST_DATABASE_WORKERS`: its global setup made no copies (the map
+was there), and its global teardown dropped every copy of the live run. When the parent worker was not
+worker 1, the child's own selection also refused (it is worker 1; the URL named w2 or w3). No local
+gate ran the whole suite with the database configured and parallel workers; `npm run test:db` runs
+`__tests__/db` only, and plain `npm test` has no database. **Reproduced** on the pushed tree, own
+Postgres 16 cluster: env-isolation beside route-role-matrix.db, 2 workers — 3 of 3 runs, 1279–1306
+tests failing on `…_w2_… does not exist`; and in CI's Layer 1 shape (below).
+**Fixed: a run's copies are its own.** The map names the process that made them (`owner`) and the
+database they copy. Only that process's teardown drops them (`roleInRun(...) !== "owner"` → nothing);
+only it and its workers select one — a process outside the run is refused; and a jest run started inside
+another leaves the enclosing run first (`leaveEnclosingRun`: its settings put back on the copied
+database) and makes copies of its own, which its teardown drops. A copy blocked for a moment by a session
+on the database (55006) is asked again, briefly. **Guards:** `__tests__/db-isolation.test.ts` (every place
+that drops a database is listed with whose — `DROPS`, a new one fails; the teardown checks ownership
+before it drops; the setup leaves an enclosing run before it reads the settings) and, at run time,
+`__tests__/db/worker-database.db.test.ts` starts a jest run inside its own and checks that the child got a
+copy of its own, made and dropped by its own process, and that every copy of the parent run still
+stands. Without the fix the static guard reports the old teardown and setup; the runtime case is the
+reproduction above.
+**The gate this missed is now a gate** (batch-common.md, 2026-11-15): every jest pass CI's Layer 1 runs,
+in its shape (database configured, `CI=true`, `REQUIRE_DB_TESTS=1`, `REQUIRE_VALKEY_TESTS=1`, the seed,
+`JOURNEY_BASE`, parallel workers), three times green on the final trees.
+
+**2. A sign-out the server refused, shown as done.** Playform's Journey B (the first run after a deploy,
+cold functions) clicked the console's Sign out and got `POST /api/auth/sign-out` 403. The console shows
+itself once `GET /api/admin/session` answers, through apiFetch, which does not wait for anything before a
+GET; the auth context's own `post()` sent the forgery token only if the page's `GET /api/auth/session`
+had already answered (`snapshot.status === "signed-in"`), and `signOut()` then forgot the session
+whatever the server said. **Reproduced** on the pushed tree (the session read held back 6 s, the
+console's Sign out clicked): 403, no token sent, the server's session still live, the page at /auth.
+The same pattern was in sign out everywhere and stay signed in.
+**Fixed.** The context's state-changing requests go through `sessionChange`: wait for the page's read of
+its session when one is under way (`sessionForChange`, which apiFetch now uses too), send the token, and,
+refused `auth.csrf_failed`, read the session again and send once more with its current token. A sign-out
+is claimed only when the server ended the session (2xx, or 401: already ended) or a fresh read finds
+none: `signOut()` resolves true or false (as `signOutEverywhere` did), and on false the page stays signed
+in and the provider shows `SignOutFailedNotice` ("You are still signed in … Sign out again"), over
+whatever screen asked. Every screen that offers a sign-out goes to sign-in only on true: the console's
+shell, refusal, MFA-enrolment and no-section screens (app/admin/page.tsx), the home screen, the
+erased-account refusal (useRefusalSessionEnd), the idle warning (stays put; the notice says it).
+ADR-057 gains D6a.
+**Guard:** `__tests__/session-change-requests.test.ts` (`@guard`) reads every module that can run in the
+browser and finds each request that may change state on this origin outside apiFetch and
+`sessionChange` — a global `fetch`, `fetchWithTimeout` or `navigator.sendBeacon` whose method is not
+GET/HEAD/OPTIONS (or unreadable) to a path here (or, in a browser module, an address it cannot read);
+`SITES` lists the two paths and the legacy move (no session yet), each with why. Without the fix it
+reports the context's sign-out, sign-out-everywhere and stay-signed-in requests.
+**Tests:** `__tests__/auth-context.test.tsx` (a sign-out or sign-out everywhere asked during the read
+waits and sends the token; `auth.csrf_failed` → re-read → once more with the new token; 500, 429 and the
+network → stays signed in, the notice, "Sign out again"; unanswered but found ended → signed out),
+`__tests__/sign-out-surfaces.test.tsx`, and `e2e/sign-out.spec.ts` at 1280 and 390 px (the session read
+held back 3 s, the console's and the home screen's Sign out failing: each waited and sent the token, the
+page stayed, the server's session live; then "Sign out again" ends it). `e2e/session.spec.ts`'s sign out
+everywhere now runs with the read held back and checks the token.
+
+**Design check**
+
+- **Reach:** the auth context (`platform/auth/context.tsx`), apiFetch's wait, a notice component, the
+  screens' sign-out callers, the test harness's database helpers, tests, the ADR.
+- **Races:** the fixed ones: a state-changing request before the session read (now waits); a nested run
+  and the live run's copies (now separate).
+- **Dependencies down:** the session read failing: a sign-out without a token is refused, the re-read
+  fails, the page stays signed in and says so — never claims.
+- **Erasure leftovers:** none: nothing is stored or kept by this change.
+- **Screens × responses:** every sign-out surface handles true/false; the notice is the catalog's
+  (screens.session).
+- **Journeys touched:** sign-out (console, home, account), the live journeys' sign-out steps (they now
+  also check the POST's 200 where they did not).
+- **Weakens a tenant's protection?** No: it strengthens one — a sign-out is never shown over a live session.
+
+**Threat model**
+
+- **Boundary:** the browser's session (cookie, forgery token) and the sign-out routes; the test harness.
+- **Actors that exist today:** a person signing out on a shared or public computer; the next person at it
+  (with the old behaviour, a reload signed them in as the first).
+- **Bypasses:** a screen calling `fetch` itself — refused by the guard; a sign-out that fails — the notice,
+  never sign-in.
+- **Forgeries:** unchanged: the server's origin check and token; the retry sends only the session's own
+  token, read from this origin.
+- **Legitimate flows:** sign out, sign out everywhere, stay signed in, the legacy move, guest restarts
+  (Playform), the console's every screen; the three Layer 1 passes and the serial pass with nested runs.
+- **Agreed before code:** the coordinator's brief for batch 56c4 (2026-11-15).
+
+**Self-review**
+
+- **Consumers checked:** every caller of `signOut` / `signOutEverywhere` in both repositories (listed
+  above, and Playform's profile and identity-conflict screens); every raw `fetch` in a browser module
+  (the guard's scan); every place that drops a database (DROPS); every jest invocation in ci.yml.
+- **Hostile re-read:** a nested run that is itself nested is "outside" both enclosing runs and makes its
+  own; a worker restarted after a crash is still the owner's child; a sign-out whose re-read is
+  refused 429 leaves the page signed in (failed), not out.
+
 ### TASK-218 — CI and test hygiene: a pipeline under pipefail read by a reader that stops early, a browser wait that names no method, and database suites that shared one database
 
 | Field        | Detail                                                                                                                  |
