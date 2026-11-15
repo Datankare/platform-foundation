@@ -303,7 +303,9 @@ test("a staff session idle past its 30 minutes is ended at its next request, and
       [STAFF.id, STAFF.email, TENANT]
     );
     await signInPage(page, STAFF);
-    const read = page.waitForResponse((r) => r.url().endsWith("/api/admin/session"));
+    const read = page.waitForResponse(
+      (r) => r.url().endsWith("/api/admin/session") && r.request().method() === "GET"
+    );
     await page.goto("/admin");
     expect((await read).status()).toBe(200);
     await page.getByRole("navigation", { name: "Admin sections" }).waitFor();

@@ -6,7 +6,9 @@
  * `dbDescribe` suite is skipped — unless REQUIRE_DB_TESTS=1, when a missing database is a failure,
  * so CI can never pass by skipping.
  *
- * Suites share one database and run in parallel, so each works only in tenants it creates
+ * Each jest worker has a database of its own, copied from that one (TASK-218,
+ * helpers/db-workers.ts): suites run in parallel, but no two share a database while they run.
+ * Within a worker suites run one after another, so each still works only in tenants it creates
  * (`createTestTenant`), with random ids, and removes them afterwards.
  */
 
@@ -15,7 +17,10 @@ import { Pool } from "pg";
 import { closeDataPools, setDataPoolFactory, withOwnerTx } from "@/platform/data";
 import { poolConfig } from "@/platform/data/pool";
 import { runWithTenant, type TenantContext } from "@/platform/tenancy/context";
+import { selectWorkerDatabase } from "./db-workers";
 
+// This worker's own database, also for a consumer whose jest setup is its own (idempotent).
+selectWorkerDatabase();
 const URL = process.env.TEST_DATABASE_URL;
 const OWNER = process.env.TEST_DATABASE_OWNER_URL;
 export const DB_ENABLED = Boolean(URL && OWNER);
@@ -28,7 +33,7 @@ if (process.env.REQUIRE_DB_TESTS === "1" && !DB_ENABLED) {
 
 /**
  * The bound on every test that uses the database (review 14 M-1): 30 s, not jest's default 5 s.
- * DB suites share one database and run in parallel workers — under CI load (test:coverage,
+ * DB suites run in parallel workers on one Postgres server — under CI load (test:coverage,
  * test:core, the TZ rerun) a statement waits on the others, and a test well inside its work could
  * be failed by the clock. Set here, so every suite that imports this helper has it under any jest
  * configuration — a consumer's own included — and by path in jest.setup.ts for every file under

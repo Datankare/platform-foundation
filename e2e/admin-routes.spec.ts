@@ -128,7 +128,9 @@ async function apiFetch(
 async function openConsole(page: Page, admin: typeof ADMIN_A): Promise<void> {
   await signInPage(page, admin);
   for (let attempt = 0; ; attempt++) {
-    const session = page.waitForResponse((r) => r.url().endsWith("/api/admin/session"));
+    const session = page.waitForResponse(
+      (r) => r.url().endsWith("/api/admin/session") && r.request().method() === "GET"
+    );
     await page.goto("/admin");
     const res = await session;
     if (res.status() !== 429 || attempt >= 3) {
@@ -147,22 +149,23 @@ test("1. every console section opens and reads its view (N-38, N-39)", async ({
   await openConsole(page, ADMIN_A);
   // Each section's own read, as the console asks it (app/admin/page.tsx ENDPOINTS; the Users
   // panel reads its own pages).
-  const sections: [RegExp, string][] = [
-    [/^Roles/, "/api/admin/roles"],
-    [/^Entitlements/, "/api/admin/entitlements"],
-    [/^Password policy/, "/api/admin/password-policy"],
-    [/^Per-account/, "/api/admin/per-account"],
-    [/^Approval policy/, "/api/admin/approval-policy"],
-    [/^Capabilities$/, "/api/admin/capabilities"],
-    [/^Capability map$/, "/api/admin/capability-mapping"],
-    [/^Tenant$/, "/api/admin/tenant"],
-    [/^Tenants/, "/api/operator/tenants"],
-    [/^Jobs/, "/api/operator/jobs"],
+  // With its method: a wait that names none is answered by any request to the path (TASK-218).
+  const sections: [RegExp, string, string][] = [
+    [/^Roles/, "GET", "/api/admin/roles"],
+    [/^Entitlements/, "GET", "/api/admin/entitlements"],
+    [/^Password policy/, "GET", "/api/admin/password-policy"],
+    [/^Per-account/, "GET", "/api/admin/per-account"],
+    [/^Approval policy/, "GET", "/api/admin/approval-policy"],
+    [/^Capabilities$/, "GET", "/api/admin/capabilities"],
+    [/^Capability map$/, "GET", "/api/admin/capability-mapping"],
+    [/^Tenant$/, "GET", "/api/admin/tenant"],
+    [/^Tenants/, "GET", "/api/operator/tenants"],
+    [/^Jobs/, "GET", "/api/operator/jobs"],
     // Last: the console opens on Users, so it is read again only once another section was open.
     // The Users list is a POST of its parameters (TASK-215, A-17: no search text in a URL).
-    [/^Users$/, "/api/admin/users/search"],
+    [/^Users$/, "POST", "/api/admin/users/search"],
   ];
-  for (const [name, path] of sections) {
+  for (const [name, method, path] of sections) {
     let status = 0;
     for (let attempt = 0; attempt < 4; attempt++) {
       // A section already open is left first, so a click reads it again.
@@ -171,14 +174,16 @@ test("1. every console section opens and reads its view (N-38, N-39)", async ({
           .getByRole("navigation")
           .getByRole("button", { name: /^Audit/ })
           .click();
-      const read = page.waitForResponse((r) => new URL(r.url()).pathname === path);
+      const read = page.waitForResponse(
+        (r) => new URL(r.url()).pathname === path && r.request().method() === method
+      );
       await page.getByRole("navigation").getByRole("button", { name }).click();
       const res = await read;
       status = res.status();
       if (status !== 429) break;
       await waitOut(res.headers()["retry-after"]);
     }
-    expect([path, status]).toEqual([path, 200]);
+    expect([method, path, status]).toEqual([method, path, 200]);
     // The view says something: no "could not be read".
     await expect(page.getByRole("main")).not.toContainText(/could not be read/i);
   }

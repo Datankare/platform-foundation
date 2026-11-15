@@ -130,6 +130,8 @@
     "modulePathIgnorePatterns": [
       "<rootDir>/.next/"
     ],
+    "globalSetup": "<rootDir>/__tests__/helpers/db-global-setup.ts",
+    "globalTeardown": "<rootDir>/__tests__/helpers/db-global-teardown.ts",
     "setupFilesAfterEnv": [
       "<rootDir>/jest.setup.ts"
     ],

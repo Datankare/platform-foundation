@@ -36,7 +36,7 @@ const FILE = readFileSync(
 );
 const LIST = FILE.slice(FILE.indexOf("-- @step list"), FILE.indexOf("-- ── Step 2"));
 const REDACT = FILE.slice(FILE.indexOf("-- @step redact"));
-/** The redaction for one tenant (tests run beside others' tenants in one database). */
+/** The redaction for one tenant (other suites' tenants may be in the database). */
 const redactIn = (tenant: string) => {
   const scoped = REDACT.replace(
     "only_tenant constant uuid := null;",

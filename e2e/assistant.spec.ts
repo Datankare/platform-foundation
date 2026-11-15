@@ -109,7 +109,9 @@ test("2. a question the screening blocks: the route's refusal, with the way to i
   await expect(alert).toContainText(refusal!);
   await checkA11y(page);
   const decisions = page.waitForResponse(
-    (r) => new URL(r.url()).pathname === "/api/moderation/appeals"
+    (r) =>
+      new URL(r.url()).pathname === "/api/moderation/appeals" &&
+      r.request().method() === "GET"
   );
   await alert.getByRole("link", { name: APPEAL_LINK }).click();
   await page.waitForURL("**/account");

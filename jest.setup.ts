@@ -18,6 +18,10 @@
 // TASK-181: first, before any module reads a setting — no test inherits the operator's shell
 // (a deployment's settings exported in the terminal changed 46 results).
 import "@/__tests__/helpers/isolate-env";
+// TASK-218: this worker's own database (__tests__/helpers/db-workers.ts) — set before any suite
+// reads TEST_DATABASE_URL, so no two suites share a database while they run.
+import { selectWorkerDatabase } from "@/__tests__/helpers/db-workers";
+selectWorkerDatabase();
 
 process.env.LOG_LEVEL = "silent";
 
@@ -50,7 +54,7 @@ if (process.env.PF_TEST_MODULES !== "none") {
 }
 
 // Review 14 M-1: every test under __tests__/db runs under a 30 s bound, not jest's default 5 s —
-// DB suites share one database across parallel workers, and under CI load (test:coverage,
+// DB suites run in parallel workers on one Postgres server, and under CI load (test:coverage,
 // test:core, the TZ rerun) a statement may wait on the others'. By path, so it holds for every
 // invocation that loads this setup (all three CI runs do) and for a DB suite that does not import
 // __tests__/helpers/db.ts (which sets the same bound for consumers whose setup is their own).

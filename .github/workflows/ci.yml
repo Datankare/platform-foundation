@@ -145,7 +145,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=5 install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
           # The runner image turns off automatic cluster creation (create_main_cluster = false),
           # so the package installs without one: create it when missing, start it if stopped.
-          if ! pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"' | grep -q .; then
+          if [ -z "$(pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"')" ]; then
             sudo pg_createcluster 17 main --start >/dev/null
           fi
           sudo pg_ctlcluster 17 main status >/dev/null || sudo pg_ctlcluster 17 main start
@@ -267,7 +267,8 @@ jobs:
 
       # TASK-204 (N-19): the suites that must act on a seeded key (__tests__/db-serial/*.serial.ts:
       # the kill switch's platform scope) run alone, after the parallel passes — jest's testMatch
-      # leaves them out of those, so they never race another suite on the shared database.
+      # leaves them out of those, so a seeded key they change is never read by another suite
+      # (each worker of the parallel passes has its own copy of the database: TASK-218).
       - name: Layer 1 — Serial database suites
         run: npm run test:db-serial -- --json --outputFile=jest-results-serial.json
         env:
@@ -434,7 +435,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=5 install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
           # The runner image turns off automatic cluster creation (create_main_cluster = false),
           # so the package installs without one: create it when missing, start it if stopped.
-          if ! pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"' | grep -q .; then
+          if [ -z "$(pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"')" ]; then
             sudo pg_createcluster 17 main --start >/dev/null
           fi
           sudo pg_ctlcluster 17 main status >/dev/null || sudo pg_ctlcluster 17 main start
@@ -504,7 +505,7 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get -o Acquire::Retries=5 update -qq
           sudo apt-get -o Acquire::Retries=5 install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
-          if ! pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"' | grep -q .; then
+          if [ -z "$(pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"')" ]; then
             sudo pg_createcluster 17 main --start >/dev/null
           fi
           sudo pg_ctlcluster 17 main status >/dev/null || sudo pg_ctlcluster 17 main start
@@ -635,10 +636,13 @@ jobs:
           docker kill -s TERM app >/dev/null
           code=$(timeout 30 docker wait app)
           elapsed=$(( $(date +%s) - start ))
-          docker logs app 2>&1 | grep '^\[shutdown\]'
+          # The log read once, then tested: under pipefail `docker logs | grep -q` fails when grep
+          # stops at its match while docker is still writing (SIGPIPE; run 43533561700, TASK-218).
+          logs=$(docker logs app 2>&1)
+          grep '^\[shutdown\]' <<<"$logs"
           echo "exit $code after ${elapsed}s"
           [ "$code" = "0" ] || exit 1
-          docker logs app 2>&1 | grep -q '^\[shutdown\] database pools: done' || exit 1
+          grep -q '^\[shutdown\] database pools: done' <<<"$logs" || exit 1
           [ "$elapsed" -le 20 ] || { echo "the stop took longer than its bound"; exit 1; }
 
       - name: Container log

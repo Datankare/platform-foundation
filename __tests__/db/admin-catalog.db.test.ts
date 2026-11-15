@@ -35,7 +35,7 @@ jest.mock("@/platform/rate-limit", () =>
 /**
  * The entitlement toggle's direct-change cases have it off the dual-control list (an operator's
  * governed choice) — for this suite only, through the route's reading of the list; the shared
- * configuration row is never changed (suites run in parallel against one database).
+ * configuration row is never changed (the suites after this one in its worker read it).
  */
 const mockDualControl = { off: true };
 jest.mock("@/app/api/admin/ai/command-bar", () => {

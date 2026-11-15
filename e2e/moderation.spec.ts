@@ -116,7 +116,9 @@ async function freshAdminWindow(): Promise<void> {
 async function openConsole(page: Page): Promise<void> {
   await signIn(page, MODERATOR);
   for (let attempt = 0; ; attempt++) {
-    const session = page.waitForResponse((r) => r.url().endsWith("/api/admin/session"));
+    const session = page.waitForResponse(
+      (r) => r.url().endsWith("/api/admin/session") && r.request().method() === "GET"
+    );
     await page.goto("/admin");
     const res = await session;
     if (res.status() !== 429 || attempt >= 3) {
@@ -134,7 +136,9 @@ async function openConsole(page: Page): Promise<void> {
 async function queueRead(page: Page, act: () => Promise<void>): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     const read = page.waitForResponse(
-      (r) => new URL(r.url()).pathname === "/api/moderation/review"
+      (r) =>
+        new URL(r.url()).pathname === "/api/moderation/review" &&
+        r.request().method() === "GET"
     );
     await act();
     const res = await read;
@@ -218,7 +222,9 @@ test("1. a member's blocked text links to its decision, and the member appeals i
   await expect(link).toBeVisible({ timeout: 30000 });
 
   const decisions = page.waitForResponse(
-    (r) => new URL(r.url()).pathname === "/api/moderation/appeals"
+    (r) =>
+      new URL(r.url()).pathname === "/api/moderation/appeals" &&
+      r.request().method() === "GET"
   );
   await link.click();
   await page.waitForURL("**/account");
@@ -268,7 +274,9 @@ test("2. the moderator reviews the appeal in the console and overturns it (N-117
 
   // The reviewing assistant is advisory: with no model key it has no suggestion, and says so.
   const assisted = page.waitForResponse(
-    (r) => new URL(r.url()).pathname === `/api/moderation/review/${id}/assist`
+    (r) =>
+      new URL(r.url()).pathname === `/api/moderation/review/${id}/assist` &&
+      r.request().method() === "POST"
   );
   await card.getByRole("button", { name: "Get AI suggestion" }).click();
   expect((await assisted).status()).toBe(200);
@@ -345,7 +353,9 @@ test("4. the member sees the appeal decided, and may not read the queue (hostile
 }) => {
   await signIn(page, MEMBER);
   const decisions = page.waitForResponse(
-    (r) => new URL(r.url()).pathname === "/api/moderation/appeals"
+    (r) =>
+      new URL(r.url()).pathname === "/api/moderation/appeals" &&
+      r.request().method() === "GET"
   );
   await page.goto("/account");
   expect((await decisions).status()).toBe(200);

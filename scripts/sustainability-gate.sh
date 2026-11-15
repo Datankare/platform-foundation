@@ -26,8 +26,13 @@ section() { REPORT+="\n── $1 ──\n"; }
 
 section "Code Quality"
 
+# Each check captures its command's output, then reads it: under pipefail, `cmd | grep -q` fails
+# when grep stops at its first match while cmd is still writing (SIGPIPE), and it takes cmd's own
+# failure for "not found" — a failing typecheck read as "zero type errors" (TASK-218).
+
 # 1. Prettier
-if npm run format 2>&1 | grep -q "unchanged\|Wrote 0"; then
+FORMAT_OUTPUT=$(npm run format 2>&1 || true)
+if grep -q "unchanged\|Wrote 0" <<<"$FORMAT_OUTPUT"; then
   # Check if any files were changed
   CHANGED=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' ')
   if [ "$CHANGED" = "0" ]; then
@@ -40,7 +45,8 @@ else
 fi
 
 # 2. TypeScript
-if npm run typecheck 2>&1 | grep -q "error"; then
+TYPECHECK_OUTPUT=$(npm run typecheck 2>&1 || true)
+if grep -q "error" <<<"$TYPECHECK_OUTPUT"; then
   fail "G02 TypeScript: type errors found"
 else
   pass "G02 TypeScript: zero type errors"
@@ -59,15 +65,17 @@ else
 fi
 
 # 4. Tests pass
-if npm run test:coverage 2>&1 | grep -q "Tests:.*failed"; then
+TEST_OUTPUT=$(npm run test:coverage 2>&1 || true)
+if grep -q "Tests:.*failed" <<<"$TEST_OUTPUT"; then
   fail "G04 Tests: some tests failing"
 else
-  TEST_COUNT=$(npm run test:coverage 2>&1 | grep "Tests:" | grep -oE "[0-9]+ passed" | head -1)
+  TEST_COUNT=$(grep "Tests:" <<<"$TEST_OUTPUT" | grep -oE "[0-9]+ passed" | sed -n 1p || true)
   pass "G04 Tests: $TEST_COUNT"
 fi
 
 # 5. Build
-if npm run build 2>&1 | grep -q "error\|Error"; then
+BUILD_OUTPUT=$(npm run build 2>&1 || true)
+if grep -q "error\|Error" <<<"$BUILD_OUTPUT"; then
   fail "G05 Build: build failed"
 else
   pass "G05 Build: clean build"
@@ -158,7 +166,7 @@ section "Architecture"
 SELF_IMPORTS=$(grep -rn "from ['\"]@/" app/ components/ lib/ platform/ 2>/dev/null | grep -v node_modules | grep -v ".test." | while read -r line; do
   FILE_DIR=$(dirname "$(echo "$line" | cut -d: -f1)")
   IMPORT=$(echo "$line" | grep -oE "from ['\"]@/[^'\"]+['\"]" | sed "s/from ['\"]@\///;s/['\"]//g")
-  if [ -n "$IMPORT" ] && echo "$line" | cut -d: -f1 | grep -q "$IMPORT"; then
+  if [ -n "$IMPORT" ] && grep -q "$IMPORT" <<<"${line%%:*}"; then
     echo "$line"
   fi
 done || true)

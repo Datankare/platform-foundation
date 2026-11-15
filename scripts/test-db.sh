@@ -36,7 +36,16 @@ psql -X -q -d postgres -c "select 1" >/dev/null || {
 
 db="pf_test_$(date +%s)_$$"
 psql -X -q -d postgres -c "CREATE DATABASE $db" >/dev/null
-cleanup() { psql -X -q -d postgres -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true; }
+# With it, the per-worker copies jest makes of it (TASK-218), should a run have been killed before
+# its own teardown dropped them.
+cleanup() {
+  local copies
+  copies="$(psql -X -At -d postgres -c "SELECT datname FROM pg_database WHERE datname LIKE '${db}\\_w%'" 2>/dev/null || true)"
+  for d in $copies; do
+    psql -X -q -d postgres -c "DROP DATABASE IF EXISTS \"$d\" WITH (FORCE)" >/dev/null 2>&1 || true
+  done
+  psql -X -q -d postgres -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 
 echo "test:db: replaying the migrations into $db"

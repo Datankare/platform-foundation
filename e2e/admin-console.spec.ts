@@ -90,7 +90,9 @@ test.beforeAll(async () => {
 /** Open the console as `admin` (the test double's session in this browser). */
 async function openConsole(page: Page, admin: typeof ADMIN_A): Promise<void> {
   await signInPage(page, admin);
-  const session = page.waitForResponse((r) => r.url().endsWith("/api/admin/session"));
+  const session = page.waitForResponse(
+    (r) => r.url().endsWith("/api/admin/session") && r.request().method() === "GET"
+  );
   await page.goto("/admin");
   expect((await session).status()).toBe(200);
 }
@@ -127,7 +129,9 @@ test("1. a setting is changed from its edit panel, and held for approval (N-60)"
   await section(
     page,
     "Platform config",
-    page.waitForResponse((r) => r.url().includes("/api/admin/config"))
+    page.waitForResponse(
+      (r) => r.url().includes("/api/admin/config") && r.request().method() === "GET"
+    )
   );
   await page.getByLabel("Filter settings").fill("strike_ban");
   await shot(page, "01-config-list");
@@ -141,8 +145,9 @@ test("1. a setting is changed from its edit panel, and held for approval (N-60)"
     .getByLabel("Why are you changing it?")
     .fill("Fewer bans for first offences");
   await shot(page, "02-config-edit");
-  const sent = page.waitForResponse((r) =>
-    r.url().endsWith("/api/admin/config-ai/execute")
+  const sent = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/api/admin/config-ai/execute") && r.request().method() === "POST"
   );
   await panel.getByRole("button", { name: "Submit change" }).click();
   expect((await sent).status()).toBe(202);
@@ -162,7 +167,9 @@ test("2. a second admin sees the change, who asked and why; approves it; the res
   await section(
     page,
     "Approvals",
-    page.waitForResponse((r) => r.url().includes("/api/admin/approvals"))
+    page.waitForResponse(
+      (r) => r.url().includes("/api/admin/approvals") && r.request().method() === "GET"
+    )
   );
   const card = page.locator("li[data-approval]").filter({ hasText: `Setting ${KEY}` });
   await expect(card).toHaveCount(1);
@@ -180,7 +187,9 @@ test("2. a second admin sees the change, who asked and why; approves it; the res
   await expect(confirm).toContainText(`Setting ${KEY}`);
   await expect(confirm).toContainText(ADMIN_A.email);
   await shot(page, "05-approvals-confirm");
-  const decided = page.waitForResponse((r) => r.url().includes("/api/admin/approvals/"));
+  const decided = page.waitForResponse(
+    (r) => r.url().includes("/api/admin/approvals/") && r.request().method() === "POST"
+  );
   await confirm.getByRole("button", { name: "Approve and apply" }).click();
   expect((await decided).status()).toBe(200);
   const result = page.getByText(
@@ -204,14 +213,19 @@ test("3. a trusted agent is registered through the form (N-66)", async ({ page }
   await section(
     page,
     "Trusted agents",
-    page.waitForResponse((r) => r.url().includes("/api/admin/agent-registry"))
+    page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/admin/agent-registry") && r.request().method() === "GET"
+    )
   );
   await page.getByRole("button", { name: "Register an agent" }).click();
   await page.getByLabel("Agent id").fill("agent:e2e-helper");
   await page.getByLabel("Scope").fill("translate");
   await page.getByLabel("Token ceiling (seconds)").fill("120");
   await shot(page, "07-agents-form");
-  const sent = page.waitForResponse((r) => r.url().endsWith("/api/admin/ai/execute"));
+  const sent = page.waitForResponse(
+    (r) => r.url().endsWith("/api/admin/ai/execute") && r.request().method() === "POST"
+  );
   await page.getByRole("button", { name: "Register", exact: true }).click();
   expect([200, 202]).toContain((await sent).status());
   await expect(
@@ -230,7 +244,9 @@ test("4. an erasure stuck on an unverifiable identity is shown, and an attestati
   await section(
     page,
     "Erasures",
-    page.waitForResponse((r) => r.url().includes("/api/operator/erasures"))
+    page.waitForResponse(
+      (r) => r.url().includes("/api/operator/erasures") && r.request().method() === "GET"
+    )
   );
   const item = page.locator(`li[data-erasure='${ERASED}']`);
   await expect(item).toBeVisible();
@@ -241,8 +257,12 @@ test("4. an erasure stuck on an unverifiable identity is shown, and an attestati
   await item
     .getByLabel("Note (3–500 characters, kept in the audit record)")
     .fill("absent from both pools, checked by the E2E walk");
-  const asked = page.waitForResponse((r) =>
-    r.url().includes(`/api/operator/tenants/${TENANT}/erasures/${ERASED}/attestation`)
+  const asked = page.waitForResponse(
+    (r) =>
+      r
+        .url()
+        .includes(`/api/operator/tenants/${TENANT}/erasures/${ERASED}/attestation`) &&
+      r.request().method() === "POST"
   );
   await item.getByRole("button", { name: "Ask for attestation" }).click();
   expect((await asked).status()).toBe(201);
@@ -266,7 +286,9 @@ test("5. on a phone: the console fits, a change is made and decided, people by a
   await section(
     wide,
     "Audit log",
-    wide.waitForResponse((r) => r.url().includes("/api/admin/audit"))
+    wide.waitForResponse(
+      (r) => r.url().includes("/api/admin/audit") && r.request().method() === "GET"
+    )
   );
   await expect(wide.getByText(ADMIN_A.email).first()).toBeVisible();
   await fitsWidth(wide);
@@ -278,7 +300,9 @@ test("5. on a phone: the console fits, a change is made and decided, people by a
   await openConsole(phoneA, ADMIN_A);
   const picker = phoneA.getByRole("combobox", { name: "Admin sections" });
   await expect(picker).toBeVisible();
-  const settings = phoneA.waitForResponse((r) => r.url().includes("/api/admin/config"));
+  const settings = phoneA.waitForResponse(
+    (r) => r.url().includes("/api/admin/config") && r.request().method() === "GET"
+  );
   await picker.selectOption("platform-config");
   expect((await settings).status()).toBe(200);
   await phoneA.getByLabel("Filter settings").fill("signups_enabled");
@@ -291,8 +315,9 @@ test("5. on a phone: the console fits, a change is made and decided, people by a
     .fill("Close sign-ups for maintenance");
   await fitsWidth(phoneA);
   await shot(phoneA, "12-config-edit-390");
-  const sent = phoneA.waitForResponse((r) =>
-    r.url().endsWith("/api/admin/config-ai/execute")
+  const sent = phoneA.waitForResponse(
+    (r) =>
+      r.url().endsWith("/api/admin/config-ai/execute") && r.request().method() === "POST"
   );
   await panel.getByRole("button", { name: "Submit change" }).click();
   expect((await sent).status()).toBe(202);
@@ -306,7 +331,9 @@ test("5. on a phone: the console fits, a change is made and decided, people by a
   // …and admin-b sees it at 390 px, by address, and rejects it after the confirm.
   const phoneB = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await openConsole(phoneB, ADMIN_B);
-  const listed = phoneB.waitForResponse((r) => r.url().includes("/api/admin/approvals"));
+  const listed = phoneB.waitForResponse(
+    (r) => r.url().includes("/api/admin/approvals") && r.request().method() === "GET"
+  );
   await phoneB
     .getByRole("combobox", { name: "Admin sections" })
     .selectOption("approvals");

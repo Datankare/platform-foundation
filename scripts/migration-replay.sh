@@ -187,7 +187,8 @@ SQL
 UPDATE public.platform_config SET value = value || '["jobs.data.retention.enabled"]'::jsonb WHERE key = 'config.dual_control_keys';
 DELETE FROM public.platform_config_history WHERE change_comment = 'replay-064';
 SQL
-"${PSQL[@]}" -At -c "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'purge_log_status_check'" | grep -q "indeterminate" \
+purge_status_def=$("${PSQL[@]}" -At -c "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'purge_log_status_check'")
+grep -q "indeterminate" <<<"$purge_status_def" \
   || { echo "✗ purge_log does not accept a purge recorded indeterminate"; exit 1; }
 
 step "065: a duplicated role's note is a catalog key and values; one written before is migrated, once"
@@ -904,7 +905,8 @@ ROLLBACK;
 SQL
 
 step "daily paid-call quota is governed and dual-controlled (044)"
-"${PSQL[@]}" -tAc "SELECT 1 FROM public.platform_config c, public.platform_config d WHERE c.key = 'ai.daily_paid_requests_per_actor' AND c.value = '200'::jsonb AND c.permission_tier = 'safety' AND d.key = 'config.dual_control_keys' AND d.value @> '[\"ai.daily_paid_requests_per_actor\"]'::jsonb" | grep -qx 1 || { echo "✗ 044 quota setting missing or not dual-controlled"; exit 1; }
+quota044=$("${PSQL[@]}" -tAc "SELECT 1 FROM public.platform_config c, public.platform_config d WHERE c.key = 'ai.daily_paid_requests_per_actor' AND c.value = '200'::jsonb AND c.permission_tier = 'safety' AND d.key = 'config.dual_control_keys' AND d.value @> '[\"ai.daily_paid_requests_per_actor\"]'::jsonb")
+grep -qx 1 <<<"$quota044" || { echo "✗ 044 quota setting missing or not dual-controlled"; exit 1; }
 
 step "one password policy per scope (042)"
 "${PSQL[@]}" -At <<'SQL'
@@ -2241,13 +2243,15 @@ before061=$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.role_permissions")
 "${PSQL[@]}" -c "DROP INDEX public.proposals_purge_one_open" \
   -c "CREATE UNIQUE INDEX proposals_purge_one_open ON public.proposals (tenant_id, (payload ->> 'userId')) WHERE label = 'purge_user_data' AND status IN ('proposed', 'approved', 'executing', 'indeterminate')" >/dev/null
 "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/061_feature_permissions_enforced.sql" >/dev/null
-"${PSQL[@]}" -At -c "SELECT indexdef FROM pg_indexes WHERE indexname = 'proposals_purge_one_open'" | grep -q "lower((payload ->> 'userId'::text))" \
+index061=$("${PSQL[@]}" -At -c "SELECT indexdef FROM pg_indexes WHERE indexname = 'proposals_purge_one_open'")
+grep -q "lower((payload ->> 'userId'::text))" <<<"$index061" \
   || { echo "✗ applying 061 again left a draft's index without lower()"; exit 1; }
 # A non-unique draft of the same columns (round 2, finding 5) is replaced too.
 "${PSQL[@]}" -c "DROP INDEX public.proposals_purge_one_open" \
   -c "CREATE INDEX proposals_purge_one_open ON public.proposals (tenant_id, lower(payload ->> 'userId')) WHERE label = 'purge_user_data' AND status IN ('proposed', 'approved', 'executing', 'indeterminate')" >/dev/null
 "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/061_feature_permissions_enforced.sql" >/dev/null
-"${PSQL[@]}" -At -c "SELECT indexdef FROM pg_indexes WHERE indexname = 'proposals_purge_one_open'" | grep -q "^CREATE UNIQUE INDEX" \
+index061=$("${PSQL[@]}" -At -c "SELECT indexdef FROM pg_indexes WHERE indexname = 'proposals_purge_one_open'")
+grep -q "^CREATE UNIQUE INDEX" <<<"$index061" \
   || { echo "✗ applying 061 again left a draft's non-unique index"; exit 1; }
 # A draft's database may hold two open erasure holds for one account (round 3, finding 6): 061
 # then refuses — naming each account and its holds — and changes nothing, rather than choosing
@@ -2273,7 +2277,8 @@ rm -f "$dup061"
 # Decided in Approvals (here: the newer rejected), 061 applies again and builds the index.
 "${PSQL[@]}" -c "UPDATE public.proposals SET status = 'rejected' WHERE id = '00000000-0000-4000-8000-0000000006a2'" >/dev/null
 "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/061_feature_permissions_enforced.sql" >/dev/null
-"${PSQL[@]}" -At -c "SELECT indexdef FROM pg_indexes WHERE indexname = 'proposals_purge_one_open'" | grep -q "^CREATE UNIQUE INDEX" \
+index061=$("${PSQL[@]}" -At -c "SELECT indexdef FROM pg_indexes WHERE indexname = 'proposals_purge_one_open'")
+grep -q "^CREATE UNIQUE INDEX" <<<"$index061" \
   || { echo "✗ 061 did not build the index once the duplicates were decided"; exit 1; }
 "${PSQL[@]}" -c "DELETE FROM public.proposals WHERE id IN ('00000000-0000-4000-8000-0000000006a1', '00000000-0000-4000-8000-0000000006a2')" >/dev/null
 oid061=$("${PSQL[@]}" -At -c "SELECT 'public.proposals_purge_one_open'::regclass::oid")

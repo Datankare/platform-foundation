@@ -7,6 +7,143 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-218 — CI and test hygiene: a pipeline under pipefail read by a reader that stops early, a browser wait that names no method, and database suites that shared one database
+
+| Field        | Detail                                                                                                                  |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-218                                                                                                                |
+| **Type**     | Defect (flaky CI checks from two classes, a guard's blind spot; the sustainability gate read a failing check as passed) |
+| **Severity** | Medium (false CI failures that a rerun hid; a guard that passed a stale wait; G02, G04 and G05 could pass a failure)    |
+| **Phase**    | Phase 5                                                                                                                 |
+| **Target**   | v6.0.0 (RC)                                                                                                             |
+| **Status**   | Fixed on develop (batch 56c2)                                                                                           |
+| **Logged**   | 2026-11-13/14 (Playform run 43533561700 "Container image"; platform run 43633427223 Layer 1; TASK-217's stated gaps)    |
+
+Batch 56c2, in both repositories (Playform: its TASK-5020). Three classes, each fixed at every site,
+each with a guard whose `[self-test]`s plant the defect and whose run on the base tree shows the real
+ones.
+
+**1. A reader that stops early, under pipefail.** Under `set -o pipefail` a pipeline fails when any of
+its commands does; a reader that stops at its first match or line (`grep -q`, `grep -m`, `grep -l`, a
+grep writing to /dev/null — GNU grep then stops as `-q` does —, `head`, `sed …q`, `awk` with `exit`
+outside END, `read`, `true`, `cmp`) closes the pipe while its writer may still be writing, and the
+writer's SIGPIPE (141) fails the pipeline although the reader found its line. Playform's "Container
+image" job failed exactly so at `docker logs app 2>&1 | grep -q '^\[shutdown\] database pools: done'`.
+Fixed at every site (output captured, then tested with a here-string; or a reader that reads to the
+end): `.github/workflows/ci.yml` (the Postgres cluster check in each job that installs it — 3 here, 4
+in Playform — and the graceful-stop log check, which now reads the stopped container's log once),
+`scripts/migration-replay.sh` (5), `scripts/pull-base-image.sh` (4) and
+`scripts/sustainability-gate.sh` (6) — 19 sites here, 20 in Playform. The sustainability gate's G02
+(typecheck), G04 (tests) and G05 (build) also read a failing command's own exit as "no error found"
+under pipefail (`npm run typecheck | grep -q error` is false when typecheck fails): each now captures
+the output, then reads it; G04 runs the suite once, not twice.
+**The guard: `__tests__/pipefail-readers.test.ts` (`@guard`, shared).** It reads every shell script,
+every `run:` step of every workflow, template and composite action (pipefail from a `set` in the text,
+or a step whose shell is `bash` — GitHub runs that as `bash --noprofile --norc -eo pipefail {0}`), and
+every string literal of the repository's code that sets pipefail; it refuses each command in a
+pipeline's reading position (after a `|`, the last or a middle one) that can exit early. Its
+`[self-test]`s run the race for real (`seq 1 200000 | grep -q '^1$'` exits 141 under pipefail, the
+captured form 0), plant each reader, show what reads to the end is not refused (a here-string,
+`grep -c`, `sed -n 1p`, `awk … END {exit}`, a `while read` loop, a `[[ =~ a|b ]]`, a case pattern
+`a|b)`, a quoted `|`, a here-document), and that a step's shell decides where pipefail holds. The shell
+lexer it shares with the macOS scan moves to `__tests__/helpers/shell-lex.ts` (now also marking quoted
+text). Without the fix it reports the 19 (Playform: 20) sites above and nothing else.
+
+**2. The awaited-request guard's blind spot (TASK-217).** A wait that named no method was answered by
+any request to its path, so 56c's stale Users wait put back into the console's sections loop passed
+while the Users screen still sent `PATCH /api/admin/users`. Now **every `waitForResponse` /
+`waitForRequest` in `e2e/` and `e2e-live/` must name its method** (`r.request().method() === "POST"`,
+or `r.method()` for a request): a wait by URL alone, or one whose predicate compares no method, is a
+finding that names the method the screens send there; a predicate the scan cannot read is a finding
+(before, it passed silently). Every spec's waits name their method (22 here; 28 in Playform, its live
+journeys' three included, and Journey B's panel-data wait, whose `isConsoleRead(path)` is written out
+so its paths are read); the console's sections loop carries each row's method (the Users list's
+`POST`). **The second gap — a client request whose method the scan could not read matched any
+method — is closed as far as code allows:** a method or init given through a helper's parameter is
+followed to the helper's callers (`askSession(method)`, `readSession("POST")`; the panels' `call(url,
+init)` and `act(label, url, init)` with `{ ...init }`), so every client request in both repositories
+has a read method; one that still cannot be read must be named in `ANY_METHOD` with why (empty), and an
+entry that names nothing fails. With the planted pre-56c row the guard now reports
+`e2e/admin-routes.spec.ts:…: a wait that names no method … (here: PATCH)`, and with a GET named, `waits
+for GET /api/admin/users — no screen or client module sends it`.
+
+**3. Database suites that shared one database.** CI's Layer 1 ran the database suites in parallel
+workers against the one replayed database; each suite works in tenants it creates, but the platform's
+catalogues are no tenant's. `operator-routes.db.test.ts` compared the tenant route's settings with
+`select key from platform_config where tenant_overridable` read a moment later, and r13 — in another
+worker — inserted a tenant-settable key between the two reads (run 43633427223; the rerun passed). Any
+suite asserting on a whole shared catalogue (settings, roles, permissions, flags, applied migrations,
+counts over them) could fail the same way. **The fix removes the sharing: each jest worker has a
+database of its own.** jest's global setup (`__tests__/helpers/db-global-setup.ts`) copies the
+configured database once per worker (`CREATE DATABASE … TEMPLATE`) before any worker starts, and gives
+each copy the database's own entry, which a template copy does not carry — its owner, its privileges
+(049 revokes TEMPORARY from app_tenant and PUBLIC) and its per-database settings — checking them equal;
+`jest.setup.ts` (and `helpers/db.ts`, for a consumer whose setup is its own) points `TEST_DATABASE_URL`
+and `TEST_DATABASE_OWNER_URL` at the worker's copy before anything reads them, so every way a suite
+connects reaches it; the global teardown drops the copies, and `scripts/test-db.sh` drops any a killed
+run left. A worker runs one file at a time, so suites that share a copy run one after another. A
+configured database with no copies made fails instead of sharing. **Guards:**
+`__tests__/db-isolation.test.ts` (`@guard`, static: every jest configuration has the setup, teardown
+and jest.setup; the setups select before reading; no test connects to a written URL or to the copied
+database) and `__tests__/db/worker-database.db.test.ts` (at run time: a suite is on its worker's copy
+as app_tenant and owner; the copy's owner, privileges and settings equal the original's; a catalogue
+row written there is in no other database; `copyDatabase` copies settings and grants, checked on a
+scratch database).
+**Proof (local Postgres 16, the replayed database, 2 workers).** A suite writing tenant-settable rows
+beside `operator-routes.db.test.ts`: on the base tree its tenant-settings test fails 3 of 3 runs, on
+the fix passes 3 of 3. `operator-routes` and `r13` together, 8 runs each: base 2 failures, fix none.
+A suite writing settings, roles and permissions every 50 ms beside every database suite: on the base,
+`approver-rules.db.test.ts` fails 20 tests; on the fix all 85 suites pass. That run also caught the
+first version of the fix: the copies lacked 049's revoked TEMPORARY, which `tenancy-hardening` found —
+hence the copied database entry and its check.
+
+**Also.** The credential register's Anthropic rows as the owner read the console on 2026-11-14: this
+repository's `ANTHROPIC_API_KEY` row lists every workflow that reads it (the review eval and live eval
+were missing) and records that the console's one key with its expiry (2027-01-28) is "platform-foundation
+security review"; which key a GitHub secret holds cannot be read back, so the owner confirms it.
+MIGRATION_v5_to_v6 has the consumer's row (the jest configuration, the waits, the pipelines).
+
+**Design check**
+
+- **Reach:** tests, test helpers, jest configuration, CI workflow steps and four scripts
+  (`migration-replay.sh`, `pull-base-image.sh`, `sustainability-gate.sh`, `test-db.sh`); the guide and
+  the register (documents). No runtime code.
+- **Races:** this is the race fix: no reader stops before its writer; no two suites share a database;
+  copies are made before any worker starts, from a database no session uses then.
+- **Dependencies down:** a copy that cannot be made (a session on the database, no CREATEDB) fails the
+  run with the reason; a `psql` or `docker` failure now fails at its assignment under `set -e` instead
+  of being read as "not found".
+- **Erasure leftovers:** none: test databases only; copies are dropped at teardown and by test-db.sh.
+- **Screens × responses:** every spec wait holds to a screen's request by path and method.
+- **Journeys touched:** none of the app's; the specs' waits now name methods (Playform's live journeys
+  verified by reading the screens and routes: they cannot run locally).
+- **Weakens a tenant's protection?** No: a copy carries 049's privileges, checked equal to the original.
+
+**Threat model**
+
+- **Boundary:** CI's workflow steps and scripts, the test harness's databases, the specs' waits.
+- **Actors that exist today:** none: the defects were ours (flaky checks, a blind spot); one person
+  pushes, behind 2FA and the branch rulesets.
+- **Bypasses:** a pipeline the guard cannot see (pipefail set by a sourced file or an inherited
+  `SHELLOPTS`) — none exists; every script and step sets its own. A jest configuration without the
+  setup — refused statically, and at run time a configured database with no copies fails. A copy
+  without 049's privileges — checked equal, and the run fails.
+- **Forgeries:** none: no input is trusted.
+- **Legitimate flows:** CI's three Layer 1 passes and the serial pass, `npm run test:db`, the owner's
+  `npm test` (no database: the setup does nothing); the e2e layer (its own database, unchanged).
+- **Agreed before code:** the owner's brief for batch 56c2 (2026-11-14).
+
+**Self-review**
+
+- **Consumers checked:** every script and workflow step in both repositories (the guard's scan, and a
+  hand grep of every `| grep -q`, `| head`, `| read` — the same sites); every jest configuration
+  (package.json, `jest.core.config.cjs`, `test:db-serial`'s and the time-zone pass's command lines);
+  every test that builds its own pg Client from `TEST_DATABASE_*`; every wait in `e2e/` and `e2e-live/`.
+- **Hostile re-read:** a here-string and `$( )` are not pipes; GNU grep's /dev/null shortcut is
+  refused; `awk … END {exit}` reads everything; a copied database's ACL, owner and settings are checked,
+  not assumed; worker ids beyond the copies fail; macOS bash 3.2 runs the changed scripts (no bash 4
+  syntax, BSD flags only; `__tests__/shell-portability.test.ts` passes).
+
 ### TASK-217 — A browser spec waits for a request no screen makes any more: Playform's live Journey C timed out on 56c, and nothing compared the two
 
 | Field        | Detail                                                                                                         |

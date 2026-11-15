@@ -29,7 +29,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-arg_default() { sed -nE "s/^ARG $1=(.*)$/\\1/p" "$ROOT/Dockerfile" | head -n 1; }
+# Each reader below reads its input to the end: under pipefail a reader that stops early (head,
+# grep -q) can fail its pipeline with the writer's SIGPIPE (TASK-218).
+arg_default() { sed -nE "s/^ARG $1=(.*)$/\\1/p" "$ROOT/Dockerfile" | sed -n 1p; }
 fail() {
   echo "✗ $*" >&2
   exit 1
@@ -66,13 +68,13 @@ hub_digest() {
   local token headers
   token="$(curl -fsS --max-time 20 \
     "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/$name:pull" \
-    | sed -nE 's/.*"(token|access_token)" *: *"([^"]+)".*/\2/p' | head -n 1)" || return 0
+    | sed -nE 's/.*"(token|access_token)" *: *"([^"]+)".*/\2/p' | sed -n 1p)" || return 0
   [ -n "$token" ] || return 0
   headers="$(curl -fsSI --max-time 20 -H "Authorization: Bearer $token" \
     -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json" \
     "https://registry-1.docker.io/v2/library/$name/manifests/$tag")" || return 0
   printf '%s\n' "$headers" | tr -d '\r' \
-    | awk 'tolower($1) == "docker-content-digest:" { print $2 }' | head -n 1
+    | awk 'tolower($1) == "docker-content-digest:" && !found { print $2; found = 1 }'
 }
 
 digest=""
@@ -105,10 +107,11 @@ fi
 # Pull <repo>@<digest> and check the image is that digest: 0 pulled and verified, 1 not pulled,
 # 2 pulled but not that digest (never retried, never replaced by the mirror).
 pull_verified() {
-  local repo="$1"
+  local repo="$1" digests
   docker pull -q "$repo@$digest" >/dev/null 2>&1 || return 1
-  if ! docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \
-    "$repo@$digest" 2>/dev/null | grep -qxF "$repo@$digest"; then
+  digests="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+    "$repo@$digest" 2>/dev/null)" || digests=""
+  if ! grep -qxF "$repo@$digest" <<<"$digests"; then
     echo "✗ $repo@$digest was pulled but its content is not that digest" >&2
     return 2
   fi

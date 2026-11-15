@@ -1,11 +1,13 @@
 /**
- * __tests__/db-suite-hygiene.test.ts — what a database suite may do to the shared database
+ * __tests__/db-suite-hygiene.test.ts — what a database suite may do to the database it shares
  * (TASK-198: D-14, D-15, D-18)
  *
  * @guard a database suite that writes seeded rows, shortens timeouts or plans on sampled statistics
  *
- * Every suite under __tests__/db runs in parallel with the others against ONE replayed database
- * (CI's three Layer 1 passes, and locally). Statically, over each of them:
+ * The suites under __tests__/db run in parallel workers, each worker on its own copy of the
+ * replayed database (TASK-218, helpers/db-workers.ts), and the suites one worker runs share its
+ * copy one after another: what a suite leaves behind, the suites after it see (CI's three Layer 1
+ * passes, and locally). Statically, over each of them:
  *
  *   D-18  No suite writes a SEEDED platform_config key — one the migrations insert, which other
  *         suites read as the deployment's value — by SQL (`update|insert into|delete from

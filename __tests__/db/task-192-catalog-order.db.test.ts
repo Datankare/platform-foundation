@@ -13,8 +13,9 @@
  * hostile:store-down n/a: ordering only; the routes' read failures are admin-read-failures'
  * hostile:id-spelling n/a: ordering only; these routes read lists and take no id
  *
- * Suites share one database and add roles of their own while this runs, so every order is checked
- * on the rows this suite knows (the seeded roles and its own), never on the whole list.
+ * Other suites add roles of their own (the suites before this one in its worker's database, and,
+ * before TASK-218, any suite while this ran), so every order is checked on the rows this suite
+ * knows (the seeded roles and its own), never on the whole list.
  */
 
 jest.mock("@/lib/logger", () => ({
