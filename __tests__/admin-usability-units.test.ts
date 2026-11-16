@@ -115,7 +115,11 @@ describe("a setting's value read by its type (N-60)", () => {
     });
     const bad = readInput(r, "[1,");
     expect(bad.ok).toBe(false);
-    expect(!bad.ok && bad.problem).toMatch(/not valid JSON/);
+    // In the catalogue's words, never the parser's English (TASK-220, SF-admin-074).
+    expect(!bad.ok && bad.problem).toBe(
+      renderMessage("screens.admin_console.config.json_invalid")
+    );
+    expect(!bad.ok && bad.problem).not.toMatch(/Unexpected|JSON\.parse|position/);
   });
 
   it("a boolean from the switch; text and a choice not empty", () => {

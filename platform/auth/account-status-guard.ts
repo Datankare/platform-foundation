@@ -180,6 +180,15 @@ async function loadRestrictedFeatures(): Promise<readonly string[]> {
  * registered), preserving the prior allow-unknown behavior rather than denying
  * every feature.
  */
+/**
+ * The features that exist, for an admin screen to offer by name (TASK-220: a block's feature, a
+ * capability's features): the configured list, else the registered fallback; [] when neither is
+ * known. Never throws.
+ */
+export async function knownFeatures(): Promise<string[]> {
+  return [...((await loadKnownFeatures()) ?? [])];
+}
+
 async function loadKnownFeatures(): Promise<readonly string[] | null> {
   try {
     const features = await getConfig<string[] | undefined>(KNOWN_FEATURES_KEY, undefined);

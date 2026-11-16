@@ -48,10 +48,12 @@ import {
   permittedSections,
   sectionEndpoint,
   sectionFromSearch,
+  sectionOpeningRead,
   sectionHints,
   sectionTitle,
 } from "@/components/admin/ui/sections";
 import { SECTION_VIEWS } from "@/components/admin/section-views";
+import { auditPage } from "@/components/admin/views/AuditView";
 import { sectionScope } from "@/components/admin/section-hints";
 import { renderMessage } from "@/platform/errors/messages";
 
@@ -196,7 +198,17 @@ describe("the section registry", () => {
       SECTIONS.filter((s) => s.endpoint === null)
         .map((s) => s.id)
         .sort()
-    ).toEqual(["dual-control", "kill-switch", "moderation", "users"]);
+    ).toEqual(["audit", "kill-switch", "moderation", "users"]);
+  });
+
+  it("a section's opening read: the page's, else its own view's first (the audit log's first page)", () => {
+    for (const section of SECTIONS)
+      if (section.endpoint !== null)
+        expect(sectionOpeningRead(section.id)).toBe(section.endpoint);
+    expect(sectionOpeningRead("audit")).toBe("/api/admin/audit");
+    expect(auditPage(0, null).split("?")[0]).toBe(sectionOpeningRead("audit"));
+    for (const id of ["kill-switch", "moderation", "users"] as const)
+      expect(sectionOpeningRead(id)).toBeNull();
   });
 
   it("the sections are listed group by group, in the groups' order (the navigation's)", () => {

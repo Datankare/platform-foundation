@@ -56,6 +56,7 @@ import {
   shownStatus,
 } from "@/components/admin/admin-format";
 import { adminCall } from "@/components/admin/ui/admin-call";
+import { elementWith } from "@/components/admin/views/kit";
 import { AdminTable, type Column } from "@/components/admin/ui/AdminTable";
 import { ConfirmStep } from "@/components/admin/ui/ConfirmStep";
 import {
@@ -709,9 +710,7 @@ function UserDetail({
       title={t("detail_named", { name: shownName(user) })}
       onClose={onClose}
       // Closed: focus returns to the row it was opened from.
-      returnFocus={() =>
-        document.querySelector<HTMLElement>(`[data-open-row="${CSS.escape(user.id)}"]`)
-      }
+      returnFocus={() => elementWith("data-open-row", user.id)}
     >
       <DetailFacts facts={facts} />
 

@@ -38,8 +38,18 @@ import { ErasuresPanel } from "@/components/admin/ErasuresPanel";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-/** A section's view: its data, and — for the views that change something — the admin's permissions. */
-export type SectionViewProps = { data: any; hasPermission: (code: string) => boolean };
+/**
+ * A section's view: its data, and — for the views that change something — the admin's
+ * permissions, a way to read the section again after a change, who the admin is (Approvals
+ * offers no decision on one's own request: E-56), and whether "Show details" is on.
+ */
+export type SectionViewProps = {
+  data: any;
+  hasPermission?: (code: string) => boolean;
+  onReload?: () => void;
+  viewerId?: string;
+  showIds?: boolean;
+};
 
 export const SECTION_VIEWS = {
   users: null,

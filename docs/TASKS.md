@@ -7,6 +7,203 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-220 — The admin console rebuilt on shared parts, pass 2 of 3: the governance screens (Approvals, Platform config, Dual control, Trusted agents, Roles to Capability map) and the catalogue's developer wording
+
+| Field        | Detail                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------ |
+| **ID**       | TASK-220                                                                                               |
+| **Type**     | Usability and correctness — the admin console's governance screens                                     |
+| **Severity** | Important (E-56, E-66, SF-admin-030, 050, 053, 070, 080 to 082), with 30 Low and 4 Nit screen findings |
+| **Phase**    | Phase 5                                                                                                |
+| **Target**   | v6.0.0 (RC)                                                                                            |
+| **Status**   | Fixed on develop (batch 56d-2); pass 56d-3 converts the operator and moderation screens                |
+| **Logged**   | 2026-11-13 (the 2026-11-12 screen review, `SF-admin-nnn`; second-wave status S7, E-56 and E-66)        |
+
+Batch 56d-2, in both repositories (Playform: its TASK-5022). Pass 2 of TASK-216's three: every
+governance screen now uses the shared parts (`components/admin/ui/`), and the guard's known list
+no longer names any of them — only the operator and moderation screens of pass 56d-3 are left
+on it.
+
+**What was wrong.** The governance screens were read-only lists (every change typed into the
+command bar), showed stored codes where names belong (`maxRisk`, `admin_manage_users`,
+`moderation.strike_ban_threshold`), said a failed read as an empty list (Dual control: "no keys
+are dual-controlled" — an unprotected list), offered Approve to the person who asked for the
+change and to administrators who may not decide it, acted on one click where a change could not
+be taken back, and held developer wording in the catalogue (function and file names, "fail
+closed", ADR numbers, a "tool panel" that does not exist).
+
+**What it is now.** Each screen reads through the panel state, lists in the shared table, says
+each change's outcome in the one outcome display, asks before a consequential or irreversible
+change in the shared confirm step, gates each control on the permission its route checks, and
+names every code through the shared labels. The governance views moved out of
+`AdminDataViews.tsx` into `components/admin/views/` (one file a screen; `AdminDataViews.tsx`
+re-exports them), with a small kit (`views/kit.tsx`: outcomes, the "New" badge, a change's run
+and re-read, an account found by its address). A change made from a screen goes through the
+same governed paths as the command bar's (`components/admin/ui/governed.ts`:
+`POST /api/admin/ai/execute`, `POST /api/admin/config-ai/execute`, or the screen's own route),
+and its answer is read the same way: applied, held for a second administrator, or refused with
+the catalogue's sentence for its code.
+
+**Findings fixed** (the test is `held-actions-panel`, `admin-governance-panels`,
+`admin-data-views-states` or `dual-control-keys-panel` unless named):
+
+| Finding                  | Was                                                                                                                   | Now                                                                                                                                                                                                              |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E-56                     | Approve and Reject on every hold, for anyone who could open Approvals                                                 | Disabled, saying why: the viewer's own request ("another administrator decides it"; Reject stays — a requester may withdraw their own), their own account, a hold needing a permission they lack (by name)       |
+| E-66                     | Dual control's add and remove shown to anyone who could open it                                                       | Gated on the list's own tier (`config_manage_safety`), named                                                                                                                                                     |
+| SF-030                   | "Took effect", "approve again" and "withdraw" acted on one click                                                      | Each confirmed; withdraw is irreversible and says so                                                                                                                                                             |
+| SF-031                   | Grants, features and roles as stored codes in a hold's summary                                                        | Permission, feature, role and setting names                                                                                                                                                                      |
+| SF-032                   | Approve offered though approving would be refused (the account's role changed)                                        | Disabled, with that reason                                                                                                                                                                                       |
+| SF-033, 037              | A refused decision said twice; errors keyed by id only                                                                | One outcome display; every hold keyed by its source and id                                                                                                                                                       |
+| SF-034                   | The decision's confirmation took no focus and gave none back                                                          | The shared confirm step: focus in, Escape, focus back to the button (kept on the page while it asks)                                                                                                             |
+| SF-035                   | "did not end within its lease", "its transaction rolled back"                                                         | "it stopped answering", "nothing was changed"                                                                                                                                                                    |
+| SF-036 (approver's side) | "Reason: admin-action" and "Their reason: No reason given" on an erasure                                              | The kind of reason the requester chose, by its label, as their reason (the free-text note: see the owner's question below)                                                                                       |
+| SF-050                   | The newest 50 audit entries only                                                                                      | Pages (the route's `hasMore`), a filter by kind of entry, and one by account (its address)                                                                                                                       |
+| SF-051, 052              | Actions as codes; details one JSON string cut at 80 characters                                                        | Each action by name; details as named pairs, each value in words (a role, feature, permission or setting by name; a stored code readable; Yes or No)                                                             |
+| SF-053                   | Roles, Entitlements, Password policy, Per-account, Approval policy and Capability map changed only by typing commands | Each changed in place: a role created, copied, deleted and its permissions changed; a group created and turned on or off; the password policy; a block and its Lift; the approval rules; a capability's features |
+| SF-054                   | Role codes first; permission codes beside names; missing permissions listed by code                                   | Names; codes only with "Show details"                                                                                                                                                                            |
+| SF-055                   | An unreadable holder count shown as 0                                                                                 | The route sends `null`; the screen says "Unknown"                                                                                                                                                                |
+| SF-056                   | ✓ and ✕ glyphs; a rotation of 0 as "0"                                                                                | Yes or No; "Never"                                                                                                                                                                                               |
+| SF-057                   | A second heading under each of four sections, under another name                                                      | The section's one heading                                                                                                                                                                                        |
+| SF-058                   | Per-account rows by index, with no date and no Lift                                                                   | Keyed by account and feature; Since; Lift                                                                                                                                                                        |
+| SF-059, 061              | `maxRisk`, effects, approvers, capabilities and features as codes                                                     | Names from the catalogue                                                                                                                                                                                         |
+| SF-060                   | Goal codes, endpoint paths, step intents, "$0.0040", "—"                                                              | Names, steps by intent, the cost through `Intl`, the endpoint only with "Show details"                                                                                                                           |
+| SF-062                   | A new row only green, and only for a few seconds                                                                      | A "New" badge kept until the next read                                                                                                                                                                           |
+| SF-063                   | `th` without scope; tables without caption                                                                            | The shared table                                                                                                                                                                                                 |
+| SF-070                   | A setting far down opened at the top, focus left behind                                                               | Beside the list (in its place on a phone), its heading focused, Close back to the row                                                                                                                            |
+| SF-071                   | A setting applied on submit                                                                                           | A confirm step: now → after, and the reason the record keeps                                                                                                                                                     |
+| SF-072                   | One flat list by stored name                                                                                          | One table a category, sorted, each setting by name; a list value written as a list                                                                                                                               |
+| SF-073                   | "You cannot edit" naming `config_manage_safety`                                                                       | The permission's name                                                                                                                                                                                            |
+| SF-074                   | Problems not tied to the field; the parser's English                                                                  | Field-level errors in the catalogue's words                                                                                                                                                                      |
+| SF-075                   | Allowed values as stored values                                                                                       | Their names                                                                                                                                                                                                      |
+| SF-080                   | A failed read and "no keys are dual-controlled" together                                                              | A failed read, with Try again — never a list; the list missing from the settings is a failed read too                                                                                                            |
+| SF-081                   | A network failure unhandled; "Loading…" for ever; buttons left disabled                                               | The shared read and call: each answer, or none, said                                                                                                                                                             |
+| SF-082                   | "Change held for approval (proposal 3f2a…)"                                                                           | "Add X to dual control" held, with a link to Approvals                                                                                                                                                           |
+| SF-083                   | A held add or remove not shown, so it could be asked twice                                                            | Waiting additions and removals marked from Approvals; one that cannot be read said so                                                                                                                            |
+| SF-084                   | Keys typed by hand                                                                                                    | A searchable picker of the settings, by name                                                                                                                                                                     |
+| SF-130                   | Scope typed as capability codes                                                                                       | Ticked from the capability map, by name; one the map lost still shown and named                                                                                                                                  |
+| SF-131                   | The suspend confirmation unfocused; edit and confirm open together                                                    | One change open at a time; every change read back in a confirm step (register, capabilities, longest token, suspend)                                                                                             |
+| SF-132                   | Any status but "suspended" read "Active"                                                                              | Active, Suspended, or Unknown                                                                                                                                                                                    |
+| SF-133                   | Help not tied to its field                                                                                            | `aria-describedby` on every field                                                                                                                                                                                |
+| SF-134                   | "…: " with nothing after it; a literal "—"                                                                            | A refusal always has its sentence; "The platform's default"                                                                                                                                                      |
+| SF-160                   | Function and file names, code syntax, ADR numbers, "fail closed", provider API names, alert codes, a missing panel    | Plain wording (about 60 strings, both repositories' catalogues); `catalogue-plain-words` refuses them again (planted self-tests)                                                                                 |
+
+**Found while fixing** (each tested, each failing without its fix):
+
+- `GET /api/admin/approvals` read a store it could not read as empty (`listPendingApprovals`
+  swallowed each source's failure): a failed read looked like "no pending approvals". It now
+  answers 503 when neither store can be read, and `unreadable: [...]` (declared) when one cannot
+  — the screen says which.
+- A readable code kept initialisms in lower case and ran a level's number into its word
+  ("Moderation: escalation sla hours", "level1"): now "SLA", "AI", "MFA", "COPPA", "level 1".
+
+**Route changes** (each new field declared in its route's response schema, fixtures from the real
+handlers): `GET /api/admin/entitlements` — `userCount: null` when the count cannot be read, each
+group's `permissions`, and `availablePermissions` (for the create form); `GET
+/api/admin/agent-registry` — `capabilities` (the capability map's, `null` when unreadable);
+`GET /api/admin/capability-mapping` and `GET /api/admin/per-account` — `features` (the known
+features); `GET /api/admin/approvals` — `unreadable`, and 503 as above. Nothing is removed.
+
+**Owner's questions** (built on the most conservative reading):
+
+1. _An erasure's free-text note (SF-admin-036)._ Review round 9 (I-3) settled that an erasure's
+   hold keeps no free text (`purgeInputProblem`). The review asked for a note; the round-9 rule
+   was kept. The approver sees the kind of reason the requester chose, by its label. A note would
+   need the round-9 rule reopened.
+2. _The audit log's account filter_ finds the account through the Users list's search, so it
+   needs `admin_manage_users` besides `admin_view_audit`; without it the filter is disabled,
+   saying so. A search of the log by address would need the audit route to take one.
+3. _A trusted agent's capabilities_ are chosen from the capability map. One the map no longer has
+   is still shown (and can be removed); a new one must be mapped first.
+
+**Design check**
+
+- **Reach:** the console's governance screens (Approvals, Platform config, Dual control, Trusted
+  agents, Roles, Entitlements, Audit log, Password policy, Per-account restrictions, Approval
+  policy, Capabilities, Capability map), their shared parts, five routes' answers (growing
+  compatibly), `listPendingApprovals`, the shared catalogue and Playform's app catalogue. No
+  migration, no new setting, no new route.
+- **Races:** a change's answer reads the screen again (applied, or a lost commit), so the list is
+  the store's; a decision made by another administrator meanwhile is refused by the decision
+  route and said; a "New" badge is derived from the previous read (no timer); the Audit log's
+  pages and filters are one read key, and an answer for a read since left is dropped.
+- **Dependencies down:** a store that cannot be read is a failed read, with Try again — never an
+  empty list (Approvals' two stores each, Dual control's list, every governance list without its
+  field); the capability map unreadable → the agent's scope shows only what it holds, saying so;
+  no answer to a change → "Not done", the form kept.
+- **Erasure leftovers:** none — nothing new is stored; an erasure's hold still keeps no free
+  text (round 9, I-3).
+- **Screens × responses:** every change goes through `adminCall` (`governed.ts`): applied, held
+  (202 and `held: true`), every coded refusal (the catalogue's sentence), an uncoded answer (a
+  generic sentence) and no answer (the network sentence); `refusal-coverage` counts the helper as
+  the shared handler and checks it.
+- **Journeys touched:** `e2e/admin-console.spec.ts`: journeys 1 to 3 and 5 follow the new
+  screens (a setting confirmed from → to; the requester sees no Approve; a decision's confirm
+  with focus back; an agent read back), and journeys 12 (1280 px) and 13 (390 px) go through
+  Dual control, Per-account, Entitlements, the two policies, the capability map, the audit
+  filter and a decision on a phone, with axe on each. Every wait names its method. No exemption.
+- **Weakens a tenant's protection?** No. Every control is display only — each route still checks
+  its permission and dual control; the new fields name only what the caller's tenant already
+  holds (its features, its capability map, its groups' permissions).
+- _Why the screens send through the governed paths._ The command bar's tools already carry the
+  permission, the dual-control hold and the audit record; a screen sending the same tool cannot
+  skip any of them, and a new route would be a second door to keep equal.
+- _Why the requester keeps Reject._ The decision route lets a requester reject (withdraw) their
+  own request; only approving needs someone else.
+- _Accessibility._ The shared parts' (TASK-216): labelled fields with their help and errors tied,
+  focus into each confirm step and back, outcomes in a live region, tables with captions and
+  scoped headers; axe on each governance screen at 1280 px and 390 px in the journeys.
+- _Credits._ As TASK-216: the **WAI-ARIA Authoring Practices Guide** (W3C WAI; Alert Dialog,
+  Table and Checkbox patterns) and **WCAG 2.2** (W3C; 1.3.1, 1.4.1, 2.4.3, 3.3.1, 3.3.2, 4.1.3).
+
+**Threat model**
+
+- **Boundary:** the console's governance screens ↔ the routes they read and the governed paths
+  they send through (`POST /api/admin/ai/execute`, `POST /api/admin/config-ai/execute`,
+  `PATCH /api/admin/entitlements`, `POST /api/admin/approvals/[id]`); five routes' answers grow.
+- **Actors that exist today:** (1) an administrator of a tenant (`can_access_admin`) with some of
+  the governance permissions — who could already send every one of these changes from the
+  command bar, each checked by its route; (2) an administrator who asked for a held change and
+  would like to approve it themselves; (3) an administrator without a hold's permission. No other
+  actor is given anything.
+- **Bypasses:** none added. A disabled Approve is display only — the decision route still refuses
+  the requester, their own account and a missing permission (`approver-rules.db.test.ts`); a
+  screen's change is the tool's own call, checked by the execute route's schema, permission and
+  dual-control rules; the Dual control list is changed only through `update_config` on its own
+  key (held).
+- **Forgeries:** an account named by address is looked up through the Users search (the
+  caller's own tenant, under row-level security), and only an exact match is used; a capability
+  name is checked against the tool's own pattern before it is sent, and again by the tool; values
+  from the routes are written as text, never markup; `availablePermissions` and `features` are
+  the tenant's own lists, read under its row-level security.
+- **Legitimate flows:** a setting changed and held; a second administrator approves or rejects it;
+  the requester sees why they cannot; a key added to dual control (held); an agent registered;
+  a feature blocked for an account and lifted; a group created and turned off; a role's
+  permissions changed; the password and approval policies changed; a capability's features
+  changed; the audit log paged and filtered. Each is a screen test or a journey.
+- **Agreed before code:** the owner's brief for batch 56d-2 (governance screens A2: SF-admin-030
+  to 037, 050 to 063, 070 to 075, 080 to 084, 130 to 134, 160; E-56, E-66; the entitlement count
+  `null`), and the 2026-11-12 screen review's fixes.
+
+**Self-review**
+
+- **Consumers checked:** every importer of `AdminDataViews`, `HeldActionsPanel`,
+  `PlatformConfigPanel`, `DualControlKeysPanel`, `TrustedAgentsPanel`, `config-value`, the labels
+  and the confirmation registry (the page, the section views map, Tenancy's panels, the command
+  bar's confirm step, their tests); the callers of the five routes and of
+  `listPendingApprovals` (the command bar's held-summary reads, the approvals route); Playform's
+  live journeys of the console (Journey C reads each section; the sections' reads are unchanged)
+  and its app catalogue.
+- **Hostile re-read:** the gates are display only and each route was re-read to confirm it still
+  refuses on its own; the approvals route's new 503 is for neither store readable — one store
+  unreadable still lists the other, saying which is missing, so a reader that treated 503 as
+  "none" would be wrong (none does: the screen and the command bar's summary say a failed read);
+  the plain-words guard reads values, not keys, and its patterns are a proxy — the screens' own
+  tests and the walk read the words in place; the Platform config list writes a list of lists
+  as written (the Capability map and Trusted agents screens say those in words); the walk at
+  1280 px and 390 px is recorded with the batch (every governance screen read, its forms open, a
+  failed read).
+
 ### TASK-216 — The admin console rebuilt on shared parts, pass 1 of 3: the parts, a guard, and the console's core (shell, command bar, Users)
 
 | Field        | Detail                                                                                                           |
@@ -16,7 +213,7 @@ Security-specific items live in SECURITY_DEBT.md.
 | **Severity** | High (E-1, E-2, E-4), with 3 Important, 22 Low and 2 Nit screen findings on the core                             |
 | **Phase**    | Phase 5                                                                                                          |
 | **Target**   | v6.0.0 (RC)                                                                                                      |
-| **Status**   | Fixed on develop (batch 56d-1); passes 56d-2 and 56d-3 convert the remaining screens                             |
+| **Status**   | Fixed on develop (batch 56d-1); pass 56d-2 (TASK-220) converted the governance screens; 56d-3 converts the rest  |
 | **Logged**   | 2026-11-13 (the 2026-11-12 screen review: 105 admin findings `SF-admin-nnn`; second-wave status S7, E-1/E-2/E-4) |
 
 Batch 56d-1, in both repositories (Playform: its TASK-5017). The owner uses this console and

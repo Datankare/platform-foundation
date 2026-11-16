@@ -1,7 +1,8 @@
 /**
  * app/api/admin/entitlements/route.ts — Admin entitlement management
  *
- * GET: List entitlement groups with user counts
+ * GET: List entitlement groups with this tenant's holders (null when they cannot be counted),
+ *      what each grants, and every permission a group may grant (TASK-220)
  * PATCH: Turn a group on or off — refused unless the admin holds every permission it grants;
  *        under dual control (set_entitlement_group_active) held for a second admin (202)
  *
@@ -36,6 +37,9 @@ import {
   runCommandBarAction,
 } from "@/app/api/admin/ai/command-bar";
 import type { ResponseSchema } from "@/platform/errors/response-schema";
+import { negotiateLocale } from "@/platform/errors/messages";
+import { permissionNameText } from "@/platform/errors/definitions";
+import { comparePermissions, type ListedPermission } from "@/platform/auth/catalog-order";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const ENTITLEMENT_BODY_SCHEMA: InputSchemaNode = {
@@ -47,6 +51,7 @@ const ENTITLEMENT_BODY_SCHEMA: InputSchemaNode = {
 };
 
 type GroupRow = { id: string; code: string; display_name: string; is_active: boolean };
+type PermissionRow = { id: string; code: string; display_name: string; category: string };
 
 const GET_RESPONSE: ResponseSchema = {
   type: "object",
@@ -69,7 +74,41 @@ const GET_RESPONSE: ResponseSchema = {
             type: "boolean",
           },
           userCount: {
-            type: "number",
+            type: ["null", "number"],
+          },
+          permissions: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                category: {
+                  type: "string",
+                },
+                code: {
+                  type: "string",
+                },
+                displayName: {
+                  type: "string",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    availablePermissions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          category: {
+            type: "string",
+          },
+          code: {
+            type: "string",
+          },
+          displayName: {
+            type: "string",
           },
         },
       },
@@ -82,12 +121,28 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   if (denied) return denied;
 
   let groups: GroupRow[];
+  let granted: { entitlement_group_id: string; permission_id: string }[];
+  let allPermissions: PermissionRow[];
   try {
-    ({ rows: groups } = await withTenantTx((tx) =>
-      tx.query<GroupRow>(
-        "select id, code, display_name, is_active from entitlement_groups order by code"
-      )
-    ));
+    ({ groups, granted, allPermissions } = await withTenantTx(async (tx) => ({
+      groups: (
+        await tx.query<GroupRow>(
+          "select id, code, display_name, is_active from entitlement_groups order by code"
+        )
+      ).rows,
+      // What each group grants, and every permission a new group may grant (TASK-220: the screen
+      // names them, and creates a group with them).
+      granted: (
+        await tx.query<{ entitlement_group_id: string; permission_id: string }>(
+          "select entitlement_group_id, permission_id from entitlement_permissions"
+        )
+      ).rows,
+      allPermissions: (
+        await tx.query<PermissionRow>(
+          "select id, code, display_name, category from permissions order by category, code"
+        )
+      ).rows,
+    })));
   } catch (error) {
     logger.error("Admin entitlements list failed", {
       error: error instanceof Error ? error.message : String(error),
@@ -96,8 +151,10 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     return internalError(error, { request, context: "Admin entitlements query failed" });
   }
 
-  // This tenant's active holders per group; an unreadable count reads as none, as before.
+  // This tenant's active holders per group; unreadable, they are unknown — null, never a 0 that
+  // was not counted (TASK-220, SF-admin-055).
   const userCounts = new Map<string, number>();
+  let counted = true;
   try {
     const { rows } = await withTenantTx((tx) =>
       tx.query<{ entitlement_group_id: string; n: number }>(
@@ -108,10 +165,32 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     );
     for (const r of rows) userCounts.set(r.entitlement_group_id, r.n);
   } catch (error) {
+    counted = false;
     logger.warn("Admin entitlement holder counts unreadable", {
       error: error instanceof Error ? error.message : String(error),
       route: "api/admin/entitlements",
     });
+  }
+
+  // A permission's name is the catalog's, by its code, in the request's language (TASK-209).
+  const locale = negotiateLocale(request.headers.get("accept-language"));
+  const named = new Map(
+    allPermissions.map((p): [string, ListedPermission] => [
+      p.id,
+      {
+        code: p.code,
+        displayName: permissionNameText(p.code, locale),
+        category: p.category,
+      },
+    ])
+  );
+  const grants = new Map<string, ListedPermission[]>();
+  for (const g of granted) {
+    const perm = named.get(g.permission_id);
+    if (!perm) continue;
+    const list = grants.get(g.entitlement_group_id) ?? [];
+    list.push(perm);
+    grants.set(g.entitlement_group_id, list);
   }
 
   const result = groups.map((g) => ({
@@ -119,10 +198,14 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     code: g.code,
     displayName: g.display_name,
     isActive: g.is_active,
-    userCount: userCounts.get(g.id) || 0,
+    userCount: counted ? (userCounts.get(g.id) ?? 0) : null,
+    permissions: (grants.get(g.id) ?? []).sort(comparePermissions),
   }));
 
-  return NextResponse.json({ groups: result });
+  return NextResponse.json({
+    groups: result,
+    availablePermissions: [...named.values()].sort(comparePermissions),
+  });
 }, GET_RESPONSE);
 
 const PATCH_RESPONSE: ResponseSchema = {

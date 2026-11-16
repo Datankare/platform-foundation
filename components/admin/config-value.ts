@@ -10,6 +10,13 @@
  */
 
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+import {
+  agentStatusLabel,
+  capabilityLabel,
+  featureLabel,
+  ownerLabel,
+  settingLabel,
+} from "@/components/admin/ui/labels";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.admin_console.config.${key}`, values);
@@ -65,13 +72,10 @@ export function readInput(rules: SettingRules, raw: string | boolean): ReadInput
       let parsed: unknown;
       try {
         parsed = JSON.parse(String(raw));
-      } catch (err) {
-        return {
-          ok: false,
-          problem: t("json_invalid", {
-            reason: err instanceof Error ? err.message : String(err),
-          }),
-        };
+      } catch {
+        // In the catalogue's words (SF-admin-074): the parser's own message is the browser's
+        // English ("Unexpected token…"), whatever the reader's language.
+        return { ok: false, problem: t("json_invalid") };
       }
       return Array.isArray(parsed)
         ? { ok: true, value: parsed }
@@ -102,17 +106,94 @@ export function sameValue(a: unknown, b: unknown): boolean {
   }
 }
 
-/** What a list change does: the items it adds and those it removes (each as JSON text). */
+/** The settings whose value is a list of settings, of agents, or of capabilities' features. */
+const SETTINGS_LIST = "config.dual_control_keys";
+const AGENTS = "agent.trusted_agents";
+const CAPABILITY_FEATURES = "agent.capability_features";
+
+const words = (list: readonly string[]) =>
+  list.length ? list.join(", ") : t("list_empty");
+
+/**
+ * One item of a list setting in words (the walk: a held change showed
+ * `+ agent.budget.default_tokens_per_month` and an agent as JSON): a setting by its name, an agent
+ * by what it may do, a capability by the features it needs; text as itself; anything else JSON.
+ */
+export function itemText(key: string | undefined, item: unknown): string {
+  if (key === SETTINGS_LIST && typeof item === "string") return settingLabel(item);
+  if (
+    key === AGENTS &&
+    Array.isArray(item) &&
+    typeof item[0] === "string" &&
+    item[1] &&
+    typeof item[1] === "object"
+  ) {
+    const rec = item[1] as {
+      owner?: unknown;
+      scopes?: unknown;
+      status?: unknown;
+      maxTokenTtl?: unknown;
+    };
+    const scopes = Array.isArray(rec.scopes) ? rec.scopes.map(String) : [];
+    return t("item_agent", {
+      agent: item[0],
+      owner: ownerLabel(typeof rec.owner === "string" ? rec.owner : "first-party"),
+      scopes: scopes.length ? words(scopes.map(capabilityLabel)) : t("item_no_scope"),
+      status: agentStatusLabel(rec.status),
+      ttl:
+        typeof rec.maxTokenTtl === "number"
+          ? t("item_ttl", { seconds: rec.maxTokenTtl })
+          : t("item_ttl_default"),
+    });
+  }
+  if (
+    key === CAPABILITY_FEATURES &&
+    Array.isArray(item) &&
+    typeof item[0] === "string" &&
+    Array.isArray(item[1])
+  )
+    return t("item_capability", {
+      capability: capabilityLabel(item[0]),
+      features: words((item[1] as unknown[]).map((f) => featureLabel(String(f)))),
+    });
+  return shownValue(item);
+}
+
+/**
+ * What a list change does: the items it adds and those it removes, each in words (`itemText`,
+ * by the setting's key when given).
+ */
 export function listChange(
   before: unknown,
-  after: unknown
+  after: unknown,
+  key?: string
 ): { readonly added: string[]; readonly removed: string[] } | undefined {
   if (!Array.isArray(before) || !Array.isArray(after)) return undefined;
-  const text = (x: unknown) => shownValue(x);
+  const text = (x: unknown) => itemText(key, x);
   const was = before.map(text);
   const now = after.map(text);
   return {
     added: now.filter((x) => !was.includes(x)),
     removed: was.filter((x) => !now.includes(x)),
   };
+}
+
+/**
+ * A setting's value in a held change's before → after: an allowed value by its name where the
+ * catalogue has one, a list of words as a list (each item in words: a setting by its name), else
+ * as `shownValue`.
+ */
+export function changeValueText(key: string | undefined, value: unknown): string {
+  if (key && typeof value === "string") {
+    const named = [
+      "screens.admin_console.labels.setting_values",
+      key.replace(/[.-]/g, "_"),
+      value,
+    ].join(".");
+    const text = renderMessage(named);
+    return text === named ? value : text;
+  }
+  if (Array.isArray(value) && value.every((v) => typeof v === "string"))
+    return words(value.map((v) => itemText(key, v)));
+  return shownValue(value);
 }

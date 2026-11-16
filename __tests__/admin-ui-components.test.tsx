@@ -424,78 +424,57 @@ import {
   EntitlementsDataView,
   PasswordPolicyDataView,
 } from "@/components/admin/AdminDataViews";
+import { permissionLabel } from "@/components/admin/ui/labels";
 import { shown } from "@/platform/errors/shown-text";
 
 describe("RolesDataView", () => {
-  it("renders roles table with data", () => {
-    render(
-      <RolesDataView
-        data={{
-          roles: [
-            {
-              id: "r1",
-              name: "admin",
-              displayName: "Admin",
-              permissionCount: 11,
-              permissions: [
-                { code: "can_play", displayName: "Can Play", category: "gameplay" },
-              ],
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-03-31T00:00:00Z",
-            },
-          ],
-        }}
-      />
-    );
-    expect(screen.getByText("Admin")).toBeDefined();
-    expect(screen.getByText("11")).toBeDefined();
+  const admin = {
+    id: "r1",
+    name: "admin",
+    displayName: "Admin",
+    permissionCount: 11,
+    permissions: [{ code: "can_play", displayName: "Can Play", category: "gameplay" }],
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-03-31T00:00:00Z",
+  };
+  it("renders roles table with data: a role by name, how many permissions in words", () => {
+    render(<RolesDataView data={{ roles: [admin] }} />);
+    expect(screen.getByRole("button", { name: "Admin" })).toBeDefined();
+    expect(screen.getByText("11 permissions")).toBeDefined();
   });
 
-  it("shows empty message when no roles", () => {
+  it("shows the empty sentence inside the table when there are no roles", () => {
     render(<RolesDataView data={{ roles: [] }} />);
-    expect(screen.getByText(/No roles found/)).toBeDefined();
+    expect(
+      screen.getByText(renderMessage("screens.admin_console.views.roles.empty"))
+    ).toBeDefined();
   });
 
-  it("expands role to show permissions on click", () => {
-    render(
-      <RolesDataView
-        data={{
-          roles: [
-            {
-              id: "r1",
-              name: "admin",
-              displayName: "Admin",
-              permissionCount: 1,
-              permissions: [
-                { code: "can_play", displayName: "Can Play", category: "gameplay" },
-              ],
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-03-31T00:00:00Z",
-            },
-          ],
-        }}
-      />
-    );
-    fireEvent.click(screen.getByText("Admin"));
+  it("opens a role's detail: its permissions by name, the code only with Show details", () => {
+    const { rerender } = render(<RolesDataView data={{ roles: [admin] }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Admin" }));
+    expect(screen.getByText(permissionLabel("can_play"))).toBeDefined();
+    expect(screen.queryByText("can_play")).toBeNull();
+    rerender(<RolesDataView data={{ roles: [admin] }} showIds />);
     expect(screen.getByText("can_play")).toBeDefined();
-    expect(screen.getByText("Can Play")).toBeDefined();
   });
 
-  // TASK-207, N-107: a duplicated role's note was English the SQL wrote into its description; it
-  // is the catalog's key and values (description_note), rendered here, before what was written.
+  // TASK-207, N-107: a duplicated role's note is the catalog's key and values (description_note),
+  // rendered here, before what was written — its source by name (TASK-220), never its code.
   it("a duplicated role's note is the catalog's, then the description an administrator wrote", () => {
     const data = routeAnswer("GET /api/admin/roles — the roles")[1] as {
       roles: { displayName: string; description: string | null }[];
     };
     render(<RolesDataView data={data} />);
-    fireEvent.click(screen.getByText("Roles admin (copy)"));
+    fireEvent.click(screen.getByRole("button", { name: "Roles admin (copy)" }));
     const note = renderMessage("screens.admin_console.roles.duplicated_from", {
-      source: "roles_admin",
+      source: "Roles admin",
     });
-    expect(note).toBe("Duplicated from roles_admin.");
+    expect(note).toBe("Duplicated from Roles admin.");
     expect(screen.getByText(`${note} Manages roles.`)).toBeDefined();
     // The original role has neither: nothing is shown for it.
-    fireEvent.click(screen.getByText("Roles admin"));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Roles admin" }));
     expect(screen.queryByText(/Duplicated from/)).toBeNull();
   });
 });
@@ -503,31 +482,30 @@ describe("RolesDataView", () => {
 // UsersDataView became the Users panel (TASK-185): __tests__/admin-users-panel.test.tsx.
 
 describe("EntitlementsDataView", () => {
-  it("renders entitlements with status badges", () => {
-    render(
-      <EntitlementsDataView
-        data={{
-          groups: [
-            {
-              id: "eg1",
-              code: "beta_access",
-              displayName: "Beta Access",
-              isActive: true,
-              userCount: 5,
-            },
-          ],
-        }}
-      />
-    );
+  it("renders a group by name, its holders and its standing in words; its code only with Show details", () => {
+    const data = {
+      groups: [
+        {
+          id: "eg1",
+          code: "beta_access",
+          displayName: "Beta Access",
+          isActive: true,
+          userCount: 5,
+        },
+      ],
+    };
+    const { rerender } = render(<EntitlementsDataView data={data} />);
+    expect(screen.getByRole("button", { name: "Beta Access" })).toBeDefined();
+    expect(screen.queryByText("beta_access")).toBeNull();
+    expect(screen.getByText("On")).toBeDefined();
+    expect(screen.getByText("5 accounts")).toBeDefined();
+    rerender(<EntitlementsDataView data={data} showIds />);
     expect(screen.getByText("beta_access")).toBeDefined();
-    expect(screen.getByText("Beta Access")).toBeDefined();
-    expect(screen.getByText("Active")).toBeDefined();
-    expect(screen.getByText("5")).toBeDefined();
   });
 });
 
 describe("PasswordPolicyDataView", () => {
-  it("renders policy values", () => {
+  it("renders each rule in words", () => {
     render(
       <PasswordPolicyDataView
         data={{
@@ -543,13 +521,16 @@ describe("PasswordPolicyDataView", () => {
         }}
       />
     );
-    expect(screen.getByText("12")).toBeDefined();
-    expect(screen.getByText("90")).toBeDefined();
-    expect(screen.getByText("5")).toBeDefined();
+    expect(screen.getByText("12 characters")).toBeDefined();
+    expect(screen.getByText("90 days")).toBeDefined();
+    expect(screen.getByText("The last 5 passwords")).toBeDefined();
   });
 
-  it("shows loading when no data", () => {
+  it("no policy stored: says the platform's defaults apply — never 'Loading'", () => {
     render(<PasswordPolicyDataView data={{}} />);
-    expect(screen.getByText("Loading...")).toBeDefined();
+    expect(
+      screen.getByText(renderMessage("screens.admin_console.views.password_policy.none"))
+    ).toBeDefined();
+    expect(screen.queryByText(/Loading/)).toBeNull();
   });
 });

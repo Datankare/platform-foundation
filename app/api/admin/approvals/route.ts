@@ -4,6 +4,8 @@
  * GET — list every live hold (runtime dual-control + config-approval two-person), each with the
  * permission required to clear it. Read-only; approve/reject is 040b (POST /[id]).
  *
+ * A source that could not be read is named (`unreadable`); neither: 503 (TASK-220, SF-admin-004).
+ *
  * Gated on can_access_admin: any admin may SEE the queue (transparency / manageability);
  * clearing a hold still requires the per-change permission, enforced in 040b. A hold's summary
  * (the account it acts on — an address among it) goes only to an admin holding that permission
@@ -13,7 +15,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { logger, generateRequestId } from "@/lib/logger";
-import { listPendingApprovals } from "@/platform/admin/pending-approvals";
+import {
+  listPendingApprovals,
+  type PendingApprovalSource,
+} from "@/platform/admin/pending-approvals";
 import { COMMAND_BAR_HOLDS } from "@/app/api/admin/ai/command-bar";
 import { apiError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
@@ -202,6 +207,12 @@ const GET_RESPONSE: ResponseSchema = {
     requestId: {
       type: "string",
     },
+    unreadable: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
   },
 };
 
@@ -212,8 +223,25 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   const requestId = generateRequestId();
   try {
     // Each hold's summary only to an admin who could decide it (TASK-194 round 2, N2).
-    const approvals = await listPendingApprovals([COMMAND_BAR_HOLDS], verified.admin);
-    return NextResponse.json({ approvals, requestId });
+    const unread = new Set<PendingApprovalSource>();
+    const approvals = await listPendingApprovals(
+      [COMMAND_BAR_HOLDS],
+      verified.admin,
+      unread
+    );
+    // Neither source read: nothing could be listed — refused, never an empty queue (TASK-220,
+    // SF-admin-004). One of them: what it holds, and which could not be read.
+    if (unread.size === 2) {
+      return apiError("service.unavailable", {
+        params: { service: "approvals" },
+        request,
+      });
+    }
+    return NextResponse.json({
+      approvals,
+      ...(unread.size ? { unreadable: [...unread] } : {}),
+      requestId,
+    });
   } catch (err) {
     logger.error(
       `pending-approvals list failed: ${err instanceof Error ? err.message : String(err)} (req ${requestId})`

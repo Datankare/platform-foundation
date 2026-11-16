@@ -80,7 +80,8 @@ const TOOLS = {
   suspend_agent: consequential("suspend_agent"),
   set_agent_scope: consequential("set_agent_scope"),
   set_agent_ttl: consequential("set_agent_ttl"),
-  block_user_feature: consequential("block_user_feature"),
+  // The block's reason is kept with it (the tool's `reason`): asked, not required.
+  block_user_feature: { ...consequential("block_user_feature"), reason: "optional" },
   unblock_user_feature: ordinary,
   set_approval_policy: consequential("set_approval_policy"),
   set_capability_mapping: consequential("set_capability_mapping"),
@@ -92,11 +93,33 @@ const TOOLS = {
 /** The actions screens offer themselves (not through the command bar). */
 const SCREEN_ACTIONS = {
   "users.change_role": consequential("change_user_role"),
-  // The kind of reason is chosen in the step (PURGE_REASONS); the route takes no free text.
+  // The kind of reason is chosen in the step (PURGE_REASONS); an erasure's hold keeps no free
+  // text (TASK-194 round 9, I-3), so no note is asked — the approver reads the kind by its label.
   "users.erase": irreversible("purge_user_data"),
   // A dead job discarded (the Jobs screen asks for a reason today, with its own form and an
   // unstated minimum — SF-admin-105, 108): the entry pass 56d-3 moves that screen onto.
   "jobs.discard": irreversible("discard_job", "required"),
+  // Approvals (TASK-220, SF-admin-030): every decision on a held change confirms, as Approve did.
+  // Approving is as grave as the change it lets through (confirmationFor, `heldTool`).
+  // A decision may carry a note for the record (the route's `note`); only approving asks none.
+  "approvals.approve": consequential("approve_hold"),
+  "approvals.reject": irreversible("reject_hold", "optional"),
+  "approvals.mark_executed": { ...consequential("mark_executed"), reason: "optional" },
+  // Approving again runs the change again: as grave as the change.
+  "approvals.reapprove": { ...consequential("reapprove_hold"), reason: "optional" },
+  // Withdrawn, a run is closed for good: it never runs.
+  "approvals.withdraw": irreversible("withdraw_hold", "optional"),
+  // A setting changed from its screen (SF-admin-071): the comment the record keeps is required.
+  "config.update": {
+    risk: "consequential",
+    reason: "required",
+    consequence: "update_config",
+  },
+  // The dual-control list (SF-admin-083): always held for a second administrator.
+  "dual_control.add": consequential("dual_control_add"),
+  "dual_control.remove": consequential("dual_control_remove"),
+  // A capability's mapping removed: its capability then needs no feature at all.
+  "capability_mapping.remove": consequential("capability_mapping_remove"),
 } as const satisfies Record<string, Confirmation>;
 
 export const CONFIRMATIONS: Readonly<Record<string, Confirmation>> = {
@@ -117,8 +140,8 @@ export function graver(a: Risk, b: Risk): Risk {
  * How `action` is confirmed, given what it was asked with:
  *   - an action the registry does not know is consequential — never waved through as ordinary;
  *   - reactivating an agent undoes a suspension: ordinary;
- *   - approving a held change is as grave as the change it lets through (`heldTool`: approving
- *     an erasure erases).
+ *   - approving a held change — or approving it again — is as grave as the change it lets
+ *     through (`heldTool`: approving an erasure erases).
  */
 export function confirmationFor(
   action: string,
@@ -129,7 +152,12 @@ export function confirmationFor(
     ? CONFIRMATIONS[action]!
     : consequential("unknown");
   if (action === "suspend_agent" && input.reactivate === true) return ordinary;
-  if (action === "approve_hold" && heldTool) {
+  if (
+    (action === "approve_hold" ||
+      action === "approvals.approve" ||
+      action === "approvals.reapprove") &&
+    heldTool
+  ) {
     const held = confirmationFor(heldTool);
     if (held.risk === "irreversible") return { ...held, reason: entry.reason };
   }

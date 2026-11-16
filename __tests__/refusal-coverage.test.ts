@@ -206,8 +206,24 @@ const ADMIN_CALL_FILE = "components/admin/ui/admin-call.ts";
  * refused answer).
  */
 export function usesSharedHandler(text: string): boolean {
-  return /\b(?:handleRefusal|readRefusal|adminCall)\(/.test(text);
+  return new RegExp(
+    `\\b(?:handleRefusal|readRefusal|adminCall|${SHARED_CALLERS.map((c) => c.name).join("|")})\\(`
+  ).test(text);
 }
+
+/**
+ * The console's shared readers and changers (TASK-216, TASK-220): a panel's read and a governed
+ * change. Each makes its request through adminCall — checked below, in its own file — so a
+ * screen calling one is covered as a caller of adminCall is.
+ */
+export const SHARED_CALLERS: readonly { readonly name: string; readonly file: string }[] =
+  [
+    { name: "usePanelRead", file: "components/admin/ui/PanelState.tsx" },
+    { name: "usePanelSearch", file: "components/admin/ui/PanelState.tsx" },
+    { name: "runAdminAction", file: "components/admin/ui/governed.ts" },
+    { name: "runConfigAction", file: "components/admin/ui/governed.ts" },
+    { name: "runRouteChange", file: "components/admin/ui/governed.ts" },
+  ];
 
 /**
  * A file that only NAMES routes another file requests (TASK-216): the admin console's section
@@ -233,8 +249,13 @@ export function transportCodes(): string[] {
 
 /** Whether a caller makes its API calls through the transport (and no other way). */
 export function usesTransportOnly(text: string): boolean {
-  // adminCall makes its request through apiFetch (checked below).
-  return /\b(?:apiFetch|adminCall)\(/.test(text) && !/(?<![\w.])fetch\(/.test(text);
+  // adminCall makes its request through apiFetch, and the shared callers through adminCall
+  // (checked below).
+  return (
+    new RegExp(
+      `\\b(?:apiFetch|adminCall|${SHARED_CALLERS.map((c) => c.name).join("|")})\\(`
+    ).test(text) && !/(?<![\w.])fetch\(/.test(text)
+  );
 }
 
 function callerFiles(): string[] {
@@ -409,6 +430,19 @@ describe("refusal coverage (TASK-181)", () => {
     expect(read(join(ROOT, "components/admin/ui/PanelState.tsx"))).toMatch(
       /\badminCall\(url\)/
     );
+    // TASK-220: each shared caller is defined in its file, calls adminCall there, and nothing
+    // else that requests (no fetch, no apiFetch of its own).
+    for (const { name, file } of SHARED_CALLERS) {
+      const text = read(join(ROOT, file));
+      expect([name, text]).toEqual([
+        name,
+        expect.stringMatching(new RegExp(`export (?:async )?function ${name}\\b`)),
+      ]);
+      expect(text).toMatch(/\badminCall\(/);
+      expect(text).not.toMatch(/(?<![\w.])fetch\(|\bapiFetch\(/);
+      expect(usesSharedHandler(`const x = ${name}("/api/admin/x");`)).toBe(true);
+    }
+    expect(usesSharedHandler('const x = runSomething("/api/admin/x");')).toBe(false);
   });
 
   it("no screen or hook throws a refusal away for fixed text", () => {

@@ -30,19 +30,10 @@ import {
   summaryLines,
   whyHeld,
 } from "@/components/admin/HeldActionsPanel";
-import {
-  parseList,
-  parseTtl,
-  TrustedAgentsPanel,
-} from "@/components/admin/TrustedAgentsPanel";
 import { ErasuresPanel } from "@/components/admin/ErasuresPanel";
-import {
-  editPermission,
-  PlatformConfigPanel,
-  type SettingEntry,
-} from "@/components/admin/PlatformConfigPanel";
 import { PANEL_UNAVAILABLE } from "@/components/admin/PanelUnavailable";
 import { shown } from "@/platform/errors/shown-text";
+import { permissionLabel } from "@/components/admin/ui/labels";
 
 function reply(name: RouteFixtureName) {
   const [status, body] = routeAnswer(name);
@@ -56,10 +47,6 @@ function reply(name: RouteFixtureName) {
   return res as unknown as Response;
 }
 const bodyOf = <T,>(name: RouteFixtureName) => routeAnswer(name)[1] as T;
-const allow =
-  (...granted: string[]) =>
-  (code: string) =>
-    granted.includes(code);
 const held = (key: string, v?: Record<string, string | number>) =>
   renderMessage(`screens.held.${key}`, v);
 
@@ -93,30 +80,30 @@ describe("Approvals: each kind of held change in words (N-61)", () => {
     ],
     [
       { label: "block_user_feature", summary: { target, feature: "translate" } },
-      held("what_block", { account: "member@example.test", feature: "translate" }),
+      held("what_block", { account: "member@example.test", feature: "Translate" }),
     ],
     [
       {
         label: "unblock_user_feature",
         summary: { target: { notFound: true as const }, feature: "translate" },
       },
-      held("what_unblock", { account: held("account_missing"), feature: "translate" }),
+      held("what_unblock", { account: held("account_missing"), feature: "Translate" }),
     ],
     [
       { label: "create_role", summary: { role: "qa" } },
-      held("what_create_role", { role: "qa" }),
+      held("what_create_role", { role: "Qa" }),
     ],
     [
       { label: "delete_role", summary: { role: "qa" } },
-      held("what_delete_role", { role: "qa" }),
+      held("what_delete_role", { role: "Qa" }),
     ],
     [
       { label: "duplicate_role", summary: { role: "qa2", fromRole: "qa" } },
-      held("what_duplicate_role", { role: "qa2", from: "qa" }),
+      held("what_duplicate_role", { role: "Qa2", from: "Qa" }),
     ],
     [
       { label: "assign_permissions", summary: { role: "qa" } },
-      held("what_assign_permissions", { role: "qa" }),
+      held("what_assign_permissions", { role: "Qa" }),
     ],
     [
       { label: "create_entitlement_group", summary: { group: "pro" } },
@@ -127,13 +114,18 @@ describe("Approvals: each kind of held change in words (N-61)", () => {
       held("what_group_active", { group: "pro", active: "false" }),
     ],
     [{ label: "set_approval_policy" }, held("what_policy")],
-    [{ label: "update_config", configKey: "k" }, held("what_config", { key: "k" })],
+    // A setting by its name (TASK-220, SF-admin-031): "moderation.strike_ban_threshold" →
+    // "Moderation: strike ban threshold".
+    [
+      { label: "update_config", configKey: "moderation.strike_ban_threshold" },
+      held("what_config", { key: "Moderation: strike ban threshold" }),
+    ],
     [
       {
         label: "reset_config",
         change: { key: "k", action: "reset" as const, before: 1, after: 2 },
       },
-      held("what_config_reset", { key: "k" }),
+      held("what_config_reset", { key: "K" }),
     ],
     // Without the details (a viewer who may not decide): the kind of change, in words.
     [
@@ -170,7 +162,11 @@ describe("Approvals: each kind of held change in words (N-61)", () => {
       { label: "set_entitlement_group_active" },
       renderMessage("screens.admin_console.tools.set_entitlement_group_active"),
     ],
-    [{ label: "an_app_tool" }, held("what_tool", { tool: "an_app_tool" })],
+    // A tool the catalogue does not name: said to be one, by its name made readable.
+    [
+      { label: "an_app_tool" },
+      renderMessage("screens.admin_console.tools.unknown", { tool: "An app tool" }),
+    ],
   ])("%j", (over, said) => {
     expect(describeWhat({ ...base, ...over } as PendingApproval)).toBe(said);
   });
@@ -188,16 +184,16 @@ describe("Approvals: each kind of held change in words (N-61)", () => {
         dryRun: true,
       })
     ).toEqual([
-      held("summary_role", { from: "free", to: "moderator" }),
+      held("summary_role", { from: "Free", to: "Moderator" }),
       held("summary_role_changed", { role: held("summary_role_unknown") }),
-      held("summary_granted", { permissions: "can_moderate" }),
-      held("summary_removed", { permissions: "can_play" }),
+      held("summary_granted", { permissions: permissionLabel("can_moderate") }),
+      held("summary_removed", { permissions: permissionLabel("can_play") }),
       held("summary_reason", { reason: "r" }),
       held("summary_dry_run"),
     ]);
     expect(summaryLines(undefined)).toEqual([]);
     expect(summaryLines({ toRole: "admin" })[0]).toBe(
-      held("summary_role", { from: held("summary_role_unknown"), to: "admin" })
+      held("summary_role", { from: held("summary_role_unknown"), to: "Admin" })
     );
   });
 
@@ -223,7 +219,7 @@ describe("Approvals: each kind of held change in words (N-61)", () => {
     expect(approverText("config_manage_safety")).toBe(held("approver_safety"));
     expect(approverText("config_manage_standard")).toBe(held("approver_standard"));
     expect(approverText("admin_manage_users")).toBe(
-      held("approver_other", { permission: "admin_manage_users" })
+      held("approver_other", { permission: permissionLabel("admin_manage_users") })
     );
     expect(whyHeld({ ...base, state: "undecided" })).toBe(held("why_undecided"));
     expect(whyHeld({ ...base, state: "retry" })).toBe(held("why_retry"));
@@ -262,7 +258,7 @@ describe("Approvals: each kind of held change in words (N-61)", () => {
     };
     expect(acceptedResult("approve", config, {}).text).toBe(
       held("result_applied_config", {
-        what: held("what_config", { key: "k" }),
+        what: held("what_config", { key: "K" }),
         value: "2",
       })
     );
@@ -312,165 +308,22 @@ describe("Approvals: each kind of held change in words (N-61)", () => {
       },
     ];
     mockApiFetch.mockRejectedValueOnce(new Error("offline"));
-    render(<HeldActionsPanel data={{ approvals: rows }} />);
+    render(<HeldActionsPanel data={{ approvals: rows }} hasPermission={() => true} />);
     const what = held("what_role_change", { account: "member@example.test" });
     fireEvent.click(screen.getByRole("button", { name: held("reject_label", { what }) }));
-    const confirm = screen.getByRole("group", { name: held("confirm_reject_title") });
+    const confirm = screen.getByRole("alertdialog", {
+      name: held("confirm_reject_title"),
+    });
     expect(within(confirm).getByText(held("confirm_note_reject"))).toBeTruthy();
     fireEvent.click(
       within(confirm).getByRole("button", { name: held("confirm_reject") })
     );
-    // Unreachable: said at the row, nothing decided.
-    expect(await screen.findByText(held("network_error"))).toBeTruthy();
+    // Unreachable: said once, in the outcome list; nothing decided (TASK-220, SF-admin-033).
+    expect(
+      await screen.findByText(renderMessage("screens.refusal.network"))
+    ).toBeTruthy();
     expect(screen.getByText(/\(run stopped\)/)).toBeTruthy();
     expect(screen.getByText(held("details"))).toBeTruthy();
-  });
-});
-
-const ag = (key: string, v?: Record<string, string | number>) =>
-  renderMessage(`screens.admin_console.agents.${key}`, v);
-
-describe("Trusted agents: every state and change (N-66)", () => {
-  const data = bodyOf<{ agents: unknown[] }>(
-    "GET /api/admin/agent-registry — the registry"
-  );
-
-  it("reads a list as typed, and a ceiling as whole seconds", () => {
-    expect(parseList("a, b\nb,, c ")).toEqual(["a", "b", "c"]);
-    expect(parseTtl("120")).toBe(120);
-    expect(parseTtl("0")).toBeNull();
-    expect(parseTtl("1.5")).toBeNull();
-    expect(parseTtl(" ")).toBeNull();
-  });
-
-  it("not read yet, unreadable, empty: said, never 'none' for unreadable", () => {
-    const { rerender } = render(<TrustedAgentsPanel data={undefined} />);
-    expect(screen.getByText(renderMessage("screens.admin_console.loading"))).toBeTruthy();
-    rerender(<TrustedAgentsPanel data={PANEL_UNAVAILABLE} />);
-    expect(screen.getByRole("alert")).toBeTruthy();
-    rerender(<TrustedAgentsPanel data={{ agents: [] }} />);
-    expect(
-      screen.getByText(renderMessage("screens.admin_console.no_agents"))
-    ).toBeTruthy();
-  });
-
-  it("changes an agent's scope; the refusal is said in the catalog's words, and stays", async () => {
-    mockApiFetch.mockResolvedValueOnce(
-      reply(
-        "POST /api/admin/ai/execute — set_agent_scope refused (no admin_manage_agents)"
-      )
-    );
-    render(
-      <TrustedAgentsPanel data={data} hasPermission={allow("admin_manage_agents")} />
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: ag("edit_label", { agent: "agent:research" }) })
-    );
-    fireEvent.change(screen.getByLabelText(ag("field_scope")), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: ag("submit_edit") }));
-    const reason = renderMessage("errors.auth.permission_denied", {
-      permission: "admin_manage_agents",
-    });
-    expect(
-      await screen.findByText(
-        ag("refused", {
-          what: ag("what_scope", { agent: "agent:research", scopes: ag("no_scope") }),
-          reason,
-        })
-      )
-    ).toBeTruthy();
-    const [, init] = mockApiFetch.mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(String(init.body)).actions[0]).toEqual({
-      tool: "set_agent_scope",
-      input: { agent_id: "agent:research", scopes: [] },
-    });
-  });
-
-  it("changes the ceiling alone; nothing changed is said; a bad ceiling is refused before sending", async () => {
-    mockApiFetch.mockResolvedValueOnce(
-      reply("POST /api/admin/ai/execute — register_agent held for approval")
-    );
-    render(
-      <TrustedAgentsPanel data={data} hasPermission={allow("admin_manage_agents")} />
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: ag("edit_label", { agent: "agent:research" }) })
-    );
-    fireEvent.click(screen.getByRole("button", { name: ag("submit_edit") }));
-    expect(screen.getByRole("alert").textContent).toBe(ag("nothing_changed"));
-    fireEvent.change(screen.getByLabelText(ag("field_ttl")), { target: { value: "-1" } });
-    fireEvent.click(screen.getByRole("button", { name: ag("submit_edit") }));
-    expect(screen.getByRole("alert").textContent).toBe(ag("ttl_invalid"));
-    fireEvent.change(screen.getByLabelText(ag("field_ttl")), { target: { value: "60" } });
-    fireEvent.click(screen.getByRole("button", { name: ag("submit_edit") }));
-    expect(
-      await screen.findByText(
-        ag("held", {
-          what: ag("what_ttl", { agent: "agent:research", seconds: 60 }),
-          approver: ag("approver"),
-        })
-      )
-    ).toBeTruthy();
-    expect(
-      JSON.parse(String((mockApiFetch.mock.calls[0] as [string, RequestInit])[1].body))
-        .actions[0]
-    ).toEqual({
-      tool: "set_agent_ttl",
-      input: { agent_id: "agent:research", max_token_ttl: 60 },
-    });
-  });
-
-  it("suspends after the confirm; reactivates a suspended agent; an unreachable server is said", async () => {
-    const suspended = JSON.parse(JSON.stringify(data)) as {
-      agents: [string, { status: string }][];
-    };
-    suspended.agents[0][1].status = "suspended";
-    mockApiFetch.mockRejectedValueOnce(new Error("offline"));
-    render(
-      <TrustedAgentsPanel data={suspended} hasPermission={allow("admin_manage_agents")} />
-    );
-    expect(screen.getByText(ag("status_suspended"))).toBeTruthy();
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: ag("reactivate_label", { agent: "agent:research" }),
-      })
-    );
-    expect(
-      screen.getByText(ag("confirm_reactivate", { agent: "agent:research" }))
-    ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: ag("confirm") }));
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toMatch(
-        /Not applied: reactivate agent:research/
-      )
-    );
-    expect(
-      JSON.parse(String((mockApiFetch.mock.calls[0] as [string, RequestInit])[1].body))
-        .actions[0]
-    ).toEqual({
-      tool: "suspend_agent",
-      input: { agent_id: "agent:research", reactivate: true },
-    });
-  });
-
-  it("a register form without an id says so; Cancel closes it", () => {
-    render(
-      <TrustedAgentsPanel data={data} hasPermission={allow("admin_manage_agents")} />
-    );
-    fireEvent.click(screen.getByRole("button", { name: ag("register") }));
-    fireEvent.click(screen.getByRole("button", { name: ag("submit_register") }));
-    expect(screen.getByRole("alert").textContent).toBe(ag("id_missing"));
-    fireEvent.change(screen.getByLabelText(ag("field_id")), {
-      target: { value: "agent:x" },
-    });
-    fireEvent.change(screen.getByLabelText(ag("field_ttl")), {
-      target: { value: "-5" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: ag("submit_register") }));
-    expect(screen.getByRole("alert").textContent).toBe(ag("ttl_invalid"));
-    fireEvent.click(screen.getByRole("button", { name: ag("cancel") }));
-    expect(screen.getByRole("button", { name: ag("register") })).toBeTruthy();
-    expect(mockApiFetch).not.toHaveBeenCalled();
   });
 });
 
@@ -623,85 +476,5 @@ describe("Erasures: each step's state and the attestation's decisions (S3-E19)",
     expect(screen.getByRole("alert")).toBeTruthy();
     rerender(<ErasuresPanel data={{ ...fixture, erasures: [] }} />);
     expect(screen.getByText(er("empty"))).toBeTruthy();
-  });
-});
-
-const cfg = (key: string, v?: Record<string, string | number>) =>
-  renderMessage(`screens.admin_console.config.${key}`, v);
-
-describe("Platform config: the rest of the edit panel (N-60)", () => {
-  const data = bodyOf<{ entries: SettingEntry[] }>(
-    "GET /api/admin/config — every setting, with its metadata"
-  );
-
-  it("a setting's tier decides the permission its change needs", () => {
-    expect(editPermission("standard")).toBe("config_manage_standard");
-    expect(editPermission("safety")).toBe("config_manage_safety");
-  });
-
-  it("a choice of allowed values; the re-read after an applied change refused: said", async () => {
-    mockApiFetch
-      .mockResolvedValueOnce(
-        reply("POST /api/admin/config-ai/execute — update_config applied")
-      )
-      .mockResolvedValueOnce(
-        reply("GET /api/admin/config — refused (no administrative access)")
-      );
-    render(
-      <PlatformConfigPanel data={data} hasPermission={allow("config_manage_standard")} />
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: cfg("open_label", { key: "default_language" }) })
-    );
-    expect(screen.getByText(cfg("field_allowed"))).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: cfg("edit") }));
-    fireEvent.change(screen.getByLabelText(cfg("new_value")), {
-      target: { value: "es" },
-    });
-    fireEvent.change(screen.getByLabelText(cfg("comment")), {
-      target: { value: "Spanish" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: cfg("submit") }));
-    expect(
-      await screen.findByText(/default_language could not be read again/)
-    ).toBeTruthy();
-  });
-
-  it("the same value is said, not sent; Cancel and Close; a network failure is said", async () => {
-    mockApiFetch.mockRejectedValueOnce(new Error("offline"));
-    render(
-      <PlatformConfigPanel data={data} hasPermission={allow("config_manage_safety")} />
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: cfg("open_label", { key: "signups_enabled" }) })
-    );
-    fireEvent.click(screen.getByRole("button", { name: cfg("edit") }));
-    fireEvent.change(screen.getByLabelText(cfg("comment")), { target: { value: "x" } });
-    fireEvent.click(screen.getByRole("button", { name: cfg("submit") }));
-    expect(screen.getByText(cfg("unchanged"))).toBeTruthy();
-    fireEvent.click(screen.getByRole("switch"));
-    fireEvent.click(screen.getByRole("button", { name: cfg("submit") }));
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toMatch(
-        /Not applied: signups_enabled/
-      )
-    );
-    fireEvent.click(screen.getByRole("button", { name: cfg("cancel") }));
-    fireEvent.click(screen.getByRole("button", { name: cfg("close") }));
-    expect(screen.queryByRole("region")).toBeNull();
-  });
-
-  it("not read yet; nothing read; nothing matching", () => {
-    const { rerender } = render(
-      <PlatformConfigPanel data={undefined} hasPermission={allow()} />
-    );
-    expect(screen.getByText(cfg("loading"))).toBeTruthy();
-    rerender(<PlatformConfigPanel data={{ entries: [] }} hasPermission={allow()} />);
-    expect(screen.getByText(cfg("empty"))).toBeTruthy();
-    rerender(<PlatformConfigPanel data={data} hasPermission={allow()} />);
-    fireEvent.change(screen.getByLabelText(cfg("filter_label")), {
-      target: { value: "zzz" },
-    });
-    expect(screen.getByText(cfg("none_match", { filter: "zzz" }))).toBeTruthy();
   });
 });

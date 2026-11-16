@@ -14,11 +14,18 @@ import { withTenantTx } from "@/platform/data";
 import { internalError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { namedAccounts } from "@/platform/admin/account-names";
+import { knownFeatures } from "@/platform/auth/account-status-guard";
 import type { ResponseSchema } from "@/platform/errors/response-schema";
 
 const GET_RESPONSE: ResponseSchema = {
   type: "object",
   properties: {
+    features: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
     restrictions: {
       type: "array",
       items: {
@@ -93,6 +100,8 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
       return found ? { email: found.email, erased: found.erased } : null;
     };
     return NextResponse.json({
+      // The features a block may name, offered by name on the screen (TASK-220).
+      features: await knownFeatures(),
       restrictions: rows.map((r) => ({
         ...r,
         created_at: r.created_at.toISOString(),

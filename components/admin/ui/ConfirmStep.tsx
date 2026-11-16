@@ -56,6 +56,7 @@ export interface ConfirmedWith {
 export function ConfirmStep({
   action,
   input,
+  heldTool,
   title,
   children,
   confirmLabel,
@@ -69,6 +70,8 @@ export function ConfirmStep({
   /** The action's id in the confirmation registry. */
   readonly action: string;
   readonly input?: Readonly<Record<string, unknown>>;
+  /** A decision on a held change: the held change's tool (approving an erasure erases). */
+  readonly heldTool?: string;
   /** What will be done, naming this instance: "Change ann@example.com's role". */
   readonly title: string;
   /** The change itself (from → to), under the title. */
@@ -88,7 +91,7 @@ export function ConfirmStep({
   readonly onConfirm: (given: ConfirmedWith) => void;
   readonly onCancel: () => void;
 }) {
-  const confirmation = confirmationFor(action, input);
+  const confirmation = confirmationFor(action, input, heldTool);
   const irreversible = confirmation.risk === "irreversible";
   const consequence = consequenceText(confirmation);
   const titleId = useId();

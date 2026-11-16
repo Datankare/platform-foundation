@@ -269,7 +269,7 @@ describe("the approvals screen says what to do with each answer (round 15, I-1)"
     writeAnswer = "indeterminate";
     const text = await said(await approve(id));
     expect(text).toMatch(/listed as undecided within 75 minutes/);
-    expect(text).toMatch(/refused as stale/);
+    expect(text).toMatch(/the second try is refused and the request withdrawn/);
   });
 });
 

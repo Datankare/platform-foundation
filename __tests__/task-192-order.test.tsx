@@ -10,7 +10,7 @@
  */
 
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import {
   NEW_ROLE_SORT_ORDER,
   PERMISSION_CATEGORY_ORDER,
@@ -25,6 +25,8 @@ import {
 } from "@/platform/auth/catalog-order";
 import { fullTimestamp, permissionCategoryLabel } from "@/components/admin/admin-format";
 import { AuditDataView, RolesDataView } from "@/components/admin/AdminDataViews";
+import { permissionLabel } from "@/components/admin/ui/labels";
+import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 import { applyUsersSearch } from "@/components/admin/users-search-handoff";
 import ExecutionResultsPanel from "@/components/admin/ExecutionResultsPanel";
 import { SEARCH_SQL, searchParams } from "@/app/api/admin/ai/handlers/search";
@@ -227,68 +229,58 @@ describe("the Roles screen", () => {
     expect(document.body.textContent).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
   });
 
-  it("expanded: permissions grouped under their category headings, in order, by name", () => {
+  it("opened: permissions grouped under their category headings, in order, by name (TASK-220: never codes)", () => {
     render(<RolesDataView data={{ roles: [role] }} />);
-    fireEvent.click(screen.getByText("Moderator"));
-    const headings = screen
-      .getAllByRole("heading", { level: 3 })
+    fireEvent.click(screen.getByRole("button", { name: "Moderator" }));
+    const detail = screen.getByRole("region", { name: "Moderator" });
+    const headings = within(detail)
+      .getAllByRole("heading", { level: 4 })
       .map((h) => h.textContent);
     expect(headings).toEqual(["Administration", "Moderation", "Gameplay", "Zzz custom"]);
-    const admin = screen.getByRole("region", { name: "Administration" });
+    const admin = within(detail).getByRole("region", { name: "Administration" });
     expect(
       within(admin)
-        .getAllByText(/^(can_|admin_)/)
+        .getAllByRole("listitem")
         .map((n) => n.textContent)
-    ).toEqual(["can_access_admin", "admin_view_audit"]);
-    // The expanded dates: with the time, the tooltip in UTC; no M/D/YYYY.
-    const line = screen.getByText(/^Created:/).closest("div")!;
-    const times = line.querySelectorAll("time");
+    ).toEqual([permissionLabel("can_access_admin"), permissionLabel("admin_view_audit")]);
+    expect(detail.textContent).not.toMatch(/can_access_admin|admin_view_audit/);
+    // The detail's dates: with the time, the tooltip in UTC; no M/D/YYYY.
+    const times = detail.querySelectorAll("time");
     expect(times).toHaveLength(2);
     expect(times[0]!.textContent).toMatch(/^29 Oct 2026, \d{2}:\d{2}$/);
     expect(times[1]!.getAttribute("title")).toMatch(/31 Mar 2026, 23:30:05 UTC/);
     expect(document.body.textContent).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
   });
 
-  it("the expansion is a disclosure button: focusable, named, aria-expanded and aria-controls", () => {
+  it("a role opens from its own button: named, aria-expanded, its detail a region whose heading takes focus", async () => {
     render(<RolesDataView data={{ roles: [role] }} />);
-    const button = screen.getByRole("button", { name: "5 permissions of Moderator" });
+    const button = screen.getByRole("button", { name: "Moderator" });
     expect(button.getAttribute("aria-expanded")).toBe("false");
-    expect(button.getAttribute("aria-controls")).toBeNull();
-    button.focus();
-    expect(document.activeElement).toBe(button);
-    // Enter or Space on a focused <button> is its click (the browser's; jsdom has no key action).
-    fireEvent.keyDown(button, { key: "Enter" });
     fireEvent.click(button);
-    expect(button.getAttribute("aria-expanded")).toBe("true");
-    const controlled = document.getElementById(button.getAttribute("aria-controls")!);
-    expect(controlled).not.toBeNull();
-    expect(within(controlled!).getByText("can_moderate")).toBeDefined();
-    // One toggle, not two: the row's own click does not also fire.
-    expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(4);
-    fireEvent.click(button);
-    expect(button.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText("can_moderate")).toBeNull();
-    // Each group is a region named by its own heading — no two regions share a name.
-    fireEvent.click(button);
-    const regions = screen.getAllByRole("region");
-    expect(regions.length).toBeGreaterThan(0);
-    for (const r of regions) {
-      const heading = document.getElementById(r.getAttribute("aria-labelledby")!);
-      expect(heading?.tagName).toBe("H3");
-      expect(r.contains(heading)).toBe(true);
-    }
-    expect(new Set(regions.map((r) => r.getAttribute("aria-labelledby"))).size).toBe(4);
-    expect(regions.every((r) => r.getAttribute("aria-label") === null)).toBe(true);
+    expect(
+      screen
+        .getAllByRole("button", { name: "Moderator" })[0]!
+        .getAttribute("aria-expanded")
+    ).toBe("true");
+    const detail = screen.getByRole("region", { name: "Moderator" });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(detail).getByRole("heading", { level: 3 })
+      )
+    );
+    // Each category is a region named by its heading — no two share a name.
+    const groups = within(detail).getAllByRole("region");
+    expect(new Set(groups.map((r) => r.getAttribute("aria-label"))).size).toBe(4);
+    fireEvent.click(within(detail).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("region", { name: "Moderator" })).toBeNull();
   });
 
   it("one permission: the singular", () => {
     render(<RolesDataView data={{ roles: [{ ...role, permissionCount: 1 }] }} />);
-    expect(
-      screen.getByRole("button", { name: "1 permission of Moderator" })
-    ).toBeDefined();
+    expect(screen.getByText("1 permission")).toBeDefined();
   });
 
-  it("no date, or one that cannot be read: a dash", () => {
+  it("no date, or one that cannot be read: said, never a raw value", () => {
     render(
       <RolesDataView
         data={{
@@ -296,10 +288,14 @@ describe("the Roles screen", () => {
         }}
       />
     );
-    fireEvent.click(screen.getByText("Moderator"));
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
-    expect(screen.queryByRole("heading", { level: 3 })).toBeNull();
-    expect(screen.getByText("No permissions assigned.")).toBeDefined();
+    expect(
+      screen.getByText(renderMessage("screens.admin_console.ui.table.never"))
+    ).toBeDefined();
+    expect(document.body.textContent).not.toContain("nonsense");
+    fireEvent.click(screen.getByRole("button", { name: "Moderator" }));
+    expect(
+      screen.getByText(renderMessage("screens.admin_console.views.roles.no_permissions"))
+    ).toBeDefined();
   });
 
   it("the roles in the order the server gave them", () => {
@@ -311,26 +307,27 @@ describe("the Roles screen", () => {
         }}
       />
     );
-    expect(screen.getAllByRole("code").map((c) => c.textContent)).toEqual(names);
+    expect(
+      screen
+        .getAllByRole("button")
+        .filter((b) => b.hasAttribute("data-role-open"))
+        .map((b) => b.textContent)
+    ).toEqual(names);
   });
 
-  it("the Audit log's time in the same format", () => {
-    render(
-      <AuditDataView
-        data={{
-          entries: [
-            {
-              id: "e1",
-              createdAt: "2026-10-29T09:15:00Z",
-              action: "role_changed",
-              details: "",
-            },
-          ],
-        }}
-      />
+  it("the Audit log's time in the same format", async () => {
+    const [status, page] = routeAnswer(
+      "GET /api/admin/audit — a page of the log, more to read" as RouteFixtureName
     );
+    global.fetch = jest.fn(async () => ({
+      ok: status < 400,
+      status,
+      json: async () => page,
+    })) as unknown as typeof fetch;
+    render(<AuditDataView data={undefined} />);
+    await screen.findByRole("table");
     const time = document.querySelector("time")!;
-    expect(time.textContent).toMatch(/^29 Oct 2026, \d{2}:\d{2}$/);
+    expect(time.textContent).toMatch(/^\d{1,2} Jan 2026, \d{2}:\d{2}$/);
     expect(time.getAttribute("title")).toMatch(/UTC$/);
   });
 });

@@ -728,6 +728,23 @@ describe("labels: a name for every code, never the code", () => {
     expect(readableCode("")).toBe("");
   });
 
+  it("initialisms as people write them, a level's number its own word (the walk's setting names)", () => {
+    expect(settingLabel("moderation.escalation_sla_hours")).toBe(
+      "Moderation: escalation SLA hours"
+    );
+    expect(settingLabel("ai.daily_paid_requests_per_actor")).toBe(
+      "AI: daily paid requests per actor"
+    );
+    expect(settingLabel("auth.staff_mfa_required")).toBe("Auth: staff MFA required");
+    expect(settingLabel("moderation.level1_block_severity")).toBe(
+      "Moderation: level 1 block severity"
+    );
+    expect(readableCode("coppa.enforcement_enabled")).toBe("COPPA enforcement enabled");
+    expect(readableCode("user_id")).toBe("User ID");
+    // A word that only contains one is left alone.
+    expect(readableCode("maintenance_said")).toBe("Maintenance said");
+  });
+
   it("a person by name, else address, else what they are; the id only as a detail", () => {
     const { rerender } = render(
       <PersonRef person={{ email: "ann@example.test" }} name="Ann" id="u-1" />

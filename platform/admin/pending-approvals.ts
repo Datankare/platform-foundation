@@ -426,7 +426,7 @@ async function holdsNoOneMayDecide(
 
 /**
  * List every live hold across both mechanisms, newest first. Read-only (040a).
- * A failure in one source is isolated so the other still lists.
+ * A failure in one source is isolated so the other still lists — and is named in `unread`.
  */
 export async function listPendingApprovals(
   authorities: readonly HoldAuthority[] = [],
@@ -436,7 +436,13 @@ export async function listPendingApprovals(
    * could decide it; anyone else who may see the queue sees its label and reason only. No viewer:
    * no summaries.
    */
-  viewer?: VerifiedAdmin
+  viewer?: VerifiedAdmin,
+  /**
+   * Filled with each source that could not be read (TASK-220, SF-admin-004): a source that fails
+   * is isolated so the other still lists, and the caller says so — a failed read is never an
+   * empty queue on the screen.
+   */
+  unread?: Set<PendingApprovalSource>
 ): Promise<PendingApproval[]> {
   const [proposals, configApprovals] = await Promise.all([
     // Approved holds whose run failed are listed too: a new approval runs them again.
@@ -451,8 +457,14 @@ export async function listPendingApprovals(
         ...approved,
         ...undecided,
       ])
-      .catch((): readonly ProposalRecord[] => []),
-    listApprovals({ status: "pending" }).catch((): ConfigApprovalRecord[] => []),
+      .catch((): readonly ProposalRecord[] => {
+        unread?.add("runtime");
+        return [];
+      }),
+    listApprovals({ status: "pending" }).catch((): ConfigApprovalRecord[] => {
+      unread?.add("config-approval");
+      return [];
+    }),
   ]);
 
   // An approval never used, or a hold never decided, past config.approval_expiry_days, has lapsed

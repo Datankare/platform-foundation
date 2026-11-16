@@ -86,12 +86,15 @@ describe("PanelUnavailable", () => {
   });
 });
 
+// The views are given what the console read (its PanelState says "Reading…" and a refused read —
+// a 503 among them — before a view is mounted: TASK-216). What reaches a view and holds no list is
+// still never an empty list (TASK-220: ListUnreadable).
 describe.each([
   [
     "TrustedAgentsDataView",
     TrustedAgentsDataView,
     "agents",
-    "No agents registered.",
+    renderMessage("screens.admin_console.agents.empty"),
     [["agent:a", { owner: "o", scopes: ["s"], status: "active" }]],
     "agent:a",
   ],
@@ -99,24 +102,20 @@ describe.each([
     "CapabilityMappingDataView",
     CapabilityMappingDataView,
     "mappings",
-    "No mappings configured.",
+    renderMessage("screens.admin_console.views.capability_map.empty"),
     [["summarize", ["translate"]]],
-    "summarize",
+    "Summarize",
   ],
 ] as const)("%s", (_name, View, field, emptyText, rows, shown) => {
-  it("not read yet: loading — never 'none'", () => {
-    render(<View data={undefined} />);
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
-    expect(screen.queryByText(emptyText)).toBeNull();
-  });
   it.each([
-    ["answered 503", PANEL_UNAVAILABLE],
+    ["the old unavailable marker", PANEL_UNAVAILABLE],
     ["a body without the list", {}],
     ["the list not a list", { [field]: "x" }],
     ["null", null],
-  ])("%s: unavailable — never 'none'", async (_label, data) => {
+    ["nothing", undefined],
+  ])("%s: a failed read — never 'none'", async (_label, data) => {
     const { container } = render(<View data={data} />);
-    expect(screen.getByRole("alert")).toHaveTextContent(UNAVAILABLE);
+    expect(screen.getByRole("alert")).toHaveTextContent(/^Could not read/);
     expect(screen.queryByText(emptyText)).toBeNull();
     await noViolations(container);
   });
@@ -128,7 +127,7 @@ describe.each([
   });
   it("a list: its rows", async () => {
     const { container } = render(<View data={{ [field]: rows }} />);
-    expect(screen.getByText(shown)).toBeInTheDocument();
+    expect(screen.getAllByText(shown).length).toBeGreaterThan(0);
     await noViolations(container);
   });
 });

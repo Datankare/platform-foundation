@@ -103,3 +103,15 @@ export function Checkbox({
     </label>
   );
 }
+
+/**
+ * Why a form cannot be sent when no one field is at fault (nothing changed; a choice among
+ * checkboxes): announced as it appears, beside the form's buttons (TASK-220).
+ */
+export function FormProblem({ problem }: { readonly problem?: string | null }) {
+  return problem ? (
+    <p role="alert" data-form-problem="true" className="text-xs text-red-300">
+      {problem}
+    </p>
+  ) : null;
+}

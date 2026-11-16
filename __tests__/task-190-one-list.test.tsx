@@ -616,6 +616,8 @@ describe("Show details: offered to admins and super-admins only", () => {
       if (p === "/api/admin/users/search") return listAnswer(init);
       if (p === "/api/admin/approvals")
         return json("GET /api/admin/approvals — none held");
+      if (p === "/api/admin/tenant")
+        return json("GET /api/admin/tenant — a single deployment");
       throw new Error(`unexpected request: ${p}`);
     });
   };
@@ -658,7 +660,7 @@ describe("Show details: offered to admins and super-admins only", () => {
     await screen.findByText("ann@example.com");
     await settle();
     expect(screen.getByRole("button", { name: SHOW })).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: /Approvals/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Tenant$/ }));
     await settle();
     expect(screen.queryByRole("button", { name: SHOW })).toBeNull();
   });

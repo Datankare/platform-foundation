@@ -64,6 +64,22 @@ export function readCapabilityFeatures(): Promise<unknown> {
   return readOrThrow(CAPABILITY_FEATURES_KEY);
 }
 
+/**
+ * The capabilities the map knows, by name, in its order (TASK-220: the screens offer an agent's
+ * scope from them, by name — SF-admin-130); null when the map cannot be read or is not well
+ * formed (a picker then offers nothing new — never a guessed list). Never throws.
+ */
+export async function mappedCapabilities(): Promise<string[] | null> {
+  let map: unknown;
+  try {
+    map = await readCapabilityFeatures();
+  } catch {
+    return null;
+  }
+  if (!isWellFormedCapabilityMap(map)) return null;
+  return (map as [string, string[]][]).map(([capability]) => capability);
+}
+
 /** Why a capability decision was made, including that the map could not be read. */
 export type GovernedCapabilityDecision =
   | CapabilityFeatureDecision

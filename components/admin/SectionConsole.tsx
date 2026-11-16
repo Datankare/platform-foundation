@@ -57,6 +57,23 @@ import { adminCall, type CallBody } from "@/components/admin/ui/admin-call";
 import { PanelState, usePanelRead } from "@/components/admin/ui/PanelState";
 import { newOutcomeId } from "@/components/admin/ui/Outcome";
 
+/**
+ * The sections whose views keep a stored name, a code or an id as a detail, shown only with "Show
+ * details" (TASK-220: Roles' stored names, a capability's address, an audit entry's ids, …).
+ */
+const DETAIL_SECTIONS: ReadonlySet<AdminSection> = new Set<AdminSection>([
+  "roles",
+  "entitlements",
+  "per-account",
+  "approvals",
+  "capabilities",
+  "capability-mapping",
+  "platform-config",
+  "dual-control",
+  "agent-registry",
+  "audit",
+]);
+
 /** The signed-in admin, as the section needs them. */
 export interface ConsoleAdmin {
   readonly roleName: string;
@@ -231,10 +248,12 @@ export function SectionConsole({
   };
 
   // "Show details" only where it changes something (TASK-190 round 1, item 5): the Users screen,
-  // and a section showing a search table with an id column.
+  // a section whose view keeps a stored name or an id as a detail (TASK-220), and a section
+  // showing a search table with an id column.
   const detailsOffered =
     mayShowDetails(admin.roleName) &&
     (section === "users" ||
+      DETAIL_SECTIONS.has(section) ||
       results.some((res) => res.success && res.table?.columns.includes("id")));
   const showIds = detailsOffered && showDetails;
 
@@ -297,10 +316,23 @@ export function SectionConsole({
 
       {View &&
         (endpoint === null ? (
-          <View data={undefined} hasPermission={hasPermission} />
+          <View
+            data={undefined}
+            hasPermission={hasPermission}
+            viewerId={admin.userId}
+            showIds={showIds}
+          />
         ) : (
           <PanelState read={read} panel={title} onReload={reload}>
-            {(data) => <View data={data} hasPermission={hasPermission} />}
+            {(data) => (
+              <View
+                data={data}
+                hasPermission={hasPermission}
+                onReload={reload}
+                viewerId={admin.userId}
+                showIds={showIds}
+              />
+            )}
           </PanelState>
         ))}
     </div>

@@ -543,11 +543,11 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
     await open();
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Approve the held change: Setting moderation.strike_ban_threshold",
+        name: "Approve the held change: Setting Moderation: strike ban threshold",
       })
     );
     await screen.findByText(
-      `Setting moderation.strike_ban_threshold: ${messageOf(refused)}`
+      `Setting Moderation: strike ban threshold: ${messageOf(refused)}`
     );
     const post = fetchMock.mock.calls.find(([u]) => u === `${base}/approvals/${id}`) as [
       string,
@@ -573,7 +573,7 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
   ])(
     "a decision's outcome (%s) is said as the Approvals panel says it, and the list read again",
     async (answer, then) => {
-      const said = `Setting moderation.strike_ban_threshold: ${messageOf(answer)} ${then}`;
+      const said = `Setting Moderation: strike ban threshold: ${messageOf(answer)} ${then}`;
       routes(
         new Map([
           [`GET ${base}/config`, CONFIG],
@@ -587,7 +587,7 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
       const before = reads();
       fireEvent.click(
         screen.getByRole("button", {
-          name: "Approve the held change: Setting moderation.strike_ban_threshold",
+          name: "Approve the held change: Setting Moderation: strike ban threshold",
         })
       );
       await screen.findByText(said);
@@ -668,14 +668,14 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
     await open();
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Approve the held change: Setting config.dual_control_keys",
+        name: "Approve the held change: Setting Config: dual control keys",
       })
     );
     // The decision answers pendingApproval (this read `pending`, and said "… : done.").
     await screen.findByText(
-      "Approved: Setting config.dual_control_keys. It now waits for a second approval (two-person approval) before it takes effect."
+      "Approved: Setting Config: dual control keys. It now waits for a second approval (two-person approval) before it takes effect."
     );
-    expect(screen.queryByText("Setting config.dual_control_keys: done.")).toBeNull();
+    expect(screen.queryByText("Setting Config: dual control keys: done.")).toBeNull();
   });
 
   it("an undecided duplicate refused approval again says what to do with it (round 8, item 1)", async () => {

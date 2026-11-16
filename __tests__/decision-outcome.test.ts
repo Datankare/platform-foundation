@@ -14,7 +14,7 @@ describe("refusedDecisionText (round 17)", () => {
     const undecided = refusedDecisionText("x", refused("approvals.indeterminate"), {
       approvalKept: false,
     });
-    expect(undecided).toMatch(/once its run's lease has passed/);
+    expect(undecided).toMatch(/once it has had time to finish/);
     expect(undecided).not.toMatch(/\d+ minutes?/);
     const settling = refusedDecisionText("x", refused("admin.write_indeterminate"), {
       settling: true,

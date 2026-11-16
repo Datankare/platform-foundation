@@ -110,6 +110,7 @@ jest.mock("@/platform/auth/platform-config", () => {
     "setConfigWithHistory",
     "getPermissionTier",
     "publishConfigInvalidation",
+    "getConfig",
   ]) {
     mockCfg[name] = jest.fn((...a: unknown[]) => actual[name](...a));
     wrapped[name] = (...a: unknown[]) => mockCfg[name](...a);
@@ -259,12 +260,16 @@ import { GET as sessionGET } from "@/app/api/admin/session/route";
 import { GET as usersGET } from "@/app/api/admin/users/route";
 import { POST as usersSearchPOST } from "@/app/api/admin/users/search/route";
 import { GET as rolesGET } from "@/app/api/admin/roles/route";
-import { GET as entitlementsGET } from "@/app/api/admin/entitlements/route";
+import {
+  GET as entitlementsGET,
+  PATCH as entitlementsPATCH,
+} from "@/app/api/admin/entitlements/route";
 import { GET as auditGET } from "@/app/api/admin/audit/route";
 import { GET as passwordPolicyGET } from "@/app/api/admin/password-policy/route";
 import { GET as perAccountGET } from "@/app/api/admin/per-account/route";
 import { GET as approvalPolicyGET } from "@/app/api/admin/approval-policy/route";
 import { GET as capabilitiesGET } from "@/app/api/admin/capabilities/route";
+import * as providerRegistry from "@/platform/providers/registry";
 import { GET as capabilityMappingGET } from "@/app/api/admin/capability-mapping/route";
 import { GET as tenantGET } from "@/app/api/admin/tenant/route";
 import { GET as operatorTenantsGET } from "@/app/api/operator/tenants/route";
@@ -1175,6 +1180,18 @@ const USERS_SCREEN: Readonly<Record<string, () => Promise<RouteFixture>>> = {
   "POST /api/admin/gdpr — held for a second admin": async () => {
     rows(usersTables([ANN, OLD_STAFF]));
     return recordStable(await eraseAnn("super_admin"));
+  },
+  // TASK-220 (SF-admin-036): the approver reads an erasure's kind of reason, by its label.
+  "GET /api/admin/approvals — an erasure held, the person asked for it": async () => {
+    rows(usersTables([ANN, OLD_STAFF]));
+    names();
+    await gdprPOST(
+      req("/api/admin/gdpr", "POST", "super_admin", {
+        userId: ANN.id,
+        reason: "user-request",
+      })
+    );
+    return approvalsNow();
   },
   "POST /api/admin/gdpr — refused (an erasure already pending)": async () => {
     rows(usersTables([ANN, OLD_STAFF]));
@@ -3397,6 +3414,298 @@ const PRODUCERS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
         await approvalsGET(req("/api/admin/approvals", "GET", APPROVER))
       );
     },
+  // TASK-220 (SF-admin-083): the dual-control screen marks what waits — a removal, and a change a
+  // viewer who may not decide it sees only as one to the list.
+  "GET /api/admin/approvals — a held removal from the dual-control list": async () => {
+    settings(["signups_enabled", "config.dual_control_keys"]);
+    names();
+    await updateConfig(
+      "config.dual_control_keys",
+      ["config.dual_control_keys"],
+      "Signups need no second approver"
+    );
+    return recordStable(await approvalsGET(req("/api/admin/approvals", "GET", APPROVER)));
+  },
+  "GET /api/admin/approvals — a held change to the dual-control list, to an admin who may not decide it":
+    async () => {
+      settings(["signups_enabled", "config.dual_control_keys"]);
+      names();
+      await updateConfig(
+        "config.dual_control_keys",
+        ["signups_enabled", "config.dual_control_keys", "default_language"],
+        "Hold language changes too"
+      );
+      return recordStable(
+        await approvalsGET(req("/api/admin/approvals", "GET", "admin"))
+      );
+    },
+  "GET /api/admin/approvals — the two-person approvals unreadable": async () => {
+    settings(["config.dual_control_keys"]);
+    names();
+    await updateConfig(
+      "config.dual_control_keys",
+      ["signups_enabled", "config.dual_control_keys", "default_language"],
+      "Hold language changes too"
+    );
+    mockListApprovals.mockRejectedValueOnce(new Error("approvals store down"));
+    return recordStable(await approvalsGET(req("/api/admin/approvals", "GET", APPROVER)));
+  },
+  "GET /api/admin/approvals — the held changes under dual control unreadable":
+    async () => {
+      const store = getProposalStore();
+      jest.spyOn(store, "query").mockRejectedValue(new Error("proposals store down"));
+      return recordStable(
+        await approvalsGET(req("/api/admin/approvals", "GET", APPROVER))
+      );
+    },
+  "GET /api/admin/approvals — neither store readable": async () => {
+    mockListApprovals.mockRejectedValueOnce(new Error("approvals store down"));
+    const store = getProposalStore();
+    jest.spyOn(store, "query").mockRejectedValue(new Error("proposals store down"));
+    return recordStable(await approvalsGET(req("/api/admin/approvals", "GET", APPROVER)));
+  },
+  // TASK-220 (SF-admin-053): the Entitlements screen's on/off, as its route answers it.
+  "PATCH /api/admin/entitlements — held for a second admin": async () => {
+    dualControlledActions(["set_entitlement_group_active"]);
+    rows((sql) =>
+      /from entitlement_groups where id/.test(sql)
+        ? [{ id: "0000000e-0000-4000-8000-000000000001", code: "premium" }]
+        : []
+    );
+    return recordStable(
+      await entitlementsPATCH(
+        req("/api/admin/entitlements", "PATCH", "super_admin", {
+          groupId: "0000000e-0000-4000-8000-000000000001",
+          isActive: false,
+        })
+      )
+    );
+  },
+  "PATCH /api/admin/entitlements — turned off": async () => {
+    dualControlledActions([]);
+    rows((sql) =>
+      /from entitlement_groups where id/.test(sql)
+        ? [{ id: "0000000e-0000-4000-8000-000000000001", code: "premium" }]
+        : []
+    );
+    return recordStable(
+      await entitlementsPATCH(
+        req("/api/admin/entitlements", "PATCH", "super_admin", {
+          groupId: "0000000e-0000-4000-8000-000000000001",
+          isActive: false,
+        })
+      )
+    );
+  },
+  // TASK-220: what the governance screens read beside their lists — the capabilities an agent's
+  // scope may name, the features a block or a capability may name, what each group grants, and
+  // holders that could not be counted (null, never 0).
+  "GET /api/admin/agent-registry — the registry and the capabilities the map knows":
+    async () => {
+      settings([]);
+      const base = mockCfg.getConfigOrThrow.getMockImplementation()!;
+      mockCfg.getConfigOrThrow.mockImplementation(async (key: string) =>
+        key === "agent.capability_features"
+          ? [
+              ["translate", ["translate"]],
+              ["identify-song", ["song_id"]],
+            ]
+          : base(key)
+      );
+      return record(
+        await agentRegistryGET(req("/api/admin/agent-registry", "GET", "super_admin"))
+      );
+    },
+  "GET /api/admin/capability-mapping — the map and the features that exist": async () => {
+    mockCfg.getConfigOrThrow.mockImplementation(async (key: string) => {
+      if (key === "agent.capability_features")
+        return [
+          ["translate", ["translate"]],
+          ["identify-song", ["song_id", "translate"]],
+        ];
+      throw new Error(`no ${key} here`);
+    });
+    mockCfg.getConfig.mockImplementation(async (key: string, fallback: unknown) =>
+      key === "account_status.known_features"
+        ? ["translate", "song_id", "tts", "profile"]
+        : fallback
+    );
+    return record(
+      await capabilityMappingGET(
+        req("/api/admin/capability-mapping", "GET", "super_admin")
+      )
+    );
+  },
+  "GET /api/admin/per-account — a block, and the features that exist": async () => {
+    mockCfg.getConfig.mockImplementation(async (key: string, fallback: unknown) =>
+      key === "account_status.known_features" ? ["translate", "song_id", "tts"] : fallback
+    );
+    rows((sql) => {
+      if (/from user_feature_restrictions/.test(sql))
+        return [
+          {
+            user_id: "00000000-0000-4000-8000-0000000b10c1",
+            feature: "translate",
+            reason: "Repeated abuse of the translator",
+            created_by: identityFor("super_admin").userId,
+            created_at: new Date("2026-01-02T00:00:00.000Z"),
+          },
+        ];
+      return [];
+    });
+    mockNames.mockResolvedValue(
+      new Map([
+        [
+          "00000000-0000-4000-8000-0000000b10c1",
+          {
+            id: "00000000-0000-4000-8000-0000000b10c1",
+            email: "blocked@example.com",
+            role: "Player",
+            erased: false,
+          },
+        ],
+        [
+          identityFor("super_admin").userId,
+          {
+            id: identityFor("super_admin").userId,
+            email: "admin@example.com",
+            role: "Super admin",
+            erased: false,
+          },
+        ],
+      ])
+    );
+    return record(
+      await perAccountGET(req("/api/admin/per-account", "GET", "super_admin"))
+    );
+  },
+  "GET /api/admin/entitlements — the groups, what each grants, and their holders":
+    async () => {
+      rows((sql) => {
+        if (/from entitlement_groups/.test(sql))
+          return [
+            {
+              id: "0000000e-0000-4000-8000-000000000001",
+              code: "premium",
+              display_name: "Premium",
+              is_active: true,
+            },
+            {
+              id: "0000000e-0000-4000-8000-000000000002",
+              code: "beta",
+              display_name: "Beta",
+              is_active: false,
+            },
+          ];
+        if (/from entitlement_permissions/.test(sql))
+          return [
+            {
+              entitlement_group_id: "0000000e-0000-4000-8000-000000000001",
+              permission_id: "0000000f-0000-4000-8000-000000000001",
+            },
+          ];
+        if (/from permissions/.test(sql))
+          return [
+            {
+              id: "0000000f-0000-4000-8000-000000000001",
+              code: "can_translate",
+              display_name: "Translate",
+              category: "gameplay",
+            },
+            {
+              id: "0000000f-0000-4000-8000-000000000002",
+              code: "admin_view_audit",
+              display_name: "View audit",
+              category: "admin",
+            },
+          ];
+        if (/from user_entitlements/.test(sql))
+          return [{ entitlement_group_id: "0000000e-0000-4000-8000-000000000001", n: 3 }];
+        return [];
+      });
+      return record(
+        await entitlementsGET(req("/api/admin/entitlements", "GET", "super_admin"))
+      );
+    },
+  "GET /api/admin/entitlements — the holders could not be counted": async () => {
+    rows((sql) => {
+      if (/from entitlement_groups/.test(sql))
+        return [
+          {
+            id: "0000000e-0000-4000-8000-000000000001",
+            code: "premium",
+            display_name: "Premium",
+            is_active: true,
+          },
+        ];
+      if (/from user_entitlements/.test(sql)) throw new Error("down");
+      return [];
+    });
+    return record(
+      await entitlementsGET(req("/api/admin/entitlements", "GET", "super_admin"))
+    );
+  },
+  "GET /api/admin/audit — a page of the log, more to read": async () => {
+    rows((sql) =>
+      /from audit_log/.test(sql)
+        ? Array.from({ length: 2 }, (_, i) => ({
+            id: `0000000c-0000-4000-8000-00000000000${i}`,
+            action: i === 0 ? "role_changed" : "admin_action",
+            actor_id: identityFor("super_admin").userId,
+            target_id: i === 0 ? ANN.id : "moderation.strike_ban_threshold",
+            details:
+              i === 0
+                ? { fromRole: "free", toRole: "moderator" }
+                : { type: "config_changed", key: "moderation.strike_ban_threshold" },
+            created_at: new Date(`2026-01-0${i + 1}T09:30:00.000Z`),
+          }))
+        : []
+    );
+    mockNames.mockResolvedValue(
+      new Map([
+        [
+          identityFor("super_admin").userId,
+          {
+            id: identityFor("super_admin").userId,
+            email: "admin@example.com",
+            role: "Super admin",
+            erased: false,
+          },
+        ],
+        [
+          ANN.id,
+          { id: ANN.id, email: "ann@example.com", role: "Moderator", erased: false },
+        ],
+      ])
+    );
+    return record(
+      await auditGET(req("/api/admin/audit?offset=0&limit=2", "GET", "super_admin"))
+    );
+  },
+  "GET /api/admin/password-policy — the policy": async () =>
+    record(
+      await passwordPolicyGET(req("/api/admin/password-policy", "GET", "super_admin"))
+    ),
+  "GET /api/admin/approval-policy — the policy": async () =>
+    record(
+      await approvalPolicyGET(req("/api/admin/approval-policy", "GET", "super_admin"))
+    ),
+  "GET /api/admin/capabilities — the goals": async () => {
+    // The providers a run has differ with the modules it loads (test:core loads none): the
+    // answer is made from one fixed selection, so the fixture is the same in every pass.
+    const providers = jest.spyOn(providerRegistry, "getActiveProviders").mockReturnValue({
+      ai: "anthropic",
+      embeddingProvider: "mock",
+      translation: "mock",
+    } as unknown as ReturnType<typeof providerRegistry.getActiveProviders>);
+    try {
+      return record(
+        await capabilitiesGET(req("/api/admin/capabilities", "GET", "super_admin"))
+      );
+    } finally {
+      providers.mockRestore();
+    }
+  },
   "GET /api/admin/agent-registry — the registry": async () => {
     settings([]);
     return record(

@@ -40,7 +40,8 @@ const LABEL = {
   child: "child (under 13)",
   teen: "teen (13–17)",
   adult: "adult (18+)",
-  fail_closed: "fail-closed (config unavailable)",
+  // TASK-220 (SF-admin-160): plain words, not "fail-closed".
+  fail_closed: "Held back: the moderation settings could not be read",
 };
 
 describe("every moderation template reads as the English it replaced (TASK-209)", () => {
@@ -127,11 +128,11 @@ describe("every moderation template reads as the English it replaced (TASK-209)"
       ],
       [
         shown("screens.moderation.reasons.unavailable"),
-        "Classifier unavailable — content withheld at every rating level (fail-closed).",
+        "The content checker could not be reached, so the content was held back at every age rating until it can be checked.",
       ],
       [
         shown("screens.moderation.reasons.unreadable"),
-        "Classifier answer unreadable — withheld for human review at every rating level (fail-closed).",
+        "The content checker's answer could not be read, so the content was held back at every age rating for a person to review.",
       ],
       [
         shown("screens.moderation.reasons.safe", { confidence: confidence.toFixed(2) }),
@@ -143,7 +144,7 @@ describe("every moderation template reads as the English it replaced (TASK-209)"
       ],
       [
         shown("screens.moderation.reasons.config_unavailable"),
-        "Config unavailable — using fail-closed thresholds.",
+        "The moderation settings could not be read, so the strictest thresholds were used.",
       ],
       [
         shown("screens.moderation.reasons.severity_adjusted", {
@@ -187,7 +188,7 @@ describe("every moderation template reads as the English it replaced (TASK-209)"
       ],
       [
         shown("screens.moderation.reasons.run_incomplete"),
-        "Screening run did not complete — escalated for human review (fail-closed).",
+        "The content check did not finish, so the content was sent to a person to review.",
       ],
     ];
     for (const [t, old] of pairs) expect(w(t)).toBe(old);
@@ -259,7 +260,7 @@ describe("every other moderation template reads as the English it replaced (TASK
       { axis: "real-person", action: "escalate" },
     ];
     const UNCONFIGURED = "no classifier configured";
-    const failed = "fail-closed: the screen did not complete (the detail is in the log)";
+    const failed = "Held back: the check did not finish (the detail is in the log)";
     const pairs: [ShownText, string][] = [
       [
         shown("screens.moderation.modality.hard_refuse"),
@@ -344,7 +345,7 @@ describe("every other moderation template reads as the English it replaced (TASK
       ],
       [
         shown("screens.moderation.profile.language"),
-        "languagePreference must be a language code.",
+        "The preferred language must be a language code, such as en or fr.",
       ],
       [
         shown("screens.moderation.profile.timezone"),
@@ -352,19 +353,19 @@ describe("every other moderation template reads as the English it replaced (TASK
       ],
       [
         shown("screens.moderation.profile.avatar_https"),
-        "avatarUrl must be an https address.",
+        "The picture's address must start with https.",
       ],
       [
         shown("screens.moderation.profile.avatar_credentials"),
-        "avatarUrl must not contain credentials.",
+        "The picture's address must not contain a user name or password.",
       ],
       [
         shown("screens.moderation.profile.avatar_public_host"),
-        "avatarUrl must name a public host.",
+        "The picture's address must name a public website.",
       ],
       [
         shown("screens.moderation.profile.avatar_port"),
-        "avatarUrl must use the standard port.",
+        "The picture's address must use the standard port.",
       ],
       [shown("screens.moderation.profile.invalid_user"), "Invalid user ID format"],
       [

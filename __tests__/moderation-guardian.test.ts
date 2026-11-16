@@ -509,7 +509,8 @@ describe("Guardian — config failure (F1: fail-closed)", () => {
     );
 
     expect(result.action).toBe("block");
-    expect(words(result.reasoning)).toContain("fail-closed");
+    // In plain words (TASK-220, SF-admin-160): the strictest thresholds were used.
+    expect(words(result.reasoning)).toContain("the strictest thresholds were used");
   });
 });
 

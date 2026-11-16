@@ -355,7 +355,7 @@ describe("the platform's notes TypeScript wrote, in the catalog's words (TASK-20
       [BAN_STRIKE_THRESHOLD, "Automatic ban: strike threshold exceeded"],
       [
         escalationAutoBlocked(24),
-        "Auto-blocked: escalation exceeded the 24h SLA without human review (ADR-041).",
+        "Blocked automatically: the escalation passed its 24-hour deadline without a person reviewing it.",
       ],
       [
         markedExecuted("bob", VERIFIED_APPLIED),

@@ -90,17 +90,23 @@ export function pageRange(
 function written<R>(column: Column<R>, row: R): React.ReactNode {
   if (column.cell) return column.cell(row);
   const value = column.value?.(row) ?? null;
+  // A date is a <time> (its machine-readable value beside the words), the whole UTC timestamp on
+  // hover (TASK-220: the Roles and Audit dates kept their <time>).
   if (column.kind === "date")
-    return (
-      <span title={value ? fullTimestamp(value) : undefined}>
-        {value ? formatDate(value) : t("never")}
-      </span>
+    return value ? (
+      <time dateTime={value} title={fullTimestamp(value)}>
+        {formatDate(value)}
+      </time>
+    ) : (
+      <span>{t("never")}</span>
     );
   if (column.kind === "datetime")
-    return (
-      <span title={value ? fullTimestamp(value) : undefined}>
+    return value ? (
+      <time dateTime={value} title={fullTimestamp(value)}>
         {formatDateTime(value)}
-      </span>
+      </time>
+    ) : (
+      <span>{formatDateTime(value)}</span>
     );
   if (value === null || value === "") return t("none");
   // An id is shown whole, when it is shown at all: "Show details" asked for it. It wraps.

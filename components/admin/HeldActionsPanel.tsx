@@ -2,52 +2,76 @@
 
 /**
  * components/admin/HeldActionsPanel.tsx — the pending-approvals surface (ADR-040, 040a read +
- * 040c decision). One card per held change; Approve / Reject clear it through the deterministic
- * decision route (POST /api/admin/approvals/[id]). Self-approval is enforced server-side (409);
- * the panel surfaces that (and any 403) inline rather than pre-disabling, since the acting
- * admin's identity is not available client-side.
+ * 040c decision). One card per held change; each decision clears it through the deterministic
+ * decision route (POST /api/admin/approvals/[id]), which checks the decider's authority and
+ * independence itself.
  *
- * What the approver decides, in full (TASK-202, N-61 — the owner approved blind: the row showed
- * the tool's name and a requester's id): each card says what the change is — a setting's key with
- * its value now and after (a list's items added and removed), an account by address with its
- * role from → to and the permissions it grants, an erasure's account — who asked (address and
- * role, resolved on the server, never an id), when, and their reason. The route gives what a hold
- * changes only to a viewer who could decide it (round 2, N2); anyone else sees what kind of change
- * it is. Approve and Reject each ask once more, repeating what is decided.
+ * What the approver decides, in full (TASK-202, N-61): each card says what the change is — a
+ * setting by name with its value now and after (a list's items added and removed), an account by
+ * address with its role from → to and the permissions it grants by name, an erasure's account and
+ * the kind of reason it was asked for — who asked (address and role, never an id), when, and
+ * their own words. The route gives what a hold changes only to a viewer who could decide it.
  *
- * An approved run whose outcome is unknown (review 11 H-1: it did not end within its lease) is
- * not approved or rejected: after verifying, an admin marks it executed, or — when it did not take
- * effect — approves it again (a fresh approval) or withdraws it (closed, never run: TASK-194 round
- * 5). Each is recorded.
+ * On the console's shared parts (TASK-220):
  *
- * After a decision the panel says what happened, naming the change (TASK-202, N-62) — applied,
- * waiting for a second approval, rejected, or why not — and the result stays until dismissed
- * (ResultList). A refusal goes through the shared handler (readRefusal): its catalog message, and
- * an erased session ends.
+ *   - every decision confirms, in one step that takes focus and gives it back (SF-admin-030, 034):
+ *     Approve, Reject — and, on a run whose outcome is unknown, Took effect, Approve again and
+ *     Withdraw, which acted on one click; approving is as grave as the change (approving an
+ *     erasure erases), rejecting and withdrawing cannot be undone;
+ *   - a decision the route would refuse is not offered blind (E-56, SF-admin-032): without the
+ *     hold's permission every decision is disabled, saying which permission by name; on one's own
+ *     request Approve is (rejecting one's own request stays open); on a hold that acts on one's own
+ *     account, every decision; Approve, when the account's role changed since the request;
+ *   - codes are names: permissions, features, roles, settings, an erasure's kind of reason
+ *     (SF-admin-031, 036); "who can approve" names the permission;
+ *   - what became of a decision is said once, in the console's outcome list, kept until dismissed
+ *     (SF-admin-033, 037: a refusal was also repeated under its card, keyed by id alone);
+ *   - after a decision the section is read again through the console (no read of its own).
+ *
+ * @module components/admin
  */
 
 import { renderShown } from "@/platform/errors/shown-text";
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
-import { apiFetch } from "@/platform/auth/api-fetch";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
-import { announceSessionEnd, readRefusal } from "@/platform/errors/refusal";
+import { PURGE_REASONS } from "@/platform/gdpr/types";
 import {
   changesTheList,
   refusedDecisionText,
   type DecisionOutcome,
 } from "./decision-outcome";
-import { ResultList, result, type ShownResult } from "./ResultList";
+import { result, type ShownResult } from "./ResultList";
 import { ExpandableText } from "./ExpandableText";
-import { listChange, sameValue, shownValue } from "./config-value";
+import { changeValueText, listChange, sameValue } from "./config-value";
 import { formatDateTime, fullTimestamp, readableRole } from "./admin-format";
+import { adminCall } from "@/components/admin/ui/admin-call";
+import { ConfirmStep } from "@/components/admin/ui/ConfirmStep";
+import { GatedButton, needsPermission } from "@/components/admin/ui/PermissionGate";
+import { outcome } from "@/components/admin/ui/Outcome";
+import { IdDetail } from "@/components/admin/ui/Ref";
+import {
+  featureLabel,
+  labelled,
+  permissionLabel,
+  purgeReasonLabel,
+  roleLabel,
+  settingLabel,
+  toolLabel,
+} from "@/components/admin/ui/labels";
+import { BUTTON, SURFACE, TEXT } from "@/components/admin/ui/tokens";
+import { useOutcomes, ListUnreadable } from "@/components/admin/views/kit";
+import { ReadFailed } from "@/components/admin/ui/PanelState";
+import { handleRefusal } from "@/platform/errors/refusal";
+import type { SectionViewProps } from "@/components/admin/section-views";
+import { sectionTitle } from "@/components/admin/ui/sections";
 
 type Decision = "approve" | "reject" | "mark_executed" | "reapprove" | "withdraw";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.held.${key}`, values);
 
-/** Who may approve a hold, in words (its required permission). */
+/** Who may approve a hold, in words (its required permission, by name). */
 export function approverText(permission: string): string {
   switch (permission) {
     case "config_manage_safety":
@@ -55,15 +79,14 @@ export function approverText(permission: string): string {
     case "config_manage_standard":
       return t("approver_standard");
     default:
-      return t("approver_other", { permission });
+      return t("approver_other", { permission: permissionLabel(permission) });
   }
 }
 
 /**
  * The account a hold acts on, by address (never its id) — or, with no address to give, the
  * catalog's words for it ("an account that is no longer found"). `known` says which: a template
- * that names "the account {account}" takes only an address (TASK-208, N-111: it read "Erase the
- * account an account that is no longer found").
+ * that names "the account {account}" takes only an address (TASK-208, N-111).
  */
 function accountText(
   summary: PendingApproval["summary"]
@@ -78,13 +101,11 @@ function accountText(
 
 /** A tool's name in words (the catalog's), for a hold whose details the viewer does not see. */
 function toolText(label: string): string {
-  const key = `screens.admin_console.tools.${label}`;
-  const text = renderMessage(key);
-  return text === key ? t("what_tool", { tool: label }) : text;
+  return toolLabel(label);
 }
 
 /**
- * What a hold is, in one line — the result texts name it too (N-62): a setting by its key, an
+ * What a hold is, in one line — the result texts name it too (N-62): a setting by its name, an
  * account's change by its address, a role or group by its name; else the kind of change.
  */
 export function describeWhat(
@@ -92,8 +113,8 @@ export function describeWhat(
 ): string {
   if (a.change)
     return a.change.action === "reset"
-      ? t("what_config_reset", { key: a.change.key })
-      : t("what_config", { key: a.change.key });
+      ? t("what_config_reset", { key: settingLabel(a.change.key) })
+      : t("what_config", { key: settingLabel(a.change.key) });
   const s = a.summary;
   const named = accountText(s);
   const account = named?.text;
@@ -106,22 +127,31 @@ export function describeWhat(
         : toolText(a.label);
     case "block_user_feature":
       return account && s?.feature
-        ? t("what_block", { account, feature: s.feature })
+        ? t("what_block", { account, feature: featureLabel(s.feature) })
         : toolText(a.label);
     case "unblock_user_feature":
       return account && s?.feature
-        ? t("what_unblock", { account, feature: s.feature })
+        ? t("what_unblock", { account, feature: featureLabel(s.feature) })
         : toolText(a.label);
     case "create_role":
-      return s?.role ? t("what_create_role", { role: s.role }) : toolText(a.label);
+      return s?.role
+        ? t("what_create_role", { role: roleLabel(s.role) })
+        : toolText(a.label);
     case "delete_role":
-      return s?.role ? t("what_delete_role", { role: s.role }) : toolText(a.label);
+      return s?.role
+        ? t("what_delete_role", { role: roleLabel(s.role) })
+        : toolText(a.label);
     case "duplicate_role":
       return s?.role && s.fromRole
-        ? t("what_duplicate_role", { role: s.role, from: s.fromRole })
+        ? t("what_duplicate_role", {
+            role: roleLabel(s.role),
+            from: roleLabel(s.fromRole),
+          })
         : toolText(a.label);
     case "assign_permissions":
-      return s?.role ? t("what_assign_permissions", { role: s.role }) : toolText(a.label);
+      return s?.role
+        ? t("what_assign_permissions", { role: roleLabel(s.role) })
+        : toolText(a.label);
     case "create_entitlement_group":
       return s?.group ? t("what_create_group", { group: s.group }) : toolText(a.label);
     case "set_entitlement_group_active":
@@ -131,36 +161,69 @@ export function describeWhat(
     case "set_approval_policy":
       return t("what_policy");
     default:
-      // A config hold the viewer may not decide: its key, which the listing gives everyone.
-      return a.configKey ? t("what_config", { key: a.configKey }) : toolText(a.label);
+      // A config hold the viewer may not decide: its setting, which the listing gives everyone.
+      return a.configKey
+        ? t("what_config", { key: settingLabel(a.configKey) })
+        : toolText(a.label);
   }
 }
 
+/** An erasure's kind of reason by its label (SF-admin-036); any other reason as written. */
+function reasonText(reason: string): string {
+  return (PURGE_REASONS as readonly string[]).includes(reason)
+    ? purgeReasonLabel(reason)
+    : reason;
+}
+
+/**
+ * An erasure's kind of reason (PURGE_REASONS), by its label — what its requester gave as their
+ * reason: an erasure's hold keeps no free text (TASK-194 round 9, I-3), so this is all they said
+ * (TASK-220, SF-admin-036: the card read "Reason: admin-action" and "Their reason: No reason
+ * given." together).
+ */
+export function erasureReason(
+  a: Pick<PendingApproval, "label" | "summary">
+): string | null {
+  const reason = a.summary?.reason;
+  return a.label === "purge_user_data" &&
+    typeof reason === "string" &&
+    (PURGE_REASONS as readonly string[]).includes(reason)
+    ? purgeReasonLabel(reason)
+    : null;
+}
+
 /** The lines of a hold's summary beyond its one-line what (role, permissions, reason, policy). */
-export function summaryLines(summary: PendingApproval["summary"]): string[] {
+export function summaryLines(
+  summary: PendingApproval["summary"],
+  /** The reason is said elsewhere on the card (an erasure's, as its requester's reason). */
+  withoutReason = false
+): string[] {
   if (!summary) return [];
   const lines: string[] = [];
-  if (summary.fromRole || summary.toRole) {
+  const role = (name: string | null | undefined) =>
+    name ? roleLabel(name) : t("summary_role_unknown");
+  if (summary.fromRole || summary.toRole)
     lines.push(
-      t("summary_role", {
-        from: summary.fromRole ?? t("summary_role_unknown"),
-        to: summary.toRole ?? t("summary_role_unknown"),
-      })
+      t("summary_role", { from: role(summary.fromRole), to: role(summary.toRole) })
     );
-  }
-  if (summary.roleChangedSince) {
-    lines.push(
-      t("summary_role_changed", {
-        role: summary.roleChangedSince.now ?? t("summary_role_unknown"),
-      })
-    );
-  }
+  if (summary.roleChangedSince)
+    lines.push(t("summary_role_changed", { role: role(summary.roleChangedSince.now) }));
   if (summary.permissionsGranted?.length)
-    lines.push(t("summary_granted", { permissions: [...summary.permissionsGranted] }));
+    lines.push(
+      t("summary_granted", {
+        permissions: labelled(summary.permissionsGranted, permissionLabel),
+      })
+    );
   if (summary.permissionsRemoved?.length)
-    lines.push(t("summary_removed", { permissions: [...summary.permissionsRemoved] }));
-  if (summary.feature) lines.push(t("summary_feature", { feature: summary.feature }));
-  if (summary.reason) lines.push(t("summary_reason", { reason: summary.reason }));
+    lines.push(
+      t("summary_removed", {
+        permissions: labelled(summary.permissionsRemoved, permissionLabel),
+      })
+    );
+  if (summary.feature)
+    lines.push(t("summary_feature", { feature: featureLabel(summary.feature) }));
+  if (summary.reason && !withoutReason)
+    lines.push(t("summary_reason", { reason: reasonText(summary.reason) }));
   if (summary.dryRun) lines.push(t("summary_dry_run"));
   // A held policy change: each rule it would store, then its default approver (round 12, I-2) —
   // risks, effects and approvers in the catalog's words (round 13, nit 6: ICU selects).
@@ -216,45 +279,45 @@ export function ChangeDiff({
 }: {
   readonly change: NonNullable<PendingApproval["change"]>;
 }) {
-  const items = listChange(change.before, change.after);
+  const items = listChange(change.before, change.after, change.key);
   return (
     <div className="mt-2 space-y-1 text-xs" data-diff="true">
       {change.scope ? (
-        <p className="text-gray-400">
+        <p className={TEXT.faint}>
           {change.scope === "platform"
             ? t("diff_scope_platform")
             : t("diff_scope_tenant")}
         </p>
       ) : null}
       {sameValue(change.before, change.after) ? (
-        <p className="text-gray-400">{t("diff_unchanged")}</p>
+        <p className={TEXT.faint}>{t("diff_unchanged")}</p>
       ) : items && (items.added.length > 0 || items.removed.length > 0) ? (
         <>
           {items.added.map((x) => (
-            <p key={`+${x}`} className="break-all font-mono text-green-300">
+            <p key={`+${x}`} className="break-words text-green-300">
               <span className="sr-only">{t("diff_added")}: </span>+ {x}
             </p>
           ))}
           {items.removed.map((x) => (
-            <p key={`-${x}`} className="break-all font-mono text-red-300">
+            <p key={`-${x}`} className="break-words text-red-300">
               <span className="sr-only">{t("diff_removed")}: </span>− {x}
             </p>
           ))}
         </>
       ) : (
         <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1">
-          <span className="text-gray-400">{t("diff_before")}</span>
-          <span className="min-w-0 font-mono text-red-200">
+          <span className={TEXT.faint}>{t("diff_before")}</span>
+          <span className="min-w-0 text-red-200">
             <ExpandableText
-              text={shownValue(change.before)}
+              text={changeValueText(change.key, change.before)}
               column={t("diff_before")}
               mono
             />
           </span>
-          <span className="text-gray-400">{t("diff_after")}</span>
-          <span className="min-w-0 font-mono text-green-200">
+          <span className={TEXT.faint}>{t("diff_after")}</span>
+          <span className="min-w-0 text-green-200">
             <ExpandableText
-              text={shownValue(change.after)}
+              text={changeValueText(change.key, change.after)}
               column={t("diff_after")}
               mono
             />
@@ -267,22 +330,24 @@ export function ChangeDiff({
 
 /** What a hold changes, in full: its what, its diff, its summary lines. */
 function WhatItChanges({ a }: { readonly a: PendingApproval }) {
-  const lines = summaryLines(a.summary);
+  const lines = summaryLines(a.summary, erasureReason(a) !== null);
   return (
     <div>
-      <p className="break-words text-sm font-semibold text-white">{describeWhat(a)}</p>
+      <p className={`break-words text-sm font-semibold ${TEXT.strong}`}>
+        {describeWhat(a)}
+      </p>
       {a.change ? <ChangeDiff change={a.change} /> : null}
       {lines.map((line) => (
         <span
           key={line}
           data-summary="true"
-          className="block break-words text-xs text-gray-200"
+          className={`block break-words text-xs ${TEXT.body}`}
         >
           {line}
         </span>
       ))}
       {!a.change && !a.summary ? (
-        <span className="block text-xs text-gray-400">{t("hidden")}</span>
+        <span className={`block text-xs ${TEXT.faint}`}>{t("hidden")}</span>
       ) : null}
     </div>
   );
@@ -306,15 +371,17 @@ export function acceptedResult(
   if (a.change && (a.source === "config-approval" || body.applied === true))
     return result(
       "applied",
-      t("result_applied_config", { what, value: shownValue(a.change.after) })
+      t("result_applied_config", {
+        what,
+        value: changeValueText(a.change.key, a.change.after),
+      })
     );
   return result("applied", t("result_applied", { what }));
 }
 
 /**
- * Why a hold waits, in the catalog's words (N-61: the server's "Held at effectiveRisk
- * "restricted" (effects: stateWrite)" meant nothing to an approver): a two-person approval of a
- * setting, a change under dual control, or a run to retry or verify.
+ * Why a hold waits, in the catalog's words (N-61): a two-person approval of a setting, a change
+ * under dual control, or a run to retry or verify.
  */
 export function whyHeld(a: PendingApproval): string {
   if (a.state === "undecided" || a.undecided) return t("why_undecided");
@@ -322,17 +389,235 @@ export function whyHeld(a: PendingApproval): string {
   return a.source === "config-approval" ? t("why_two_person") : t("why_dual_control");
 }
 
-const button = "px-3 py-1.5 text-xs rounded border disabled:opacity-50 whitespace-nowrap";
+const same = (a: string | null | undefined, b: string | null | undefined) =>
+  !!a && !!b && a.toLowerCase() === b.toLowerCase();
 
-export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApproval[] } }) {
+/** Why each decision is not offered to this viewer (null: it is) — display only (E-56). */
+export interface DecisionGate {
+  readonly approve: string | null;
+  readonly reject: string | null;
+  /** Took effect, Approve again, Withdraw: a run whose outcome is unknown. */
+  readonly undecided: string | null;
+}
+
+/**
+ * What the decision route would refuse this viewer, said before they try (E-56, SF-admin-032):
+ * every decision without the hold's permission; approving — or any decision on an undecided run —
+ * on one's own request (rejecting one's own request is allowed); every decision on a hold that
+ * acts on one's own account; approving a role change whose account's role changed since. The
+ * route checks each itself whatever this says (approval-decision.ts).
+ */
+export function decisionGate(
+  a: PendingApproval,
+  viewerId: string | undefined,
+  hasPermission: (code: string) => boolean
+): DecisionGate {
+  if (!hasPermission(a.requiredPermission)) {
+    const why = needsPermission(a.requiredPermission);
+    return { approve: why, reject: why, undecided: why };
+  }
+  if (same(a.summary?.target?.id, viewerId)) {
+    const why = t("gate_own_account");
+    return { approve: why, reject: why, undecided: why };
+  }
+  const own = same(a.requester, viewerId) ? t("gate_own_request") : null;
+  return {
+    approve: own ?? (a.summary?.roleChangedSince ? t("gate_role_changed") : null),
+    reject: null,
+    undecided: own,
+  };
+}
+
+/** Each decision's words: its button, its button's name, its confirm step's title and button. */
+const DECISION_WORDS: Record<
+  Decision,
+  { button: string; label: string; title: string; confirm: string; action: string }
+> = {
+  approve: {
+    button: "approve",
+    label: "approve_label",
+    title: "confirm_approve_title",
+    confirm: "confirm_approve",
+    action: "approvals.approve",
+  },
+  reject: {
+    button: "reject",
+    label: "reject_label",
+    title: "confirm_reject_title",
+    confirm: "confirm_reject",
+    action: "approvals.reject",
+  },
+  mark_executed: {
+    button: "mark_executed",
+    label: "mark_executed_label",
+    title: "confirm_mark_executed_title",
+    confirm: "confirm_mark_executed",
+    action: "approvals.mark_executed",
+  },
+  reapprove: {
+    button: "reapprove",
+    label: "reapprove_label",
+    title: "confirm_reapprove_title",
+    confirm: "confirm_reapprove",
+    action: "approvals.reapprove",
+  },
+  withdraw: {
+    button: "withdraw",
+    label: "withdraw_label",
+    title: "confirm_withdraw_title",
+    confirm: "confirm_withdraw",
+    action: "approvals.withdraw",
+  },
+};
+
+/** One held change's card: what it is, who asked and why, and the decisions this viewer has. */
+function HoldCard({
+  a,
+  gate,
+  busy,
+  showIds,
+  onDecide,
+}: {
+  readonly a: PendingApproval;
+  readonly gate: DecisionGate;
+  readonly busy: boolean;
+  readonly showIds: boolean;
+  readonly onDecide: (decision: Decision, note: string) => Promise<void>;
+}) {
+  const [asking, setAsking] = useState<Decision | null>(null);
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const what = describeWhat(a);
+  const decisions: Decision[] = a.undecided
+    ? ["mark_executed", "reapprove", "withdraw"]
+    : ["approve", "reject"];
+  const reasonFor = (d: Decision) =>
+    d === "approve" ? gate.approve : d === "reject" ? gate.reject : gate.undecided;
+  return (
+    <li data-approval={a.id} data-source={a.source} className={`${SURFACE.panel} p-4`}>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1 space-y-2">
+          <WhatItChanges a={a} />
+          <dl className="grid grid-cols-1 gap-x-3 gap-y-1 text-xs sm:grid-cols-[8rem_1fr]">
+            <dt className={TEXT.faint}>{t("who")}</dt>
+            <dd className={`min-w-0 break-words ${TEXT.body}`} data-requester="true">
+              {requesterText(a)}
+            </dd>
+            <dt className={TEXT.faint}>{t("when")}</dt>
+            <dd className={TEXT.body}>
+              <time dateTime={a.createdAt} title={fullTimestamp(a.createdAt)}>
+                {formatDateTime(a.createdAt)}
+              </time>
+            </dd>
+            <dt className={TEXT.faint}>{t("comment")}</dt>
+            <dd className={`min-w-0 break-words ${TEXT.body}`}>
+              {a.comment ? (
+                <ExpandableText text={a.comment} column={t("comment")} />
+              ) : a.commentShown ? (
+                <ExpandableText
+                  text={renderShown(a.commentShown)}
+                  column={t("comment")}
+                />
+              ) : (
+                (erasureReason(a) ?? t("no_comment"))
+              )}
+            </dd>
+            <dt className={TEXT.faint}>{t("approver")}</dt>
+            <dd className={TEXT.body}>{approverText(a.requiredPermission)}</dd>
+            <dt className={TEXT.faint}>{t("why")}</dt>
+            <dd className={`min-w-0 break-words ${TEXT.body}`}>
+              {whyHeld(a)}
+              {a.state === "held" ? null : (
+                // A failed or undecided run: the server's detail, behind Details.
+                <details className={`mt-1 ${TEXT.faint}`}>
+                  <summary className="cursor-pointer text-blue-300">
+                    {t("details")}
+                  </summary>
+                  <span className="break-words">{renderShown(a.reason)}</span>
+                </details>
+              )}
+            </dd>
+            {showIds ? (
+              <>
+                <dt className={TEXT.faint}>{t("reference")}</dt>
+                <dd>
+                  <IdDetail id={a.id} show />
+                </dd>
+              </>
+            ) : null}
+          </dl>
+          {a.undecided && a.noEligibleDecider && (
+            <span className="block text-xs text-amber-200">
+              {t("no_eligible_decider", {
+                permission: permissionLabel(a.requiredPermission),
+              })}
+            </span>
+          )}
+        </div>
+        {
+          // Kept while a decision is being confirmed (disabled): focus comes back to its button.
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {decisions.map((d) => (
+              <GatedButton
+                key={d}
+                allowed={reasonFor(d) === null}
+                reason={reasonFor(d)}
+                disabled={busy || asking !== null}
+                data-decision={d}
+                aria-label={t(DECISION_WORDS[d].label, { what, label: what })}
+                className={
+                  d === "approve" || d === "reapprove" || d === "mark_executed"
+                    ? BUTTON.primary
+                    : BUTTON.quiet
+                }
+                onClick={(e) => {
+                  opener.current = e.currentTarget;
+                  setAsking(d);
+                }}
+              >
+                {t(DECISION_WORDS[d].button)}
+              </GatedButton>
+            ))}
+          </div>
+        }
+      </div>
+      {asking ? (
+        <div className="mt-4">
+          <ConfirmStep
+            action={DECISION_WORDS[asking].action}
+            heldTool={a.label}
+            title={t(DECISION_WORDS[asking].title)}
+            confirmLabel={t(DECISION_WORDS[asking].confirm)}
+            returnFocus={opener}
+            busy={busy}
+            onCancel={() => setAsking(null)}
+            onConfirm={(given) =>
+              void onDecide(asking, given.reason).then(() => setAsking(null))
+            }
+          >
+            <WhatItChanges a={a} />
+            <p className="text-xs">
+              {t("who")}: {requesterText(a)}
+            </p>
+            <p className="text-xs">{t(`confirm_note_${asking}`)}</p>
+          </ConfirmStep>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+export function HeldActionsPanel({
+  data,
+  hasPermission = () => false,
+  onReload,
+  viewerId,
+  showIds = false,
+}: Partial<SectionViewProps> & {
+  data?: { approvals?: PendingApproval[]; unreadable?: unknown };
+}) {
   const [rows, setRows] = useState<PendingApproval[]>(data?.approvals ?? []);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [results, setResults] = useState<ShownResult[]>([]);
-  const [confirming, setConfirming] = useState<{
-    readonly key: string;
-    readonly decision: "approve" | "reject";
-  } | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const { add, list } = useOutcomes(t("results_label"));
 
   // Fresh data from the page replaces the rows, adjusted during render (React's pattern for
   // state that follows a prop) rather than in an effect, which rendered the stale rows first.
@@ -342,257 +627,82 @@ export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApprova
     setRows(data?.approvals ?? []);
   }
 
-  const show = (r: ShownResult) => setResults((rs) => [r, ...rs]);
-
-  /** The list as the server has it now (round 16): best effort — the rows stay on a failure. */
-  async function reloadRows() {
-    try {
-      const res = await apiFetch("/api/admin/approvals");
-      if (!res.ok) return;
-      const body = (await res.json()) as { approvals?: PendingApproval[] };
-      if (Array.isArray(body.approvals)) setRows(body.approvals);
-    } catch {
-      // Unreachable: the rows stay; the result above says what happened.
+  async function decide(row: PendingApproval, decision: Decision, note: string) {
+    const key = `${row.source}:${row.id}`;
+    setBusyKey(key);
+    const answer = await adminCall(`/api/admin/approvals/${encodeURIComponent(row.id)}`, {
+      method: "POST",
+      json: { decision, source: row.source, ...(note ? { note } : {}) },
+    });
+    setBusyKey(null);
+    const what = describeWhat(row);
+    if (!answer.ok) {
+      // What became of the approval (round 15, I-1; round 16), from the refusal's own body.
+      const kept = answer.body as DecisionOutcome;
+      const text = refusedDecisionText(row.label, answer.refusal, kept, what);
+      add(
+        text
+          ? outcome("refused", text, { refusal: answer.refusal })
+          : outcome("refused", answer.refusal.message, {
+              action: what,
+              refusal: answer.refusal,
+            })
+      );
+      // Withdrawn, settling or not kept: the row is no longer what it was — read the list again.
+      if (changesTheList(kept)) onReload?.();
+      return;
     }
+    const shown = acceptedResult(decision, row, answer.body);
+    add(outcome(shown.kind, shown.text));
+    setRows((rs) => rs.filter((r) => !(r.id === row.id && r.source === row.source)));
+    onReload?.();
   }
 
-  async function decide(row: PendingApproval, decision: Decision) {
-    setConfirming(null);
-    setBusyId(row.id);
-    setErrors((e) => ({ ...e, [row.id]: "" }));
-    try {
-      const res = await apiFetch(`/api/admin/approvals/${encodeURIComponent(row.id)}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ decision, source: row.source }),
-      });
-      if (!res.ok) {
-        const refused = await readRefusal(res);
-        if (refused.kind === "signed-out-erased") announceSessionEnd(refused.code);
-        // What became of the approval (round 15, I-1; round 16), read as readRefusal reads the
-        // body.
-        const copy = typeof res.clone === "function" ? res.clone() : res;
-        const outcome = (await copy.json().catch(() => ({}))) as DecisionOutcome;
-        const text = refusedDecisionText(row.label, refused, outcome, describeWhat(row));
-        show(result("refused", text ?? `${describeWhat(row)}: ${refused.message}`));
-        setErrors((e) => ({ ...e, [row.id]: refused.message }));
-        // Withdrawn, settling or not kept: the row is no longer what it was — read the list again.
-        if (changesTheList(outcome)) await reloadRows();
-        return;
-      }
-      const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      show(acceptedResult(decision, row, body));
-      setRows((rs) => rs.filter((r) => !(r.id === row.id && r.source === row.source)));
-    } catch {
-      setErrors((e) => ({ ...e, [row.id]: t("network_error") }));
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  const status = (
-    <ResultList
-      results={results}
-      label={t("results_label")}
-      onDismiss={(id) => setResults((rs) => rs.filter((r) => r.id !== id))}
-    />
-  );
-
-  if (rows.length === 0) {
-    return (
-      <div>
-        {status}
-        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
-          <p className="text-center text-gray-400 py-8 px-4 text-sm">{t("empty")}</p>
-        </div>
-      </div>
-    );
-  }
-
+  // A body without its list is not an empty list (review 14 L-1): said as a failed read.
+  if (!Array.isArray(data?.approvals))
+    return <ListUnreadable panel={sectionTitle("approvals")} onRetry={onReload} />;
+  // A source the listing could not read (TASK-220, SF-admin-004): said, so what is listed is
+  // never taken for all that waits — and an empty list never for "nothing waits".
+  const unreadable = Array.isArray(data?.unreadable)
+    ? (data.unreadable as string[]).filter(
+        (u) => u === "runtime" || u === "config-approval"
+      )
+    : [];
   return (
     <div>
-      {status}
-      <ul aria-label={t("caption")} className="space-y-3">
-        {rows.map((a) => {
-          const key = `${a.source}:${a.id}`;
-          const what = describeWhat(a);
-          const asking = confirming?.key === key ? confirming.decision : null;
-          return (
-            <li
-              key={key}
-              data-approval={a.id}
-              className="rounded-xl border border-gray-800 bg-[#111827] p-4"
-            >
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div className="min-w-0 flex-1 space-y-2">
-                  <WhatItChanges a={a} />
-                  <dl className="grid grid-cols-1 gap-x-3 gap-y-1 text-xs sm:grid-cols-[8rem_1fr]">
-                    <dt className="text-gray-400">{t("who")}</dt>
-                    <dd
-                      className="min-w-0 break-words text-gray-200"
-                      data-requester="true"
-                    >
-                      {requesterText(a)}
-                    </dd>
-                    <dt className="text-gray-400">{t("when")}</dt>
-                    <dd className="text-gray-200">
-                      <time dateTime={a.createdAt} title={fullTimestamp(a.createdAt)}>
-                        {formatDateTime(a.createdAt)}
-                      </time>
-                    </dd>
-                    <dt className="text-gray-400">{t("comment")}</dt>
-                    <dd className="min-w-0 break-words text-gray-200">
-                      {a.comment ? (
-                        <ExpandableText text={a.comment} column={t("comment")} />
-                      ) : a.commentShown ? (
-                        <ExpandableText
-                          text={renderShown(a.commentShown)}
-                          column={t("comment")}
-                        />
-                      ) : (
-                        t("no_comment")
-                      )}
-                    </dd>
-                    <dt className="text-gray-400">{t("approver")}</dt>
-                    <dd className="text-gray-200">
-                      {approverText(a.requiredPermission)}
-                    </dd>
-                    <dt className="text-gray-400">{t("why")}</dt>
-                    <dd className="min-w-0 break-words text-gray-200">
-                      {whyHeld(a)}
-                      {a.state === "held" ? null : (
-                        // A failed or undecided run: the server's detail, behind Show all.
-                        <details className="mt-1 text-gray-400">
-                          <summary className="cursor-pointer text-blue-300">
-                            {t("details")}
-                          </summary>
-                          <span className="break-words">{renderShown(a.reason)}</span>
-                        </details>
-                      )}
-                    </dd>
-                  </dl>
-                  {a.undecided && a.noEligibleDecider && (
-                    <span className="block text-xs text-amber-200">
-                      {t("no_eligible_decider", { permission: a.requiredPermission })}
-                    </span>
-                  )}
-                </div>
-                <div className="shrink-0">
-                  {a.undecided ? (
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={busyId === a.id}
-                        onClick={() => decide(a, "mark_executed")}
-                        aria-label={t("mark_executed_label", { label: what })}
-                        className={`${button} bg-blue-900/40 border-blue-700 text-blue-200`}
-                      >
-                        {t("mark_executed")}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busyId === a.id}
-                        onClick={() => decide(a, "reapprove")}
-                        aria-label={t("reapprove_label", { label: what })}
-                        className={`${button} bg-amber-900/40 border-amber-700 text-amber-200`}
-                      >
-                        {t("reapprove")}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busyId === a.id}
-                        onClick={() => decide(a, "withdraw")}
-                        aria-label={t("withdraw_label", { label: what })}
-                        className={`${button} bg-red-900/40 border-red-700 text-red-200`}
-                      >
-                        {t("withdraw")}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={busyId === a.id || asking !== null}
-                        onClick={() => setConfirming({ key, decision: "approve" })}
-                        aria-label={t("approve_label", { what })}
-                        className={`${button} bg-green-800/40 border-green-700 text-green-200`}
-                      >
-                        {t("approve")}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busyId === a.id || asking !== null}
-                        onClick={() => setConfirming({ key, decision: "reject" })}
-                        aria-label={t("reject_label", { what })}
-                        className={`${button} bg-gray-800 border-gray-700 text-gray-300`}
-                      >
-                        {t("reject")}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-              {asking ? (
-                <div
-                  role="group"
-                  aria-label={
-                    asking === "approve"
-                      ? t("confirm_approve_title")
-                      : t("confirm_reject_title")
-                  }
-                  data-confirm={asking}
-                  className={`mt-4 rounded-lg border p-3 ${
-                    asking === "approve"
-                      ? "border-green-800 bg-green-950/40"
-                      : "border-gray-700 bg-gray-900"
-                  }`}
-                >
-                  <p className="mb-2 text-sm font-semibold text-white">
-                    {asking === "approve"
-                      ? t("confirm_approve_title")
-                      : t("confirm_reject_title")}
-                  </p>
-                  <WhatItChanges a={a} />
-                  <p className="mt-2 text-xs text-gray-300">
-                    {t("who")}: {requesterText(a)}
-                  </p>
-                  <p className="mt-2 text-xs text-gray-400">
-                    {asking === "approve"
-                      ? t("confirm_note_approve")
-                      : t("confirm_note_reject")}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={busyId === a.id}
-                      onClick={() => decide(a, asking)}
-                      className={`${button} ${
-                        asking === "approve"
-                          ? "bg-green-700 border-green-600 text-white"
-                          : "bg-red-800 border-red-700 text-white"
-                      }`}
-                    >
-                      {asking === "approve" ? t("confirm_approve") : t("confirm_reject")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirming(null)}
-                      className={`${button} bg-gray-800 border-gray-700 text-gray-300`}
-                    >
-                      {t("confirm_cancel")}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-              {errors[a.id] ? (
-                <p className="mt-2 text-xs text-amber-400" role="alert">
-                  {errors[a.id]}
-                </p>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
+      {list}
+      {unreadable.length ? (
+        <ReadFailed
+          panel={sectionTitle("approvals")}
+          refusal={handleRefusal("service.unavailable", {
+            message: t("unreadable", {
+              sources: unreadable.map((u) => t(`unreadable_${u.replace("-", "_")}`)),
+            }),
+          })}
+          onRetry={onReload}
+        />
+      ) : null}
+      {rows.length === 0 && unreadable.length === 0 ? (
+        <div className={`${SURFACE.panel} overflow-hidden`}>
+          <p className={`px-4 py-8 text-center text-sm ${TEXT.faint}`}>{t("empty")}</p>
+        </div>
+      ) : rows.length === 0 ? null : (
+        <ul aria-label={t("caption")} className="space-y-3">
+          {rows.map((a) => {
+            const key = `${a.source}:${a.id}`;
+            return (
+              <HoldCard
+                key={key}
+                a={a}
+                gate={decisionGate(a, viewerId, hasPermission)}
+                busy={busyKey === key}
+                showIds={showIds}
+                onDecide={(decision, note) => decide(a, decision, note)}
+              />
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

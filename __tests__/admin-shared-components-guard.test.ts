@@ -31,7 +31,8 @@
  * KNOWN is the list of screens not yet converted, each with the pass that converts it and
  * exactly the rules it still breaks. It only shrinks: a rule a file no longer breaks must be
  * removed from its entry (the test fails until it is), a file that breaks none must leave the
- * list, and a rule not in its entry is a new violation. Passes 56d-2 and 56d-3 empty it.
+ * list, and a rule not in its entry is a new violation. Pass 56d-2 (TASK-220) took the governance
+ * screens off it; pass 56d-3 empties it.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -101,59 +102,18 @@ export function brokenRules(source: string): RuleId[] {
 
 interface Known {
   /** The pass that converts the screen. */
-  readonly pass: "56d-2" | "56d-3";
+  readonly pass: "56d-3";
   /** Exactly the rules it still breaks. */
   readonly rules: readonly RuleId[];
 }
 
 /**
- * The screens not yet built from the shared parts. Pass 56d-2 converts the governance screens
+ * The screens not yet built from the shared parts. Pass 56d-2 converted the governance screens
  * (Approvals, Platform config, Dual control, Trusted agents, and the Roles to Capability-map
- * views); pass 56d-3 the operator and moderation screens (Tenancy, Jobs, Erasures, the kill
- * switch, the review queue, staff two-step enrolment).
+ * views — TASK-220); pass 56d-3 converts the operator and moderation screens (Tenancy, Jobs,
+ * Erasures, the kill switch, the review queue, staff two-step enrolment).
  */
 const KNOWN: Readonly<Record<string, Known>> = {
-  "components/admin/AdminDataViews.tsx": {
-    pass: "56d-2",
-    rules: ["raw-table", "own-panel-state", "raw-code-or-id"],
-  },
-  "components/admin/DualControlKeysPanel.tsx": {
-    pass: "56d-2",
-    rules: [
-      "own-panel-state",
-      "own-outcome",
-      "own-call",
-      "raw-control",
-      "raw-code-or-id",
-    ],
-  },
-  "components/admin/HeldActionsPanel.tsx": {
-    pass: "56d-2",
-    rules: ["own-outcome", "own-confirm", "own-call", "raw-code-or-id"],
-  },
-  "components/admin/PlatformConfigPanel.tsx": {
-    pass: "56d-2",
-    rules: [
-      "raw-table",
-      "own-panel-state",
-      "own-outcome",
-      "own-call",
-      "raw-control",
-      "raw-code-or-id",
-    ],
-  },
-  "components/admin/TrustedAgentsPanel.tsx": {
-    pass: "56d-2",
-    rules: [
-      "raw-table",
-      "own-panel-state",
-      "own-outcome",
-      "own-confirm",
-      "own-call",
-      "raw-control",
-      "raw-code-or-id",
-    ],
-  },
   "components/admin/AgentKillSwitchPanel.tsx": {
     pass: "56d-3",
     rules: ["own-outcome", "own-confirm", "own-call", "raw-control", "raw-code-or-id"],
@@ -178,8 +138,7 @@ const KNOWN: Readonly<Record<string, Known>> = {
     pass: "56d-3",
     rules: ["own-outcome", "own-call", "raw-control", "raw-code-or-id"],
   },
-  // The old "unavailable" notice: the Roles to Capability-map views and Trusted agents (56d-2) and
-  // Erasures (56d-3) still show it, so it goes with the last of them.
+  // The old "unavailable" notice: Erasures (56d-3) still shows it, so it goes with that screen.
   "components/admin/PanelUnavailable.tsx": {
     pass: "56d-3",
     rules: ["own-panel-state", "own-outcome"],
@@ -262,9 +221,9 @@ describe("admin screens are built from the shared parts", () => {
     expect(scan()).toEqual([]);
   });
 
-  it("the known list names only screens passes 56d-2 and 56d-3 convert, each with its pass", () => {
+  it("the known list names only screens pass 56d-3 converts, each with its pass", () => {
     for (const [file, entry] of Object.entries(KNOWN)) {
-      expect(["56d-2", "56d-3"]).toContain(entry.pass);
+      expect(entry.pass).toBe("56d-3");
       expect(entry.rules.length).toBeGreaterThan(0);
       expect(new Set(entry.rules).size).toBe(entry.rules.length);
       expect(existsSync(join(ROOT, file))).toBe(true);
@@ -281,6 +240,27 @@ describe("admin screens are built from the shared parts", () => {
       "components/admin/ExecutionResultsPanel.tsx",
       "components/admin/UsersPanel.tsx",
       "components/admin/ResultList.tsx",
+    ]) {
+      expect(existsSync(join(ROOT, file))).toBe(true);
+      expect(KNOWN[file]).toBeUndefined();
+    }
+  });
+
+  it("the governance screens are not in the known list: pass 56d-2 converted them (TASK-220)", () => {
+    for (const file of [
+      "components/admin/HeldActionsPanel.tsx",
+      "components/admin/PlatformConfigPanel.tsx",
+      "components/admin/DualControlKeysPanel.tsx",
+      "components/admin/TrustedAgentsPanel.tsx",
+      "components/admin/AdminDataViews.tsx",
+      "components/admin/views/RolesView.tsx",
+      "components/admin/views/EntitlementsView.tsx",
+      "components/admin/views/AuditView.tsx",
+      "components/admin/views/PasswordPolicyView.tsx",
+      "components/admin/views/PerAccountView.tsx",
+      "components/admin/views/ApprovalPolicyView.tsx",
+      "components/admin/views/CapabilitiesView.tsx",
+      "components/admin/views/CapabilityMapView.tsx",
     ]) {
       expect(existsSync(join(ROOT, file))).toBe(true);
       expect(KNOWN[file]).toBeUndefined();
@@ -337,10 +317,10 @@ describe("admin screens are built from the shared parts", () => {
   it("[self-test] the list only shrinks: a fixed rule, an emptied entry and a gone file each fail", () => {
     const table = brokenRules(`<table />`);
     // Still broken as listed: nothing to say.
-    expect(judge("a.tsx", table, { pass: "56d-2", rules: ["raw-table"] })).toEqual([]);
+    expect(judge("a.tsx", table, { pass: "56d-3", rules: ["raw-table"] })).toEqual([]);
     // A rule it no longer breaks stays in its entry: stale.
     expect(
-      judge("a.tsx", table, { pass: "56d-2", rules: ["raw-table", "own-call"] })
+      judge("a.tsx", table, { pass: "56d-3", rules: ["raw-table", "own-call"] })
     ).toEqual([expect.stringContaining("no longer breaks own-call")]);
     // A new kind of violation in a known file is still a violation.
     expect(

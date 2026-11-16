@@ -67,6 +67,7 @@ import {
 import { DEFAULT_DUAL_CONTROL_ACTIONS } from "@/app/api/admin/ai/command-bar";
 import { GET as rolesGET } from "@/app/api/admin/roles/route";
 import { roleDescription } from "@/components/admin/AdminDataViews";
+import { roleLabel } from "@/components/admin/ui/labels";
 import { GET as entGET, PATCH as entPATCH } from "@/app/api/admin/entitlements/route";
 import {
   DB_ENABLED,
@@ -382,8 +383,12 @@ dbDescribe(`${SUITE} handleDuplicateRole`, () => {
       description: "Test role ops",
       descriptionNote: row.description_note,
     });
+    // The source by its name, never its stored name (TASK-220, SF-admin-054).
     expect(roleDescription(listed.descriptionNote, listed.description)).toBe(
-      `Duplicated from ${cat.roleNames.ops}. Test role ops`
+      `Duplicated from ${roleLabel(cat.roleNames.ops)}. Test role ops`
+    );
+    expect(roleDescription(listed.descriptionNote, listed.description)).not.toContain(
+      cat.roleNames.ops
     );
   });
 

@@ -9,8 +9,9 @@
  * through the real route and the real dispatchConfigTool (only the config store and the data
  * layer are faked), so the status and body asserted here are what the panel gets. A held change
  * is accepted, not applied: 202 with `held`, as the users, entitlements, gdpr and command-bar
- * routes answer one. The panel's reader (readConfigAiResult) is given that very Response, so
- * its test cannot pass on a reply the route does not make (the round-10 panel test mocked a 200).
+ * routes answer one. The screens' reader (runConfigAction, TASK-220) is given that very Response,
+ * so its test cannot pass on a reply the route does not make (the round-10 panel test mocked a
+ * 200).
  */
 
 jest.mock("@/platform/auth/middleware", () =>
@@ -85,7 +86,33 @@ import {
   setTrajectoryStore,
 } from "@/platform/agents/trajectory-store";
 import { POST } from "@/app/api/admin/config-ai/execute/route";
-import { isPending, readConfigAiResult } from "@/components/admin/DualControlKeysPanel";
+import { runConfigAction, type GovernedAnswer } from "@/components/admin/ui/governed";
+
+/**
+ * What the screens make of `res` (TASK-220: the Dual control and Platform config screens read a
+ * change's answer through runConfigAction): the route's very Response, handed to the screen's
+ * request.
+ */
+async function screenReads(res: Response): Promise<GovernedAnswer> {
+  const saved = global.fetch;
+  global.fetch = (async (url: unknown) =>
+    url === "/api/admin/config-ai/execute"
+      ? res
+      : new Response(JSON.stringify({ status: "signed-in", csrfToken: "t" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch;
+  try {
+    return await runConfigAction("update_config", {});
+  } finally {
+    global.fetch = saved;
+  }
+}
+
+// hostile:role n/a: every caller here may make the change; each role on this route is db/route-role-matrix's case
+// hostile:self n/a: no account is acted on here; approving one's own request is db/approver-rules' case
+// hostile:store-down n/a: this file reads the held reply; a config store that fails is r10-one-hold's [hostile:store-down]
+// hostile:id-spelling n/a: no id is compared here; an approver id spelled otherwise is approver-rules' [hostile:id-spelling]
 
 let proposals: InMemoryProposalStore;
 
@@ -132,10 +159,8 @@ it("answers the panel's held change 202, held, with its proposal — nothing wri
 });
 
 it("the panel reads that very reply as held, never as a refusal", async () => {
-  const result = await readConfigAiResult(await panelRequest());
-  expect(result.held).toBe(true);
-  expect(result.data?.pendingApproval).toBe(true);
-  expect(result.error).toBeUndefined();
+  const result = await screenReads(await panelRequest());
+  expect(result.standing).toBe("held");
 });
 
 // Round 12, I-2: a held config change needs a person, whatever the policy's default says — here
@@ -199,9 +224,8 @@ it("answers a change pending two-person approval 202, and the panel reads it as 
   });
   expect(body.data.approvalError).toBeUndefined();
   expect(writes).toEqual([]);
-  const read = await readConfigAiResult(res);
-  expect(read.error).toBeUndefined();
-  expect(read.data?.requiresApproval).toBe(true);
+  const read = await screenReads(res);
+  expect(read.standing).toBe("held");
 });
 
 // Round 12, pre-existing 1: a dual-controlled change is held only with a value its entry takes.
@@ -243,8 +267,10 @@ it("codes the refusal of a value its entry refuses, and the panel's reader says 
     message: `${NUMBER_KEY} takes a number.`,
   });
   expect(text).not.toContain("Value must be a number");
-  const read = await readConfigAiResult(await write(input));
-  expect(read.error).toBe(`${NUMBER_KEY} takes a number.`);
+  const read = await screenReads(await write(input));
+  expect(read.standing === "refused" && read.refusal.message).toBe(
+    `${NUMBER_KEY} takes a number.`
+  );
 });
 
 // Round 14, item 12 (pre-existing): a filing the approval store could not make answers its code —
@@ -309,9 +335,9 @@ describe("a refused two-person filing is a refusal on the panel, never pending (
     const body = await res.clone().json();
     expect(body.code).toBe(code);
     expect(body.data?.requiresApproval).toBeUndefined();
-    const read = await readConfigAiResult(res);
-    expect(isPending(read)).toBe(false);
-    expect(read).toMatchObject({ success: false, error: body.message });
+    const read = await screenReads(res);
+    expect(read.standing).toBe("refused");
+    expect(read.standing === "refused" && read.refusal.message).toBe(body.message);
   });
 });
 

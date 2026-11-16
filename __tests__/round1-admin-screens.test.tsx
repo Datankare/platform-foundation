@@ -9,11 +9,13 @@
  *   A7: the Roles screen says when a role lacks a feature permission.
  */
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
 import { RolesDataView } from "@/components/admin/AdminDataViews";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
 import { renderShown, shown } from "@/platform/errors/shown-text";
+import { renderMessage } from "@/platform/errors/messages";
+import { permissionLabel } from "@/components/admin/ui/labels";
 
 const base = {
   source: "runtime" as const,
@@ -58,17 +60,22 @@ describe("the approvals list shows each held action's summary (A1)", () => {
     const lines = Array.from(document.querySelectorAll("[data-summary]")).map(
       (n) => n.textContent
     );
-    expect(lines).toEqual([
-      "Reason: legal-order",
-      "Role: free → moderator",
-      "Feature: translate",
-    ]);
+    // Each in words (TASK-220, SF-admin-031, 036): the erasure's kind of reason by its label, the
+    // roles and the feature by name — never the stored codes.
+    expect(lines).toEqual(["Role: Free → Moderator", "Feature: Translate"]);
+    // The erasure's kind of reason is its requester's reason, by its label (SF-admin-036).
+    expect(
+      screen.getByText(
+        renderMessage("screens.admin_console.users.erase_reason_legal_order")
+      )
+    ).toBeDefined();
+    expect(document.body.textContent).not.toContain("legal-order");
     // The account is in each hold's one-line what, by address — never by its id (TASK-202,
     // N-63: "Account: u-2" named an account by id).
     expect(screen.getByText("Erase the account someone@example.test")).toBeDefined();
     expect(screen.getByText("Role of an account with no address")).toBeDefined();
     expect(
-      screen.getByText("Block “translate” for an account that is no longer found")
+      screen.getByText("Block “Translate” for an account that is no longer found")
     ).toBeDefined();
     expect(document.body.textContent).not.toContain("u-2");
   });
@@ -107,8 +114,19 @@ describe("the Roles screen says when a role lacks a feature permission (A7)", ()
     const gaps = Array.from(document.querySelectorAll("[data-feature-gap]")).map(
       (n) => n.textContent
     );
-    expect(gaps).toEqual([
-      "Lacks can_edit_profile, can_translate: its holders cannot use those features.",
+    // Shown with the role's detail (TASK-220): the missing permissions by name, never by code.
+    expect(gaps).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "partial" }));
+    const shownGaps = Array.from(document.querySelectorAll("[data-feature-gap]")).map(
+      (n) => n.textContent
+    );
+    expect(shownGaps).toEqual([
+      `Lacks ${permissionLabel("can_edit_profile")} and ${permissionLabel(
+        "can_translate"
+      )}: its holders cannot use those features.`,
     ]);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "full" }));
+    expect(document.querySelectorAll("[data-feature-gap]")).toHaveLength(0);
   });
 });

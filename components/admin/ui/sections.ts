@@ -63,6 +63,11 @@ interface SectionDef {
   /** The catalogue key of its title. */
   readonly titleKey: string;
   readonly endpoint: string | null;
+  /**
+   * For a section that reads for itself (endpoint null): the path its view reads first when it
+   * opens — what a journey waits for (Playform's Journey C visits it like any other section).
+   */
+  readonly opensWith?: string;
   readonly hints?: readonly SectionHint[];
 }
 
@@ -86,7 +91,9 @@ const SECTION_READS = {
   "password-policy": "/api/admin/password-policy",
   "platform-config": "/api/admin/config?enhanced=true",
   tenant: "/api/admin/tenant",
-  audit: "/api/admin/audit?offset=0",
+  // Dual control reads the settings: the list is one of them, and its picker offers the rest
+  // by name (TASK-220, SF-admin-084).
+  "dual-control": "/api/admin/config?enhanced=true",
   jobs: "/api/operator/jobs",
   tenants: "/api/operator/tenants",
 } as const;
@@ -178,7 +185,7 @@ export const SECTIONS = [
     icon: "🔒",
     permission: "config_view",
     titleKey: title("dual-control"),
-    endpoint: null,
+    endpoint: SECTION_READS["dual-control"],
   },
   {
     // The single-tenant kill switch (TASK-172): the registry's own tier permission, as the route.
@@ -247,7 +254,10 @@ export const SECTIONS = [
     icon: "📋",
     permission: "admin_view_audit",
     titleKey: title("audit"),
-    endpoint: SECTION_READS.audit,
+    // The log reads its own pages, filtered by an action or an account (TASK-220, SF-admin-050):
+    // its first page is a GET of this path (components/admin/views/AuditView.tsx auditPage).
+    endpoint: null,
+    opensWith: "/api/admin/audit",
     hints: [{ key: "audit_role_changes", tool: "search", table: "audit_log" }],
   },
   {
@@ -295,6 +305,16 @@ export function groupTitle(group: SectionGroup): string {
 /** The read the page makes for a section, or null when the section reads for itself. */
 export function sectionEndpoint(id: AdminSection): string | null {
   return id in SECTION_READS ? SECTION_READS[id as keyof typeof SECTION_READS] : null;
+}
+
+/**
+ * The read a section makes when it opens: the page's (its endpoint), else the one its own view
+ * makes first (`opensWith`); null for a section whose opening read is not a fixed GET (Users'
+ * search is a POST, the operators' screens and the review queue read their own).
+ */
+export function sectionOpeningRead(id: AdminSection): string | null {
+  const def = SECTIONS.find((s) => s.id === id) as SectionDef | undefined;
+  return sectionEndpoint(id) ?? def?.opensWith ?? null;
 }
 
 /**

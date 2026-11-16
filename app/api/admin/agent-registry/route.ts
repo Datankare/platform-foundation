@@ -2,7 +2,8 @@
  * app/api/admin/agent-registry/route.ts — GET the trusted-agent registry state (Sprint 3c U4).
  *
  * Read-only view for the governance panel. Returns the current agent.trusted_agents config as
- * an ordered [agentId, record] list. Mutations flow through the AI plan → confirm → execute
+ * an ordered [agentId, record] list, and the capabilities the capability map knows (the scope an
+ * agent may be given; null when the map cannot be read — TASK-220). Mutations flow through the AI plan → confirm → execute
  * path (handlers/agents.ts), not this route. Read fail closed (review 13 P): 503 when the
  * registry cannot be read — or is not well formed (review 14 L-1), never an empty list.
  */
@@ -11,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import {
   isWellFormedTrustedAgents,
+  mappedCapabilities,
   readTrustedAgents,
 } from "@/platform/agents/governed-agent-config";
 import { logger } from "@/lib/logger";
@@ -47,6 +49,12 @@ const GET_RESPONSE: ResponseSchema = {
         },
       },
     },
+    capabilities: {
+      type: ["array", "null"],
+      items: {
+        type: "string",
+      },
+    },
   },
 };
 
@@ -69,5 +77,7 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     });
     return apiError("service.unavailable", { params: { service: "config" }, request });
   }
-  return NextResponse.json({ agents: agents });
+  // The capabilities an agent's scope may name, from the capability map (TASK-220: the screen
+  // offers them by name); null when the map cannot be read — the registry is still shown.
+  return NextResponse.json({ agents: agents, capabilities: await mappedCapabilities() });
 }, GET_RESPONSE);

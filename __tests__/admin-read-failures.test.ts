@@ -281,13 +281,13 @@ describe("list routes answer 500 when the database refuses the read", () => {
     expect((await route(req(path))).status).toBe(500);
   });
 
-  it("the entitlement list still answers when only the holder counts are unreadable", async () => {
+  it("the entitlement list still answers when only the holder counts are unreadable — as unknown (null), never 0 (TASK-220, SF-admin-055)", async () => {
     fakeData().answer = (sql) => {
       if (sql.includes("from user_entitlements")) throw new Error("down");
       return [{ id: GROUP, code: "g", display_name: "G", is_active: true }];
     };
     const res = await entGET(req("/api/admin/entitlements"));
     expect(res.status).toBe(200);
-    expect((await res.json()).groups[0].userCount).toBe(0);
+    expect((await res.json()).groups[0].userCount).toBeNull();
   });
 });

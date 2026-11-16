@@ -2,31 +2,60 @@
 
 /**
  * components/admin/TrustedAgentsPanel.tsx — the Trusted agents screen, with its forms
- * (TASK-202, N-66)
+ * (TASK-202, N-66; TASK-220)
  *
- * The screen listed the registry and offered no form: a change needed a typed request to the
- * command bar. Now an admin who holds admin_manage_agents (the actions' own permission) registers
- * an agent, changes its scope or its token ceiling, and suspends or reactivates it — each through
- * the governed command-bar path (POST /api/admin/ai/execute with one action: register_agent,
- * set_agent_scope, set_agent_ttl, suspend_agent). Those are config writes to
- * agent.trusted_agents, held by the key's own rules (dual control): the screen says "Applied" or
- * "Held for approval by …", and the result stays until dismissed. Each change is sent alone (an
- * edit changes the scope or the ceiling, not both at once), so a hold never stops a second change
- * half-way.
+ * An admin who holds admin_manage_agents (the actions' own permission) registers an agent, changes
+ * its scope or its token ceiling, and suspends or reactivates it — each through the governed
+ * command-bar path (POST /api/admin/ai/execute with one action: register_agent, set_agent_scope,
+ * set_agent_ttl, suspend_agent). Those are config writes to agent.trusted_agents, held by the
+ * key's own rules (dual control). Each change is sent alone, so a hold never stops a second
+ * change half-way.
  *
- * Not read yet, or not readable, is never shown as "no agents" (review 14 L-1).
+ * On the console's shared parts (TASK-220):
+ *
+ *   - the one table, in the agents' order by name (it was the stored order); an agent's status by
+ *     name — an unknown status said to be unknown, never read as "Active" (SF-admin-132); its
+ *     scope by capability name; a ceiling not set says the platform's default (a literal dash
+ *     before, SF-admin-134);
+ *   - an agent's detail beside the list, with one change open at a time — the scope, the ceiling,
+ *     or the suspension's confirm step, which takes focus and gives it back (SF-admin-131);
+ *   - the scope chosen from the capabilities the capability map knows, by name (SF-admin-130: typed
+ *     by hand as codes); a scope the map no longer knows is shown and can be taken away;
+ *   - every field's help tied to it (SF-admin-133); a refusal always says why (SF-admin-134: an
+ *     empty reason read "…: ");
+ *   - an admin without the permission sees the changes disabled, and why, by the permission's name.
  *
  * @module components/admin
  */
 
-import React, { useState } from "react";
-import { apiFetch } from "@/platform/auth/api-fetch";
+import React, { useId, useRef, useState } from "react";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
-import { isErrorCode, messageKey, type ErrorCode } from "@/platform/errors/registry";
-import { networkRefusal, readRefusal } from "@/platform/errors/refusal";
-import { isPanelUnavailable, PanelUnavailable } from "./PanelUnavailable";
-import { ResultList, result, type ShownResult } from "./ResultList";
-import { ExpandableText } from "./ExpandableText";
+import { AdminTable, type Column } from "@/components/admin/ui/AdminTable";
+import { ConfirmStep } from "@/components/admin/ui/ConfirmStep";
+import {
+  DetailFacts,
+  DetailLayout,
+  DetailPanel,
+} from "@/components/admin/ui/DetailPanel";
+import { Checkbox, Field, FormProblem, TextInput } from "@/components/admin/ui/Field";
+import { GatedButton, needsPermission } from "@/components/admin/ui/PermissionGate";
+import {
+  agentStatusLabel,
+  capabilityLabel,
+  ownerLabel,
+} from "@/components/admin/ui/labels";
+import { runAdminAction } from "@/components/admin/ui/governed";
+import { BUTTON, SURFACE, TEXT } from "@/components/admin/ui/tokens";
+import {
+  NewBadge,
+  useChange,
+  useNewKeys,
+  useOutcomes,
+  ListUnreadable,
+  elementWith,
+} from "@/components/admin/views/kit";
+import type { SectionViewProps } from "@/components/admin/section-views";
+import { sectionTitle } from "@/components/admin/ui/sections";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.admin_console.agents.${key}`, values);
@@ -41,26 +70,48 @@ interface AgentRecord {
   readonly maxTokenTtl?: number;
 }
 type Pair = readonly [string, AgentRecord];
+type Run = ReturnType<typeof useChange>["run"];
 
-/** One action's answer, as POST /api/admin/ai/execute returns it. */
-interface ActionAnswer {
-  readonly success?: boolean;
-  readonly held?: boolean;
-  readonly code?: string;
-  readonly params?: Readonly<Record<string, string | number>>;
-  readonly error?: string;
+/** A change read back before it is sent: each is consequential (the registry's word). */
+interface Asking {
+  readonly action: "register_agent" | "set_agent_scope" | "set_agent_ttl";
+  readonly title: string;
+  readonly confirm: string;
+  readonly lines: readonly string[];
+  readonly send: () => ReturnType<typeof runAdminAction>;
+  readonly what: string;
 }
 
-/** A list typed as lines or commas, each trimmed, empty ones dropped, each once. */
-export function parseList(text: string): string[] {
-  return [
-    ...new Set(
-      text
-        .split(/[\n,]/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-    ),
-  ];
+/** The confirm step of an asked change: what it changes, from → to, in words. */
+function AskStep({
+  asking,
+  busy,
+  run,
+  onCancel,
+  onDone,
+}: {
+  readonly asking: Asking;
+  readonly busy: boolean;
+  readonly run: Run;
+  readonly onCancel: () => void;
+  readonly onDone: (answer: { standing: string }) => void;
+}) {
+  return (
+    <ConfirmStep
+      action={asking.action}
+      title={asking.title}
+      confirmLabel={asking.confirm}
+      busy={busy}
+      onCancel={onCancel}
+      onConfirm={() => void run(asking.send, asking.what).then(onDone)}
+    >
+      <ul className="space-y-1" data-agent-change="true">
+        {asking.lines.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </ConfirmStep>
+  );
 }
 
 /** A token ceiling as typed: a whole number of seconds above zero, else null. */
@@ -69,466 +120,354 @@ export function parseTtl(text: string): number | null {
   return text.trim() !== "" && Number.isInteger(n) && n > 0 ? n : null;
 }
 
-/** The reason an action was not done, in the catalog's words. */
-function reasonOf(a: ActionAnswer): string {
-  return a.code && isErrorCode(a.code)
-    ? renderMessage(
-        messageKey(a.code as ErrorCode),
-        a.params ? { ...a.params } : undefined
-      )
-    : (a.error ?? "");
-}
+/** An agent is named by what it was registered as: its id is its name. */
+const agentName = (id: string) => id;
 
-/** Run one agent action on the governed path; what it did, as a result naming `what`. */
-async function runAction(
-  tool: string,
-  input: Record<string, unknown>,
-  what: string
-): Promise<{ readonly shown: ShownResult; readonly applied: boolean }> {
-  try {
-    const res = await apiFetch("/api/admin/ai/execute", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ actions: [{ tool, input }] }),
-    });
-    if (!res.ok) {
-      const refused = await readRefusal(res);
-      return {
-        shown: result("refused", t("refused", { what, reason: refused.message })),
-        applied: false,
-      };
-    }
-    const body = (await res.json().catch(() => ({}))) as { results?: ActionAnswer[] };
-    const answer = body.results?.[0] ?? {};
-    if (answer.success === true)
-      return { shown: result("applied", t("applied", { what })), applied: true };
-    if (answer.held === true)
-      return {
-        shown: result("held", t("held", { what, approver: t("approver") })),
-        applied: false,
-      };
-    return {
-      shown: result("refused", t("refused", { what, reason: reasonOf(answer) })),
-      applied: false,
-    };
-  } catch {
-    return {
-      shown: result("refused", t("refused", { what, reason: networkRefusal().message })),
-      applied: false,
-    };
-  }
-}
+const scopeText = (scopes: readonly string[] | undefined) =>
+  scopes?.length ? t("scopes", { scopes: scopes.map(capabilityLabel) }) : t("no_scope");
 
-const th =
-  "text-xs text-gray-400 uppercase tracking-wider py-2 px-3 border-b border-gray-800 text-left";
-const td = "py-2 px-3 border-b border-gray-800/50 align-top text-gray-300";
-const field =
-  "w-full rounded border border-gray-700 bg-[#0a0f1e] px-3 py-2 text-sm text-gray-100";
-const btn = "rounded px-3 py-1.5 text-xs border disabled:opacity-50 whitespace-nowrap";
+const ttlText = (ttl: number | undefined) =>
+  ttl ? t("ttl", { seconds: ttl }) : t("ttl_default");
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-export function TrustedAgentsPanel({
-  data,
-  hasPermission = () => false,
+/** Capabilities to choose from, by name: the map's, and any the agent holds the map lacks. */
+function ScopePicker({
+  known,
+  chosen,
+  onChange,
+  busy,
 }: {
-  readonly data: any;
-  readonly hasPermission?: (code: string) => boolean;
+  readonly known: readonly string[] | null;
+  readonly chosen: ReadonlySet<string>;
+  readonly onChange: (next: Set<string>) => void;
+  readonly busy: boolean;
 }) {
-  const [fresh, setFresh] = useState<Pair[] | null>(null);
-  const [results, setResults] = useState<ShownResult[]>([]);
-  const [registering, setRegistering] = useState(false);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const mayChange = hasPermission(AGENTS_PERMISSION);
-
-  // A new read from the page replaces any read made here.
-  const [shownData, setShownData] = useState(data);
-  if (data !== shownData) {
-    setShownData(data);
-    setFresh(null);
-  }
-
-  const state =
-    data === undefined
-      ? "loading"
-      : isPanelUnavailable(data) || !Array.isArray(data?.agents)
-        ? "unavailable"
-        : "ready";
-  const pairs: Pair[] = fresh ?? (state === "ready" ? data.agents : []);
-
-  async function reread() {
-    try {
-      const res = await apiFetch("/api/admin/agent-registry");
-      if (!res.ok) return;
-      const body = (await res.json()) as { agents?: Pair[] };
-      if (Array.isArray(body.agents)) setFresh(body.agents);
-    } catch {
-      // The list stays; the result says what happened.
-    }
-  }
-
-  async function act(tool: string, input: Record<string, unknown>, what: string) {
-    setBusy(true);
-    const { shown, applied } = await runAction(tool, input, what);
-    setResults((rs) => [shown, ...rs]);
-    if (applied) await reread();
-    setBusy(false);
-    return shown.kind !== "refused";
-  }
-
+  const helpId = useId();
+  const options = [...new Set([...(known ?? []), ...chosen])].sort((a, b) =>
+    capabilityLabel(a).localeCompare(capabilityLabel(b))
+  );
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-gray-400">{t("intro")}</p>
-      <ResultList
-        results={results}
-        label={t("results_label")}
-        onDismiss={(id) => setResults((rs) => rs.filter((r) => r.id !== id))}
-      />
-      {!mayChange ? (
-        <p className="text-sm text-amber-200">
-          {t("cannot_edit", { permission: AGENTS_PERMISSION })}
-        </p>
-      ) : registering ? (
-        <AgentForm
-          mode="register"
-          busy={busy}
-          onCancel={() => setRegistering(false)}
-          onSubmit={async (input, what) => {
-            if (await act("register_agent", input, what)) setRegistering(false);
+    <fieldset className="min-w-0 space-y-1" aria-describedby={helpId}>
+      <legend className={`text-xs font-medium ${TEXT.quiet}`}>{t("field_scope")}</legend>
+      <p id={helpId} className={`text-xs ${TEXT.faint}`}>
+        {known === null
+          ? t("scope_unknown")
+          : known.length
+            ? t("field_scope_help")
+            : t("scope_none_mapped")}
+      </p>
+      {options.map((c) => (
+        <Checkbox
+          key={c}
+          label={
+            known && !known.includes(c)
+              ? t("scope_unmapped", { capability: capabilityLabel(c) })
+              : capabilityLabel(c)
+          }
+          checked={chosen.has(c)}
+          disabled={busy}
+          onChange={(e) => {
+            const next = new Set(chosen);
+            if (e.target.checked) next.add(c);
+            else next.delete(c);
+            onChange(next);
           }}
+          className={`text-sm ${TEXT.body}`}
         />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setRegistering(true)}
-          className="rounded bg-blue-700 px-4 py-2 text-sm text-white"
-        >
-          {t("register")}
-        </button>
-      )}
+      ))}
+    </fieldset>
+  );
+}
 
-      {state === "loading" ? (
-        <p className="text-sm text-gray-400">
-          {renderMessage("screens.admin_console.loading")}
-        </p>
-      ) : state === "unavailable" ? (
-        <PanelUnavailable
-          panel={renderMessage("screens.admin_console.sections.agent-registry")}
+function TtlField({
+  value,
+  onChange,
+  problem,
+  busy,
+}: {
+  readonly value: string;
+  readonly onChange: (v: string) => void;
+  readonly problem: string | null;
+  readonly busy: boolean;
+}) {
+  return (
+    <Field label={t("field_ttl")} help={t("field_ttl_help")} error={problem}>
+      {(control) => (
+        <TextInput
+          {...control}
+          inputMode="numeric"
+          value={value}
+          disabled={busy}
+          onChange={(e) => onChange(e.target.value)}
+          className="max-w-xs"
         />
-      ) : pairs.length === 0 ? (
-        <p className="text-sm text-gray-400">
-          {renderMessage("screens.admin_console.no_agents")}
-        </p>
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-800 bg-[#111827]">
-          <table className="w-full min-w-[36rem] border-collapse text-sm">
-            <thead>
-              <tr>
-                <th scope="col" className={th}>
-                  {t("col_agent")}
-                </th>
-                <th scope="col" className={th}>
-                  {t("col_owner")}
-                </th>
-                <th scope="col" className={th}>
-                  {t("col_scope")}
-                </th>
-                <th scope="col" className={th}>
-                  {t("col_status")}
-                </th>
-                <th scope="col" className={th}>
-                  {t("col_ttl")}
-                </th>
-                {mayChange ? (
-                  <th scope="col" className={th}>
-                    {t("col_actions")}
-                  </th>
-                ) : null}
-              </tr>
-            </thead>
-            <tbody>
-              {pairs.map(([id, rec]) => {
-                const suspended = rec.status === "suspended";
-                return (
-                  <React.Fragment key={id}>
-                    <tr>
-                      <td className={`${td} break-all font-mono text-xs text-gray-200`}>
-                        {id}
-                      </td>
-                      <td className={`${td} break-words`}>{rec.owner}</td>
-                      <td className={td}>
-                        <ExpandableText
-                          text={(rec.scopes ?? []).join(", ") || t("no_scope")}
-                          column={t("col_scope")}
-                        />
-                      </td>
-                      <td className={td}>
-                        <span className={suspended ? "text-red-400" : "text-green-400"}>
-                          {suspended ? t("status_suspended") : t("status_active")}
-                        </span>
-                      </td>
-                      <td className={td}>
-                        {rec.maxTokenTtl ? t("ttl", { seconds: rec.maxTokenTtl }) : "—"}
-                      </td>
-                      {mayChange ? (
-                        <td className={td}>
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              disabled={busy}
-                              aria-label={t("edit_label", { agent: id })}
-                              onClick={() => setEditing(editing === id ? null : id)}
-                              className={`${btn} border-gray-700 bg-gray-800 text-gray-200`}
-                            >
-                              {t("edit")}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busy}
-                              aria-label={
-                                suspended
-                                  ? t("reactivate_label", { agent: id })
-                                  : t("suspend_label", { agent: id })
-                              }
-                              onClick={() => setConfirming(id)}
-                              className={`${btn} ${
-                                suspended
-                                  ? "border-green-700 bg-green-900/40 text-green-200"
-                                  : "border-red-700 bg-red-900/40 text-red-200"
-                              }`}
-                            >
-                              {suspended ? t("reactivate") : t("suspend")}
-                            </button>
-                          </div>
-                        </td>
-                      ) : null}
-                    </tr>
-                    {confirming === id ? (
-                      <tr>
-                        <td colSpan={6} className={td}>
-                          <div role="group" className="space-y-2" data-confirm="true">
-                            <p className="text-sm text-gray-200">
-                              {suspended
-                                ? t("confirm_reactivate", { agent: id })
-                                : t("confirm_suspend", { agent: id })}
-                            </p>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={async () => {
-                                  await act(
-                                    "suspend_agent",
-                                    {
-                                      agent_id: id,
-                                      ...(suspended ? { reactivate: true } : {}),
-                                    },
-                                    suspended
-                                      ? t("what_reactivate", { agent: id })
-                                      : t("what_suspend", { agent: id })
-                                  );
-                                  setConfirming(null);
-                                }}
-                                className={`${btn} border-blue-600 bg-blue-700 text-white`}
-                              >
-                                {t("confirm")}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setConfirming(null)}
-                                className={`${btn} border-gray-700 bg-gray-800 text-gray-200`}
-                              >
-                                {t("cancel")}
-                              </button>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    ) : null}
-                    {editing === id ? (
-                      <tr>
-                        <td colSpan={6} className={td}>
-                          <AgentForm
-                            mode="edit"
-                            agentId={id}
-                            record={rec}
-                            busy={busy}
-                            onCancel={() => setEditing(null)}
-                            onSubmit={async (input, what, tool) => {
-                              if (await act(tool ?? "set_agent_scope", input, what))
-                                setEditing(null);
-                            }}
-                          />
-                        </td>
-                      </tr>
-                    ) : null}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
       )}
+    </Field>
+  );
+}
+
+type Mode = "scope" | "ttl" | "suspend" | null;
+
+/** One agent's changes: one open at a time (SF-admin-131). */
+function AgentChanges({
+  id,
+  rec,
+  known,
+  run,
+  busy,
+}: {
+  readonly id: string;
+  readonly rec: AgentRecord;
+  readonly known: readonly string[] | null;
+  readonly run: Run;
+  readonly busy: boolean;
+}) {
+  const [mode, setMode] = useState<Mode>(null);
+  const [chosen, setChosen] = useState<Set<string>>(() => new Set(rec.scopes ?? []));
+  const [ttl, setTtl] = useState(rec.maxTokenTtl ? String(rec.maxTokenTtl) : "");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [asking, setAsking] = useState<Asking | null>(null);
+  const suspendButton = useRef<HTMLButtonElement>(null);
+  const suspended = rec.status === "suspended";
+  const done = (answer: { standing: string }) => {
+    setAsking(null);
+    if (answer.standing !== "refused") setMode(null);
+  };
+  if (asking)
+    return (
+      <AskStep
+        asking={asking}
+        busy={busy}
+        run={run}
+        onCancel={() => setAsking(null)}
+        onDone={done}
+      />
+    );
+  if (mode === "suspend")
+    return (
+      <ConfirmStep
+        action="suspend_agent"
+        input={suspended ? { reactivate: true } : {}}
+        title={
+          suspended
+            ? t("confirm_reactivate", { agent: agentName(id) })
+            : t("confirm_suspend", { agent: agentName(id) })
+        }
+        confirmLabel={suspended ? t("reactivate") : t("suspend")}
+        returnFocus={suspendButton}
+        busy={busy}
+        onCancel={() => setMode(null)}
+        onConfirm={() =>
+          void run(
+            () =>
+              runAdminAction("suspend_agent", {
+                agent_id: id,
+                ...(suspended ? { reactivate: true } : {}),
+              }),
+            suspended
+              ? t("what_reactivate", { agent: agentName(id) })
+              : t("what_suspend", { agent: agentName(id) })
+          ).then(() => setMode(null))
+        }
+      />
+    );
+  if (mode === "scope")
+    return (
+      <form
+        noValidate
+        aria-label={t("scope_title", { agent: agentName(id) })}
+        className={`${SURFACE.inset} space-y-3 p-3`}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const list = [...chosen];
+          if ([...list].sort().join() === [...(rec.scopes ?? [])].sort().join())
+            return setProblem(t("nothing_changed"));
+          setProblem(null);
+          setAsking({
+            action: "set_agent_scope",
+            title: t("confirm_scope", { agent: agentName(id) }),
+            confirm: t("submit_edit"),
+            lines: [
+              t("from", { value: scopeText(rec.scopes) }),
+              t("to", { value: scopeText(list) }),
+            ],
+            send: () => runAdminAction("set_agent_scope", { agent_id: id, scopes: list }),
+            what: t("what_scope", { agent: agentName(id), scopes: scopeText(list) }),
+          });
+        }}
+      >
+        <ScopePicker known={known} chosen={chosen} onChange={setChosen} busy={busy} />
+        <FormProblem problem={problem} />
+        <div className="flex flex-wrap gap-2">
+          <button type="submit" className={BUTTON.primary} disabled={busy}>
+            {t("submit_edit")}
+          </button>
+          <button type="button" className={BUTTON.quiet} onClick={() => setMode(null)}>
+            {t("cancel")}
+          </button>
+        </div>
+      </form>
+    );
+  if (mode === "ttl")
+    return (
+      <form
+        noValidate
+        aria-label={t("ttl_title", { agent: agentName(id) })}
+        className={`${SURFACE.inset} space-y-3 p-3`}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const seconds = parseTtl(ttl);
+          if (seconds === null) return setProblem(t("ttl_invalid"));
+          if (seconds === rec.maxTokenTtl) return setProblem(t("nothing_changed"));
+          setProblem(null);
+          setAsking({
+            action: "set_agent_ttl",
+            title: t("confirm_ttl", { agent: agentName(id) }),
+            confirm: t("submit_edit"),
+            lines: [
+              t("from", { value: ttlText(rec.maxTokenTtl) }),
+              t("to", { value: ttlText(seconds) }),
+            ],
+            send: () =>
+              runAdminAction("set_agent_ttl", { agent_id: id, max_token_ttl: seconds }),
+            what: t("what_ttl", { agent: agentName(id), seconds }),
+          });
+        }}
+      >
+        <TtlField value={ttl} onChange={setTtl} problem={problem} busy={busy} />
+        <div className="flex flex-wrap gap-2">
+          <button type="submit" className={BUTTON.primary} disabled={busy}>
+            {t("submit_edit")}
+          </button>
+          <button type="button" className={BUTTON.quiet} onClick={() => setMode(null)}>
+            {t("cancel")}
+          </button>
+        </div>
+      </form>
+    );
+  return (
+    <div className="flex flex-wrap gap-2">
+      <button type="button" className={BUTTON.quiet} onClick={() => setMode("scope")}>
+        {t("change_scope")}
+      </button>
+      <button type="button" className={BUTTON.quiet} onClick={() => setMode("ttl")}>
+        {t("change_ttl")}
+      </button>
+      <button
+        type="button"
+        ref={suspendButton}
+        className={suspended ? BUTTON.primary : BUTTON.danger}
+        onClick={() => setMode("suspend")}
+        aria-label={
+          suspended
+            ? t("reactivate_label", { agent: agentName(id) })
+            : t("suspend_label", { agent: agentName(id) })
+        }
+      >
+        {suspended ? t("reactivate") : t("suspend")}
+      </button>
     </div>
   );
 }
 
-/** The register form, or an agent's edit form (scope and token ceiling, each saved alone). */
-function AgentForm({
-  mode,
-  agentId,
-  record,
+function RegisterAgent({
+  known,
+  run,
   busy,
-  onSubmit,
-  onCancel,
+  onDone,
 }: {
-  readonly mode: "register" | "edit";
-  readonly agentId?: string;
-  readonly record?: AgentRecord;
+  readonly known: readonly string[] | null;
+  readonly run: Run;
   readonly busy: boolean;
-  readonly onSubmit: (
-    input: Record<string, unknown>,
-    what: string,
-    tool?: string
-  ) => Promise<void>;
-  readonly onCancel: () => void;
+  readonly onDone: () => void;
 }) {
   const [id, setId] = useState("");
   const [owner, setOwner] = useState("");
-  const [scopes, setScopes] = useState((record?.scopes ?? []).join(", "));
-  const [ttl, setTtl] = useState(record?.maxTokenTtl ? String(record.maxTokenTtl) : "");
-  const [problem, setProblem] = useState<string | null>(null);
-  const prefix = mode === "register" ? "agent-new" : `agent-${agentId}`;
-
-  async function submit() {
-    setProblem(null);
-    const list = parseList(scopes);
-    if (mode === "register") {
-      if (id.trim() === "") return setProblem(t("id_missing"));
-      const seconds = ttl.trim() === "" ? undefined : parseTtl(ttl);
-      if (seconds === null) return setProblem(t("ttl_invalid"));
-      await onSubmit(
-        {
-          agent_id: id.trim(),
-          ...(owner.trim() ? { owner: owner.trim() } : {}),
-          scopes: list,
-          ...(seconds !== undefined ? { max_token_ttl: seconds } : {}),
-        },
-        t("what_register", { agent: id.trim() })
-      );
-      return;
-    }
-    // Edit: the scope and the ceiling, each its own change — only what differs is sent.
-    const scopeChanged =
-      JSON.stringify(list) !== JSON.stringify([...(record?.scopes ?? [])]);
-    const seconds = parseTtl(ttl);
-    if (ttl.trim() !== "" && seconds === null) return setProblem(t("ttl_invalid"));
-    const ttlChanged = seconds !== null && seconds !== record?.maxTokenTtl;
-    if (!scopeChanged && !ttlChanged) return setProblem(t("nothing_changed"));
-    // One change at a time: each is held and approved on its own, and a second change to the
-    // registry is refused while the first waits.
-    if (scopeChanged && ttlChanged) return setProblem(t("one_at_a_time"));
-    if (scopeChanged)
-      await onSubmit(
-        { agent_id: agentId, scopes: list },
-        t("what_scope", {
-          agent: agentId ?? "",
-          scopes: list.length ? list.join(", ") : t("no_scope"),
-        }),
-        "set_agent_scope"
-      );
-    else
-      await onSubmit(
-        { agent_id: agentId, max_token_ttl: seconds },
-        t("what_ttl", { agent: agentId ?? "", seconds: seconds ?? 0 }),
-        "set_agent_ttl"
-      );
-  }
-
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [ttl, setTtl] = useState("");
+  const [problems, setProblems] = useState<{ id?: string; ttl?: string }>({});
+  const [asking, setAsking] = useState<Asking | null>(null);
+  if (asking)
+    return (
+      <AskStep
+        asking={asking}
+        busy={busy}
+        run={run}
+        onCancel={() => setAsking(null)}
+        onDone={(answer) => {
+          setAsking(null);
+          if (answer.standing !== "refused") onDone();
+        }}
+      />
+    );
   return (
     <form
       noValidate
-      className="space-y-3 rounded-xl border border-blue-900 bg-[#0f172a] p-4"
+      aria-label={t("register_title")}
+      className={`${SURFACE.panel} space-y-3 p-4`}
       onSubmit={(e) => {
         e.preventDefault();
-        void submit();
+        const seconds = ttl.trim() === "" ? undefined : parseTtl(ttl);
+        const bad = {
+          ...(id.trim() === "" ? { id: t("id_missing") } : {}),
+          ...(seconds === null ? { ttl: t("ttl_invalid") } : {}),
+        };
+        setProblems(bad);
+        if (Object.keys(bad).length) return;
+        const scopes = [...chosen];
+        setAsking({
+          action: "register_agent",
+          title: t("confirm_register", { agent: id.trim() }),
+          confirm: t("submit_register"),
+          lines: [
+            t("line_owner", { owner: owner.trim() || t("owner_default") }),
+            t("line_scope", { value: scopeText(scopes) }),
+            t("line_ttl", { value: ttlText(seconds ?? undefined) }),
+          ],
+          send: () =>
+            runAdminAction("register_agent", {
+              agent_id: id.trim(),
+              ...(owner.trim() ? { owner: owner.trim() } : {}),
+              scopes,
+              ...(seconds !== undefined ? { max_token_ttl: seconds } : {}),
+            }),
+          what: t("what_register", { agent: id.trim() }),
+        });
       }}
     >
-      <h3 className="text-sm font-semibold text-white">
-        {mode === "register"
-          ? t("register_title")
-          : t("edit_title", { agent: agentId ?? "" })}
-      </h3>
-      {mode === "register" ? (
-        <>
-          <Field id={`${prefix}-id`} label={t("field_id")} help={t("field_id_help")}>
-            <input
-              id={`${prefix}-id`}
-              value={id}
-              onChange={(e) => setId(e.target.value)}
-              className={field}
-              required
-            />
-          </Field>
-          <Field
-            id={`${prefix}-owner`}
-            label={t("field_owner")}
-            help={t("field_owner_help")}
-          >
-            <input
-              id={`${prefix}-owner`}
-              value={owner}
-              onChange={(e) => setOwner(e.target.value)}
-              className={field}
-            />
-          </Field>
-        </>
-      ) : null}
-      <Field id={`${prefix}-scope`} label={t("field_scope")} help={t("field_scope_help")}>
-        <textarea
-          id={`${prefix}-scope`}
-          value={scopes}
-          onChange={(e) => setScopes(e.target.value)}
-          rows={2}
-          className={field}
-        />
+      <h3 className={`text-sm font-semibold ${TEXT.strong}`}>{t("register_title")}</h3>
+      <Field label={t("field_id")} help={t("field_id_help")} error={problems.id}>
+        {(control) => (
+          <TextInput
+            {...control}
+            value={id}
+            disabled={busy}
+            autoCapitalize="none"
+            onChange={(e) => setId(e.target.value)}
+          />
+        )}
       </Field>
-      <Field id={`${prefix}-ttl`} label={t("field_ttl")} help={t("field_ttl_help")}>
-        <input
-          id={`${prefix}-ttl`}
-          type="number"
-          min={1}
-          step={1}
-          inputMode="numeric"
-          value={ttl}
-          onChange={(e) => setTtl(e.target.value)}
-          className={`${field} max-w-xs`}
-        />
+      <Field label={t("field_owner")} help={t("field_owner_help")}>
+        {(control) => (
+          <TextInput
+            {...control}
+            value={owner}
+            disabled={busy}
+            onChange={(e) => setOwner(e.target.value)}
+          />
+        )}
       </Field>
-      {problem ? (
-        <p className="text-sm text-amber-300" role="alert">
-          {problem}
-        </p>
-      ) : null}
-      <div className="flex flex-wrap gap-3">
-        <button
-          type="submit"
-          disabled={busy}
-          className="rounded bg-blue-700 px-4 py-2 text-sm text-white disabled:opacity-50"
-        >
-          {busy
-            ? t("submitting")
-            : mode === "register"
-              ? t("submit_register")
-              : t("submit_edit")}
+      <ScopePicker known={known} chosen={chosen} onChange={setChosen} busy={busy} />
+      <TtlField
+        value={ttl}
+        onChange={setTtl}
+        problem={problems.ttl ?? null}
+        busy={busy}
+      />
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" className={BUTTON.primary} disabled={busy}>
+          {t("submit_register")}
         </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onCancel}
-          className="text-sm text-gray-300 underline"
-        >
+        <button type="button" className={BUTTON.quiet} onClick={onDone}>
           {t("cancel")}
         </button>
       </div>
@@ -536,24 +475,140 @@ function AgentForm({
   );
 }
 
-function Field({
-  id,
-  label,
-  help,
-  children,
-}: {
-  readonly id: string;
-  readonly label: string;
-  readonly help: string;
-  readonly children: React.ReactNode;
-}) {
+export function TrustedAgentsPanel({
+  data,
+  hasPermission = () => false,
+  onReload,
+}: Partial<SectionViewProps> & { readonly data: SectionViewProps["data"] }) {
+  const pairs: Pair[] = Array.isArray(data?.agents)
+    ? [...(data.agents as Pair[])].sort((a, b) => a[0].localeCompare(b[0]))
+    : [];
+  const known: string[] | null = Array.isArray(data?.capabilities)
+    ? data.capabilities
+    : null;
+  const mayChange = hasPermission(AGENTS_PERMISSION);
+  const fresh = useNewKeys(
+    data,
+    pairs.map(([id]) => id)
+  );
+  const { add, list } = useOutcomes(t("results_label"));
+  const { busy, run } = useChange(add, onReload);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [registering, setRegistering] = useState(false);
+  const open = pairs.find(([id]) => id === openId) ?? null;
+  const columns: Column<Pair>[] = [
+    {
+      id: "agent",
+      header: t("col_agent"),
+      sortBy: ([id]) => id,
+      cell: ([id]) => (
+        <span className="min-w-0 break-words">
+          <button
+            type="button"
+            data-agent-open={id}
+            aria-expanded={openId === id}
+            className={BUTTON.link}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpenId(id);
+            }}
+          >
+            {agentName(id)}
+          </button>
+          {fresh.has(id) ? <NewBadge /> : null}
+        </span>
+      ),
+    },
+    {
+      id: "owner",
+      header: t("col_owner"),
+      secondary: true,
+      value: ([, r]) => ownerLabel(r.owner ?? "first-party"),
+    },
+    { id: "scope", header: t("col_scope"), value: ([, r]) => scopeText(r.scopes) },
+    {
+      id: "status",
+      header: t("col_status"),
+      value: ([, r]) => agentStatusLabel(r.status),
+    },
+    {
+      id: "ttl",
+      header: t("col_ttl"),
+      secondary: true,
+      value: ([, r]) => ttlText(r.maxTokenTtl),
+    },
+  ];
+  // A body without its list is not an empty list (review 14 L-1): said as a failed read.
+  if (!Array.isArray(data?.agents))
+    return <ListUnreadable panel={sectionTitle("agent-registry")} onRetry={onReload} />;
   return (
-    <div>
-      <label htmlFor={id} className="mb-1 block text-sm text-gray-300">
-        {label}
-      </label>
-      {children}
-      <p className="mt-1 text-xs text-gray-400">{help}</p>
+    <div className="space-y-4">
+      <p className={`text-sm ${TEXT.faint}`}>{t("intro")}</p>
+      {list}
+      {registering ? (
+        <RegisterAgent
+          known={known}
+          run={run}
+          busy={busy}
+          onDone={() => setRegistering(false)}
+        />
+      ) : (
+        <GatedButton
+          allowed={mayChange}
+          reason={needsPermission(AGENTS_PERMISSION)}
+          className={BUTTON.primary}
+          onClick={() => setRegistering(true)}
+        >
+          {t("register")}
+        </GatedButton>
+      )}
+      <DetailLayout
+        detail={
+          open ? (
+            <DetailPanel
+              key={open[0]}
+              title={agentName(open[0])}
+              onClose={() => setOpenId(null)}
+              returnFocus={() => elementWith("data-agent-open", open[0])}
+            >
+              <div className="space-y-4">
+                <DetailFacts
+                  facts={[
+                    [t("col_owner"), ownerLabel(open[1].owner ?? "first-party")],
+                    [t("col_scope"), scopeText(open[1].scopes)],
+                    [t("col_status"), agentStatusLabel(open[1].status)],
+                    [t("col_ttl"), ttlText(open[1].maxTokenTtl)],
+                  ]}
+                />
+                {mayChange ? (
+                  <AgentChanges
+                    id={open[0]}
+                    rec={open[1]}
+                    known={known}
+                    run={run}
+                    busy={busy}
+                  />
+                ) : (
+                  <p className={`text-sm ${TEXT.quiet}`}>
+                    {needsPermission(AGENTS_PERMISSION)}
+                  </p>
+                )}
+              </div>
+            </DetailPanel>
+          ) : null
+        }
+      >
+        <AdminTable
+          caption={t("caption")}
+          columns={columns}
+          rows={pairs}
+          rowKey={([id]) => id}
+          empty={t("empty")}
+          compact={open !== null}
+          selectedKey={openId}
+          onRowClick={([id]) => setOpenId(id)}
+        />
+      </DetailLayout>
     </div>
   );
 }

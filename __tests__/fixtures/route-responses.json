@@ -492,6 +492,337 @@
       "requestId": "req-test"
     }
   },
+  "GET /api/admin/approvals — a held removal from the dual-control list": {
+    "status": 200,
+    "body": {
+      "approvals": [
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "update_config",
+          "configKey": "config.dual_control_keys",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "config_manage_safety",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "state": "held",
+          "change": {
+            "key": "config.dual_control_keys",
+            "action": "set",
+            "before": ["signups_enabled", "config.dual_control_keys"],
+            "after": ["config.dual_control_keys"]
+          },
+          "comment": "Signups need no second approver",
+          "reason": {
+            "key": "screens.held.reason_held",
+            "params": {
+              "risk": "restricted",
+              "effects": ["stateWrite"],
+              "effected": "yes"
+            }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        }
+      ],
+      "requestId": "req-test"
+    }
+  },
+  "GET /api/admin/approvals — a held change to the dual-control list, to an admin who may not decide it": {
+    "status": 200,
+    "body": {
+      "approvals": [
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "update_config",
+          "configKey": "config.dual_control_keys",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "config_manage_safety",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "state": "held",
+          "reason": {
+            "key": "screens.held.reason_held",
+            "params": {
+              "risk": "restricted",
+              "effects": ["stateWrite"],
+              "effected": "yes"
+            }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        }
+      ],
+      "requestId": "req-test"
+    }
+  },
+  "GET /api/admin/approvals — the two-person approvals unreadable": {
+    "status": 200,
+    "body": {
+      "approvals": [
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "update_config",
+          "configKey": "config.dual_control_keys",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "config_manage_safety",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "state": "held",
+          "change": {
+            "key": "config.dual_control_keys",
+            "action": "set",
+            "before": ["signups_enabled", "config.dual_control_keys"],
+            "after": ["signups_enabled", "config.dual_control_keys", "default_language"]
+          },
+          "comment": "Hold language changes too",
+          "reason": {
+            "key": "screens.held.reason_held",
+            "params": {
+              "risk": "restricted",
+              "effects": ["stateWrite"],
+              "effected": "yes"
+            }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        }
+      ],
+      "unreadable": ["config-approval"],
+      "requestId": "req-test"
+    }
+  },
+  "GET /api/admin/approvals — the held changes under dual control unreadable": {
+    "status": 200,
+    "body": {
+      "approvals": [],
+      "unreadable": ["runtime"],
+      "requestId": "req-test"
+    }
+  },
+  "GET /api/admin/approvals — neither store readable": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "approvals"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "PATCH /api/admin/entitlements — held for a second admin": {
+    "status": 202,
+    "body": {
+      "success": false,
+      "held": true,
+      "proposalId": "00000000-0000-4000-8000-0000000000ff"
+    }
+  },
+  "PATCH /api/admin/entitlements — turned off": {
+    "status": 200,
+    "body": {
+      "success": true
+    }
+  },
+  "GET /api/admin/agent-registry — the registry and the capabilities the map knows": {
+    "status": 200,
+    "body": {
+      "agents": [
+        [
+          "agent:research",
+          {
+            "owner": "first-party",
+            "scopes": ["translate"],
+            "status": "active",
+            "maxTokenTtl": 300
+          }
+        ]
+      ],
+      "capabilities": ["translate", "identify-song"]
+    }
+  },
+  "GET /api/admin/capability-mapping — the map and the features that exist": {
+    "status": 200,
+    "body": {
+      "mappings": [
+        ["translate", ["translate"]],
+        ["identify-song", ["song_id", "translate"]]
+      ],
+      "features": ["translate", "song_id", "tts", "profile"]
+    }
+  },
+  "GET /api/admin/per-account — a block, and the features that exist": {
+    "status": 200,
+    "body": {
+      "features": ["translate", "song_id", "tts"],
+      "restrictions": [
+        {
+          "user_id": "00000000-0000-4000-8000-0000000b10c1",
+          "feature": "translate",
+          "reason": "Repeated abuse of the translator",
+          "created_by": "00000000-0000-4000-9000-97a91570000b",
+          "created_at": "2026-01-02T00:00:00.000Z",
+          "user": {
+            "email": "blocked@example.com",
+            "erased": false
+          },
+          "created_by_account": {
+            "email": "admin@example.com",
+            "erased": false
+          }
+        }
+      ]
+    }
+  },
+  "GET /api/admin/entitlements — the groups, what each grants, and their holders": {
+    "status": 200,
+    "body": {
+      "groups": [
+        {
+          "id": "0000000e-0000-4000-8000-000000000001",
+          "code": "premium",
+          "displayName": "Premium",
+          "isActive": true,
+          "userCount": 3,
+          "permissions": [
+            {
+              "code": "can_translate",
+              "displayName": "Can Translate",
+              "category": "gameplay"
+            }
+          ]
+        },
+        {
+          "id": "0000000e-0000-4000-8000-000000000002",
+          "code": "beta",
+          "displayName": "Beta",
+          "isActive": false,
+          "userCount": 0,
+          "permissions": []
+        }
+      ],
+      "availablePermissions": [
+        {
+          "code": "admin_view_audit",
+          "displayName": "View Audit Log",
+          "category": "admin"
+        },
+        {
+          "code": "can_translate",
+          "displayName": "Can Translate",
+          "category": "gameplay"
+        }
+      ]
+    }
+  },
+  "GET /api/admin/entitlements — the holders could not be counted": {
+    "status": 200,
+    "body": {
+      "groups": [
+        {
+          "id": "0000000e-0000-4000-8000-000000000001",
+          "code": "premium",
+          "displayName": "Premium",
+          "isActive": true,
+          "userCount": null,
+          "permissions": []
+        }
+      ],
+      "availablePermissions": []
+    }
+  },
+  "GET /api/admin/audit — a page of the log, more to read": {
+    "status": 200,
+    "body": {
+      "entries": [
+        {
+          "id": "0000000c-0000-4000-8000-000000000000",
+          "action": "role_changed",
+          "actorId": "00000000-0000-4000-9000-97a91570000b",
+          "targetId": "11111111-1111-4111-8111-111111111111",
+          "actor": {
+            "email": "admin@example.com",
+            "role": "Super admin",
+            "erased": false
+          },
+          "target": {
+            "email": "ann@example.com",
+            "role": "Moderator",
+            "erased": false
+          },
+          "details": "{\"fromRole\":\"free\",\"toRole\":\"moderator\"}",
+          "createdAt": "2026-01-01T09:30:00.000Z"
+        },
+        {
+          "id": "0000000c-0000-4000-8000-000000000001",
+          "action": "admin_action",
+          "actorId": "00000000-0000-4000-9000-97a91570000b",
+          "targetId": "moderation.strike_ban_threshold",
+          "actor": {
+            "email": "admin@example.com",
+            "role": "Super admin",
+            "erased": false
+          },
+          "target": null,
+          "details": "{\"type\":\"config_changed\",\"key\":\"moderation.strike_ban_threshold\"}",
+          "createdAt": "2026-01-02T09:30:00.000Z"
+        }
+      ],
+      "hasMore": true
+    }
+  },
+  "GET /api/admin/password-policy — the policy": {
+    "status": 200,
+    "body": {
+      "policy": {
+        "rotationDays": 90,
+        "minLength": 12,
+        "requireUppercase": true,
+        "requireLowercase": true,
+        "requireNumber": true,
+        "requireSpecial": true,
+        "passwordHistoryCount": 5
+      }
+    }
+  },
+  "GET /api/admin/approval-policy — the policy": {
+    "status": 200,
+    "body": {
+      "policy": {
+        "version": 1,
+        "default": "user",
+        "rules": []
+      }
+    }
+  },
+  "GET /api/admin/capabilities — the goals": {
+    "status": 200,
+    "body": {
+      "goals": [],
+      "providerSelections": {
+        "ai": "anthropic",
+        "embeddingProvider": "mock",
+        "translation": "mock"
+      },
+      "notReported": ["latencyMsRange", "languages", "limits", "providerLiveness"]
+    }
+  },
   "GET /api/admin/agent-registry — the registry": {
     "status": 200,
     "body": {
@@ -505,7 +836,8 @@
             "maxTokenTtl": 300
           }
         ]
-      ]
+      ],
+      "capabilities": null
     }
   },
   "POST /api/admin/ai/execute — register_agent held for approval": {
@@ -2107,6 +2439,46 @@
       "success": false,
       "held": true,
       "proposalId": "00000000-0000-4000-8000-0000000000ff"
+    }
+  },
+  "GET /api/admin/approvals — an erasure held, the person asked for it": {
+    "status": 200,
+    "body": {
+      "approvals": [
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "purge_user_data",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "admin_purge_user_data",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "state": "held",
+          "summary": {
+            "target": {
+              "id": "00000000-0000-4000-8000-0000000000fe",
+              "email": "ann@example.com"
+            },
+            "reason": "user-request",
+            "dryRun": false
+          },
+          "reason": {
+            "key": "screens.held.reason_held",
+            "params": {
+              "risk": "restricted",
+              "effects": ["stateWrite"],
+              "effected": "yes"
+            }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        }
+      ],
+      "requestId": "req-test"
     }
   },
   "POST /api/admin/gdpr — refused (an erasure already pending)": {
