@@ -14,6 +14,14 @@
  *   4. admin-b opens Erasures and sees an erasure whose identity could not be verified, and asks a
  *      second operator to attest it.
  *
+ * TASK-216 — the console's core on its shared parts (tests 6 to 11): the Users screen and the
+ * command bar, each through a success, a refusal, a change held for a second administrator and
+ * the confirmation of an action that cannot be undone, at 1280 px and 390 px, with the
+ * accessibility scan on /admin. The command bar's planner is a paid model whose plan is not the
+ * same twice, so these journeys answer POST /api/admin/ai themselves with a fixed plan (the
+ * route's own shape) — and only that: the confirm step, the executor, the hold, the decision
+ * route and every refusal are the server's own.
+ *
  * Seeded once, through the owner connection, before the walk (beforeAll): the two administrators —
  * the documented first-super-admin bootstrap (ADR-013: super_admin is assigned in the database
  * only; dual control needs a second one) — and one erasure stuck on an identity the system could
@@ -25,8 +33,11 @@
  * ADMIN_SCREENSHOTS_DIR set, each screen is also saved there at 1280 px (and the console at
  * 390 px) for the change's walkthrough record (CLAUDE.md, "Admin changes are walked").
  */
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { Client } from "pg";
+import { checkA11y } from "./helpers/a11y";
 import { signInPage } from "./helpers/session";
 
 const OWNER_URL = process.env.E2E_DATABASE_OWNER_URL;
@@ -41,6 +52,12 @@ const ADMIN_A = {
 const ADMIN_B = {
   id: "e2e00000-0000-4000-8000-00000000000b",
   email: "admin-b@e2e.test",
+};
+/** A member the Users journeys act on (TASK-216): an ordinary account with the default role. */
+const MEMBER = {
+  id: "e2e00000-0000-4000-8000-0000000056d1",
+  email: "mia-member@e2e.test",
+  name: "Mia Member",
 };
 /** The erased account whose sign-in identity could not be proven gone. */
 const ERASED = "e2e00000-0000-4000-8000-0000000000e1";
@@ -63,6 +80,12 @@ test.beforeAll(async () => {
         [admin.id, admin.email, admin.email.split("@")[0], TENANT]
       );
     }
+    await db.query(
+      `insert into users (id, cognito_sub, email, display_name, role_id, tenant_id, email_verified)
+       select $1::uuid, $1, $2, $3, r.id, $4::uuid, true from roles r where r.is_default
+       on conflict (id) do update set role_id = excluded.role_id, deleted_at = null`,
+      [MEMBER.id, MEMBER.email, MEMBER.name, TENANT]
+    );
     await db.query(
       `insert into users (id, cognito_sub, email, display_name, role_id, tenant_id, deleted_at)
        select $1::uuid, $1, null, '[deleted]', r.id, $2::uuid, now() from roles r where r.is_default
@@ -87,8 +110,65 @@ test.beforeAll(async () => {
   }
 });
 
+/**
+ * The console's routes share one rate limit per network address (DEFAULT_RULES.ADMIN_OPS, 30 a
+ * minute — ADR-052), and every journey here comes from one address. A journey is a person's, at
+ * a person's pace: each console request this file's pages make is counted, and before a step
+ * that needs `need` more, the journey waits until the last minute has room for them. The limit
+ * is never raised or bypassed for the harness (as e2e/admin-routes.spec.ts waits its own out).
+ */
+const ADMIN_OPS = { max: 30, windowMs: 60_000, margin: 3 };
+/** A paced journey may wait for the minute to have room. */
+const PACED = 240_000;
+/**
+ * When each was sent — kept in the run's own temporary directory too, so a worker restarted by a
+ * failed test (which starts this file again from its first journey) still knows what the minute
+ * holds.
+ */
+const REQUEST_LOG = process.env.E2E_SESSIONS_DIR
+  ? join(process.env.E2E_SESSIONS_DIR, "admin-console-requests.json")
+  : null;
+function loggedRequests(): number[] {
+  try {
+    const stored = REQUEST_LOG
+      ? (JSON.parse(readFileSync(REQUEST_LOG, "utf8")) as unknown)
+      : [];
+    return Array.isArray(stored)
+      ? stored.filter((at): at is number => typeof at === "number")
+      : [];
+  } catch {
+    // No log yet (the first journey of the run), or one cut short: nothing is known.
+    return [];
+  }
+}
+const consoleRequests: number[] = loggedRequests();
+const watched = new WeakSet<Page>();
+function watch(page: Page): void {
+  if (watched.has(page)) return;
+  watched.add(page);
+  page.on("request", (request) => {
+    if (!/\/api\/(?:admin|operator)\//.test(request.url())) return;
+    const now = Date.now();
+    consoleRequests.push(now);
+    // Only the last minute matters.
+    while (consoleRequests.length && now - consoleRequests[0]! > 2 * ADMIN_OPS.windowMs)
+      consoleRequests.shift();
+    if (REQUEST_LOG) writeFileSync(REQUEST_LOG, JSON.stringify(consoleRequests));
+  });
+}
+async function room(page: Page, need: number): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    const recent = consoleRequests.filter((at) => now - at < ADMIN_OPS.windowMs + 1000);
+    if (recent.length + need <= ADMIN_OPS.max - ADMIN_OPS.margin) return;
+    // Until the oldest request of the minute has left it.
+    await page.waitForTimeout(recent[0]! + ADMIN_OPS.windowMs + 1000 - now + 50);
+  }
+}
+
 /** Open the console as `admin` (the test double's session in this browser). */
 async function openConsole(page: Page, admin: typeof ADMIN_A): Promise<void> {
+  watch(page);
   await signInPage(page, admin);
   const session = page.waitForResponse(
     (r) => r.url().endsWith("/api/admin/session") && r.request().method() === "GET"
@@ -103,7 +183,10 @@ async function section(
   name: string,
   read: Promise<{ status(): number }>
 ): Promise<void> {
-  await page.getByRole("navigation").getByRole("button", { name }).click();
+  await page
+    .getByRole("navigation", { name: "Admin sections" })
+    .getByRole("button", { name })
+    .click();
   expect((await read).status()).toBeLessThan(400);
 }
 
@@ -121,6 +204,12 @@ async function fitsWidth(page: Page): Promise<void> {
 }
 
 test.use({ viewport: { width: 1280, height: 900 } });
+
+// Every journey starts with room in the minute for what it opens (see `room`).
+test.beforeEach(async ({ page }) => {
+  test.setTimeout(PACED);
+  await room(page, 10);
+});
 
 test("1. a setting is changed from its edit panel, and held for approval (N-60)", async ({
   page,
@@ -354,4 +443,400 @@ test("5. on a phone: the console fits, a change is made and decided, people by a
   await fitsWidth(phoneB);
   await shot(phoneB, "15-approvals-rejected-390");
   await phoneB.close();
+});
+
+// ── TASK-216: the console's core — Users and the command bar ────────────────────────────
+
+/** An outcome in the console's one outcome display, by what it says. */
+const outcome = (page: Page, text: string | RegExp) =>
+  page.locator("[data-outcome]").filter({ hasText: text });
+
+/** Open the member's detail from the Users list. */
+async function openMember(page: Page) {
+  await page.getByRole("button", { name: `Open ${MEMBER.name}` }).click();
+  const panel = page.getByRole("region", { name: `Account: ${MEMBER.name}` });
+  await expect(panel.getByRole("heading", { level: 3 })).toBeFocused();
+  return panel;
+}
+
+/**
+ * The planner's answer for this page: a fixed plan in the route's own shape (see the header).
+ * Every other request goes to the server.
+ */
+async function plans(page: Page, plan: unknown): Promise<void> {
+  await page.unroute("**/api/admin/ai");
+  await page.route("**/api/admin/ai", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 200, contentType: "application/json", json: { plan } })
+      : route.fallback()
+  );
+}
+
+/** Type a request in the command bar and run it; the plan's panel takes focus. */
+async function ask(page: Page, request: string) {
+  await page.getByRole("textbox", { name: "Command" }).fill(request);
+  await page.getByRole("button", { name: "Run" }).click();
+  const plan = page.getByRole("region", { name: "Proposed actions" });
+  await expect(plan.getByRole("heading", { name: "Proposed actions" })).toBeFocused();
+  return plan;
+}
+
+test("6. Users: who is signed in, the list and its count; a role change is confirmed and held; a refusal says why", async ({
+  page,
+}) => {
+  await room(page, 8);
+  await openConsole(page, ADMIN_A);
+  // The header names who is signed in, then the role (SF-admin-005).
+  await expect(page.locator("[data-signed-in-as]")).toHaveText("admin-a");
+  await expect(page.locator("[data-signed-in-role]")).toHaveText("Super admin");
+  // The section is in the address (SF-admin-006), and the list says how many there are.
+  const list = page.getByRole("table", { name: "Users" });
+  await expect(list).toBeVisible();
+  await expect(page.locator("[data-page-range]")).toHaveText(/^1–\d+ of \d+$/);
+  await fitsWidth(page);
+  await checkA11y(page);
+  await shot(page, "16-users-list");
+
+  const panel = await openMember(page);
+  // No id, and no stored role code, unless details are asked for (SF-admin-042).
+  await expect(panel).not.toContainText(MEMBER.id);
+  await fitsWidth(page);
+  await shot(page, "17-users-detail");
+
+  // A role change: confirmed first, naming the account and from → to (SF-admin-040).
+  await panel.getByLabel("New role").selectOption({ label: "Moderator" });
+  await panel.getByRole("button", { name: "Change role…" }).click();
+  const confirm = panel.getByRole("alertdialog", {
+    name: `Change the role of ${MEMBER.name}`,
+  });
+  await expect(confirm).toBeFocused();
+  await expect(confirm.locator("[data-role-change]")).toContainText("to “Moderator”");
+  await checkA11y(page);
+  await shot(page, "18-users-role-confirm");
+  const sent = page.waitForResponse(
+    (r) => r.url().endsWith("/api/admin/users") && r.request().method() === "PATCH"
+  );
+  await confirm.getByRole("button", { name: "Change the role" }).click();
+  // Under dual control (admin.dual_control_actions): held for a second administrator.
+  expect((await sent).status()).toBe(202);
+  const held = outcome(page, /The change of role from “.+” to “Moderator” waits/);
+  await expect(held).toHaveAttribute("data-outcome", "held");
+  await expect(held).toBeFocused();
+  await expect(held).toContainText(`For: ${MEMBER.name}`);
+  await expect(held).toContainText(
+    "A second administrator approves or rejects it in Approvals"
+  );
+  await fitsWidth(page);
+  await checkA11y(page);
+  await shot(page, "19-users-role-held");
+
+  // A refusal: the super admin role is given in the database only — said by its own sentence,
+  // and the earlier outcome is still there (nothing vanishes).
+  await panel.getByLabel("New role").selectOption({ label: "Super admin" });
+  await panel.getByRole("button", { name: "Change role…" }).click();
+  const refusedBy = page.waitForResponse(
+    (r) => r.url().endsWith("/api/admin/users") && r.request().method() === "PATCH"
+  );
+  await panel.getByRole("button", { name: "Change the role" }).click();
+  expect((await refusedBy).status()).toBeGreaterThanOrEqual(400);
+  const refused = page.locator("[data-outcome='refused']");
+  await expect(refused).toHaveCount(1);
+  await expect(refused).toContainText("Not done");
+  await expect(refused).toContainText(`For: ${MEMBER.name}`);
+  await expect(held).toBeVisible();
+  await shot(page, "20-users-role-refused");
+  await refused.getByRole("button", { name: "Dismiss" }).click();
+  await expect(refused).toHaveCount(0);
+});
+
+test("7. Users: the second administrator approves; the first sees the new role (a change that took effect)", async ({
+  page,
+}) => {
+  await room(page, 12);
+  await openConsole(page, ADMIN_B);
+  await section(
+    page,
+    "Approvals",
+    page.waitForResponse(
+      (r) => r.url().includes("/api/admin/approvals") && r.request().method() === "GET"
+    )
+  );
+  await expect(page).toHaveURL(/[?&]section=approvals/);
+  const card = page.locator("li[data-approval]").filter({ hasText: MEMBER.email });
+  await expect(card).toHaveCount(1);
+  await card.getByRole("button", { name: /^Approve: / }).click();
+  const decided = page.waitForResponse(
+    (r) => r.url().includes("/api/admin/approvals/") && r.request().method() === "POST"
+  );
+  await card.getByRole("button", { name: "Approve and apply" }).click();
+  expect((await decided).status()).toBe(200);
+  // A reload stays on the section the address names; Back returns to the one before.
+  await page.reload();
+  await expect(page.getByRole("heading", { level: 2, name: "Approvals" })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("heading", { level: 2, name: "Users" })).toBeVisible();
+  const row = page.getByRole("row").filter({ hasText: MEMBER.email });
+  await expect(row).toContainText("Moderator");
+});
+
+test("8. Users: an erasure's confirmation says it cannot be undone and what is lost; asked, it is held", async ({
+  page,
+}) => {
+  await room(page, 6);
+  await openConsole(page, ADMIN_A);
+  const panel = await openMember(page);
+  const erase = panel.getByRole("button", { name: "Erase account data…" });
+  await erase.click();
+  const confirm = panel.getByRole("alertdialog", {
+    name: `Erase the account of ${MEMBER.name}`,
+  });
+  await expect(confirm).toBeFocused();
+  await expect(confirm).toHaveAttribute("data-risk", "irreversible");
+  await expect(confirm).toContainText("This cannot be undone.");
+  await expect(confirm).toContainText(
+    "Lost for good, once a second administrator approves"
+  );
+  await checkA11y(page);
+  await shot(page, "21-users-erase-confirm");
+  // Escape is Cancel, and focus goes back to the button: nothing was asked.
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  await expect(erase).toBeFocused();
+  // Asked, with the kind of reason chosen (SF-admin-036): held, nothing erased.
+  await erase.click();
+  await confirm.getByLabel("Why is it being erased?").selectOption("user-request");
+  const asked = page.waitForResponse(
+    (r) => r.url().endsWith("/api/admin/gdpr") && r.request().method() === "POST"
+  );
+  await confirm.getByRole("button", { name: "Ask for erasure" }).click();
+  const answer = await asked;
+  expect(answer.status()).toBe(202);
+  expect(answer.request().postDataJSON()).toEqual({
+    userId: MEMBER.id,
+    reason: "user-request",
+  });
+  const held = outcome(page, "The erasure waits for a second administrator.");
+  await expect(held).toHaveAttribute("data-outcome", "held");
+  await expect(held).toContainText("Nothing has been erased");
+  await expect(panel.locator("[data-erase-pending]")).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Erase account data…" })).toHaveCount(0);
+  await fitsWidth(page);
+  await shot(page, "22-users-erase-held");
+});
+
+test("9. the command bar: a search that runs, a change that is held, and one the server refuses", async ({
+  page,
+}) => {
+  await room(page, 16);
+  await openConsole(page, ADMIN_A);
+  const bar = page.getByRole("textbox", { name: "Command" });
+  // A label, its examples and what it can do here as help — and no focus taken (SF-admin-007, 017).
+  await expect(bar).not.toBeFocused();
+  await expect(page.locator("[data-command-scope]")).toContainText("Here you can:");
+
+  // A success: a search of this screen, handed to the list.
+  await plans(page, {
+    message: "Searching for moderators.",
+    actions: [{ tool: "search", input: { table: "users", role: "moderator" } }],
+  });
+  let plan = await ask(page, "show moderators");
+  await expect(plan).toContainText("Search users where role is moderator");
+  await shot(page, "23-command-plan");
+  let ran = page.waitForResponse(
+    (r) => r.url().endsWith("/api/admin/ai/execute") && r.request().method() === "POST"
+  );
+  await plan.getByRole("button", { name: "Confirm 1 action" }).click();
+  expect((await ran).status()).toBe(200);
+  const found = outcome(page, "The matching users are shown in the list below.");
+  await expect(found).toHaveAttribute("data-outcome", "applied");
+  await expect(found).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Remove filter: Role: Moderator" })
+  ).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: MEMBER.email })).toBeVisible();
+  await fitsWidth(page);
+  await checkA11y(page);
+  await shot(page, "24-command-search-done");
+
+  // Held: creating a role is under dual control. The plan names permissions, never codes.
+  await plans(page, {
+    message: "Creating the role.",
+    actions: [
+      {
+        tool: "create_role",
+        input: {
+          name: "e2e_56d1_helper",
+          display_name: "E2E helper",
+          permissions: ["can_play"],
+        },
+      },
+    ],
+  });
+  await section(
+    page,
+    "Roles",
+    page.waitForResponse(
+      (r) => r.url().includes("/api/admin/roles") && r.request().method() === "GET"
+    )
+  );
+  // The plan made on Users did not follow to Roles (SF-admin-001).
+  await expect(page.locator("[data-outcome]")).toHaveCount(0);
+  plan = await ask(page, "create an E2E helper role that can play");
+  await expect(plan).toContainText("Create role “E2E helper”");
+  await expect(plan).not.toContainText("can_play");
+  ran = page.waitForResponse(
+    (r) => r.url().endsWith("/api/admin/ai/execute") && r.request().method() === "POST"
+  );
+  await plan.getByRole("button", { name: "Confirm 1 action" }).click();
+  expect((await ran).status()).toBe(202);
+  const held = page.locator("[data-outcome='held']");
+  await expect(held).toContainText("Create a role");
+  await expect(held).toContainText(
+    "Next: A second administrator approves or rejects it in Approvals"
+  );
+  await fitsWidth(page);
+  await shot(page, "25-command-held");
+
+  // An action that cannot be undone is marked so, says what is lost, and has the danger button
+  // — whichever action it is (SF-admin-010). Cancelled: nothing runs.
+  await plans(page, {
+    message: "Deleting it.",
+    actions: [{ tool: "delete_role", input: { role_name: "e2e_56d1_no_such_role" } }],
+  });
+  plan = await ask(page, "delete the role e2e_56d1_no_such_role");
+  const item = plan.getByRole("listitem");
+  await expect(item).toHaveAttribute("data-risk", "irreversible");
+  await expect(item).toContainText("Cannot be undone");
+  await expect(item).toContainText("Lost: the role and its list of permissions");
+  await checkA11y(page);
+  await shot(page, "26-command-irreversible");
+  await plan.getByRole("button", { name: "Cancel" }).click();
+  await expect(plan).toHaveCount(0);
+
+  // Refused by the server: a search with a filter its table does not take. The plan says it
+  // will be refused, by the filter's name; confirmed anyway, the executor refuses it — said in
+  // the catalogue's words, and the held outcome above is still there.
+  await plans(page, {
+    message: "Searching roles.",
+    actions: [{ tool: "search", input: { table: "roles", within_days: 3 } }],
+  });
+  plan = await ask(page, "show roles from the last 3 days");
+  await expect(plan).toContainText(
+    "the days since it was recorded (an invalid value: the search will be refused)"
+  );
+  ran = page.waitForResponse(
+    (r) => r.url().endsWith("/api/admin/ai/execute") && r.request().method() === "POST"
+  );
+  await plan.getByRole("button", { name: "Confirm 1 action" }).click();
+  await ran;
+  const refused = page.locator("[data-outcome='refused']");
+  await expect(refused).toHaveCount(1);
+  await expect(refused).toContainText("Not done");
+  await expect(refused).toBeFocused();
+  await expect(held).toBeVisible();
+  await fitsWidth(page);
+  await shot(page, "27-command-refused");
+});
+
+test("10. the command bar: rejecting a held change cannot be undone — confirmed, the decision route answers", async ({
+  page,
+}) => {
+  await room(page, 8);
+  await openConsole(page, ADMIN_B);
+  const listed = page.waitForResponse(
+    (r) => r.url().endsWith("/api/admin/approvals") && r.request().method() === "GET"
+  );
+  await section(page, "Approvals", listed);
+  const approvals = (await (await listed).json()) as {
+    approvals: { id: string; source: string; label: string }[];
+  };
+  const hold = approvals.approvals.find((a) => a.label === "create_role");
+  expect(hold, "the role creation admin-a asked for in test 9 is held").toBeDefined();
+  await plans(page, {
+    message: "Rejecting it.",
+    actions: [
+      { tool: "reject_hold", input: { proposalId: hold!.id, source: hold!.source } },
+    ],
+  });
+  const plan = await ask(page, "reject the E2E helper role");
+  const item = plan.getByRole("listitem");
+  await expect(item).toHaveAttribute("data-risk", "irreversible");
+  await expect(item).toContainText("Lost: this request.");
+  // Named by what it is — never by the hold's id (SF-admin-013).
+  await expect(item).not.toContainText(hold!.id);
+  await shot(page, "28-command-reject-confirm");
+  const decided = page.waitForResponse(
+    (r) =>
+      r.url().includes(`/api/admin/approvals/${hold!.id}`) &&
+      r.request().method() === "POST"
+  );
+  await plan.getByRole("button", { name: "Confirm 1 action" }).click();
+  expect((await decided).status()).toBe(200);
+  // What the decision route answered, in words (E-2) — not "Decision recorded".
+  const said = page.locator("[data-outcome='applied']");
+  await expect(said).toContainText("Rejected");
+  await expect(said).not.toContainText("Decision recorded");
+  await expect(said).toBeFocused();
+  await fitsWidth(page);
+  await shot(page, "29-command-rejected");
+});
+
+test("11. on a phone (390 px): Users and the command bar fit; a failed read is said; the detail takes the list's place", async ({
+  browser,
+}) => {
+  // Its own context (the accessibility scan needs one of its own).
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const phone = await context.newPage();
+  await room(phone, 12);
+  await openConsole(phone, ADMIN_A);
+  await expect(phone.getByRole("table", { name: "Users" })).toBeVisible();
+  await fitsWidth(phone);
+  await checkA11y(phone);
+  await shot(phone, "30-users-390");
+  // The detail takes the list's place, with focus; Close leads back to the row.
+  await phone.getByRole("button", { name: `Open ${MEMBER.name}` }).click();
+  const panel = phone.getByRole("region", { name: `Account: ${MEMBER.name}` });
+  await expect(panel.getByRole("heading", { level: 3 })).toBeFocused();
+  await expect(panel).toBeInViewport();
+  await expect(phone.getByRole("table", { name: "Users" })).toBeHidden();
+  await fitsWidth(phone);
+  await checkA11y(phone);
+  await shot(phone, "31-users-detail-390");
+  await panel.getByRole("button", { name: "Close" }).click();
+  await expect(phone.getByRole("button", { name: `Open ${MEMBER.name}` })).toBeFocused();
+
+  // A plan and its outcome fit too.
+  await plans(phone, {
+    message: "Searching.",
+    actions: [{ tool: "search", input: { table: "users", text: "mia" } }],
+  });
+  const plan = await ask(phone, "find mia");
+  await fitsWidth(phone);
+  await shot(phone, "32-command-plan-390");
+  const ran = phone.waitForResponse(
+    (r) => r.url().endsWith("/api/admin/ai/execute") && r.request().method() === "POST"
+  );
+  await plan.getByRole("button", { name: "Confirm 1 action" }).click();
+  expect((await ran).status()).toBe(200);
+  await expect(phone.locator("[data-outcome='applied']")).toBeVisible();
+  await fitsWidth(phone);
+  await shot(phone, "33-command-done-390");
+
+  // A read that fails is said as that, with a retry — never an empty list (E-4).
+  await phone.route("**/api/admin/roles", (route) => route.abort());
+  await phone.getByRole("combobox", { name: "Admin sections" }).selectOption("roles");
+  const failed = phone.getByRole("alert").filter({ hasText: "Could not read Roles" });
+  await expect(failed).toBeVisible();
+  await expect(phone.getByText(/No roles found/)).toHaveCount(0);
+  await fitsWidth(phone);
+  await checkA11y(phone);
+  await shot(phone, "34-read-failed-390");
+  await phone.unroute("**/api/admin/roles");
+  const read = phone.waitForResponse(
+    (r) => r.url().includes("/api/admin/roles") && r.request().method() === "GET"
+  );
+  await failed.getByRole("button", { name: "Try reading Roles again" }).click();
+  expect((await read).status()).toBe(200);
+  await expect(failed).toHaveCount(0);
+  await context.close();
 });

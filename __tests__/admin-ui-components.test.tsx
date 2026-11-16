@@ -9,7 +9,8 @@
  */
 
 import React from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import "@testing-library/jest-dom";
 import { renderMessage } from "@/platform/errors/messages";
 
 // ── ActionConfirmPanel ──────────────────────────────────────────────────
@@ -109,7 +110,13 @@ describe("ActionConfirmPanel", () => {
         isExecuting={false}
       />
     );
-    expect(screen.getByText("⚠ Cannot be undone")).toBeDefined();
+    expect(screen.getByText("Cannot be undone")).toBeDefined();
+    // What will be lost is said (TASK-216: the confirmation registry's consequence).
+    expect(
+      screen.getByText(
+        renderMessage("screens.admin_console.confirm.consequence.delete_role")
+      )
+    ).toBeDefined();
   });
 
   it("shows Running… when isExecuting", () => {
@@ -140,7 +147,7 @@ describe("ActionConfirmPanel", () => {
         isExecuting={false}
       />
     );
-    expect(screen.getByText(/Block “translate” for member@example\.test/)).toBeDefined();
+    expect(screen.getByText(/Block “Translate” for member@example\.test/)).toBeDefined();
     expect(screen.queryByText(new RegExp(id))).toBeNull();
   });
 
@@ -174,7 +181,7 @@ describe("ActionConfirmPanel", () => {
         isExecuting={false}
       />
     );
-    expect(screen.getByText(/Not searched: permissions and audit_log/)).toBeDefined();
+    expect(screen.getByText(/Not searched: permissions and the audit log/)).toBeDefined();
   });
 
   it("shows Dismiss for plans with no actions", () => {
@@ -296,15 +303,22 @@ describe("AdminPromptBar", () => {
     jest.clearAllMocks();
   });
 
-  it("renders input with placeholder", () => {
+  it("a labelled input; its examples are help text tied to it, never a placeholder (TASK-216, SF-admin-017)", () => {
     render(
       <AdminPromptBar
         panel="roles"
         onPlanReceived={jest.fn()}
         placeholder="Try something"
+        scope="Here you can: create a role."
       />
     );
-    expect(screen.getByPlaceholderText("Try something")).toBeDefined();
+    const input = screen.getByRole("textbox", { name: "Command" });
+    expect(input.getAttribute("placeholder")).toBeNull();
+    const help = document.getElementById(input.getAttribute("aria-describedby")!);
+    expect(help?.textContent).toContain("Try something");
+    expect(help?.textContent).toContain("Here you can: create a role.");
+    // It does not take focus by itself (SF-admin-007: a phone's keyboard opened on every section).
+    expect(document.activeElement).not.toBe(input);
   });
 
   it("renders Run button", () => {
@@ -341,7 +355,7 @@ describe("AdminPromptBar", () => {
       fireEvent.change(screen.getByRole("textbox"), { target: { value: "do it" } });
       fireEvent.click(screen.getByText("Run"));
       await waitFor(() =>
-        expect(container.querySelector('[role="alert"], [role="status"]')).not.toBeNull()
+        expect(container.querySelector('[data-outcome="refused"]')).not.toBeNull()
       );
       expect(onPlan).not.toHaveBeenCalled();
     }
@@ -355,11 +369,51 @@ describe("AdminPromptBar", () => {
     render(<AdminPromptBar panel="roles" onPlanReceived={onPlan} />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "do it" } });
     fireEvent.click(screen.getByText("Run"));
-    await waitFor(() => expect(onPlan).toHaveBeenCalled());
-    expect(onPlan).toHaveBeenCalledWith({
-      message: renderMessage("errors.ai.request_declined"),
-      actions: [],
-    });
+    // Said beside the input, with what was typed still in it (TASK-216, SF-admin-018: it was
+    // cleared, and the refusal shown as if it were a plan).
+    const said = (
+      await screen.findByText(renderMessage("errors.ai.request_declined"))
+    ).closest("[data-outcome]")!;
+    expect(said).toHaveAttribute("data-outcome", "refused");
+    expect(said.textContent).toContain(renderMessage("screens.admin_console.plan.kept"));
+    expect(onPlan).not.toHaveBeenCalled();
+    expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("do it");
+  });
+
+  it("no answer at all: said, the request kept; a plan clears it; 'working' is a status (SF-admin-018, 019)", async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    (global.fetch as jest.Mock).mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      })
+    );
+    const onPlan = jest.fn();
+    render(<AdminPromptBar panel="roles" onPlanReceived={onPlan} />);
+    const input = screen.getByRole("textbox") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "show roles" } });
+    fireEvent.click(screen.getByText("Run"));
+    expect(
+      await screen.findByText(renderMessage("screens.admin_console.plan.thinking"))
+    ).toHaveAttribute("role", "status");
+    await act(async () => answer(Promise.reject(new TypeError("Failed to fetch"))));
+    expect(
+      (await screen.findByText(renderMessage("screens.refusal.network"))).closest(
+        "[data-outcome]"
+      )
+    ).toHaveAttribute("data-outcome", "refused");
+    expect(input.value).toBe("show roles");
+    expect(onPlan).not.toHaveBeenCalled();
+
+    const planned = "POST /api/admin/ai — an answer with nothing to do";
+    (global.fetch as jest.Mock).mockResolvedValueOnce(routeReply(planned));
+    fireEvent.click(screen.getByText("Run"));
+    await waitFor(() =>
+      expect(onPlan).toHaveBeenCalledWith(
+        (routeAnswer(planned)[1] as { plan: unknown }).plan
+      )
+    );
+    expect(input.value).toBe("");
+    expect(document.querySelector("[data-outcome]")).toBeNull();
   });
 });
 

@@ -195,9 +195,13 @@ describe("r10 H1: who may clear a write to a safety-tier dual-controlled key —
     });
     // Held — truthfully — and by the key's own hold: an update_config proposal, not an action.
     expect(held).toMatchObject({ success: false, held: true });
-    expect(renderShown(held.result as ShownText)).toMatch(
-      /agent\.trusted_agents is under dual control/
-    );
+    // The answer carries the key the hold is under; the sentence a person reads says it is
+    // under dual control without showing the stored key (TASK-216: no raw key on a screen).
+    expect((held.result as ShownText).params).toMatchObject({
+      key: "agent.trusted_agents",
+    });
+    expect(renderShown(held.result as ShownText)).toMatch(/is under dual control/);
+    expect(renderShown(held.result as ShownText)).not.toMatch(/agent\.trusted_agents/);
     const all = await proposals.query({});
     expect(all.map((p) => [p.label, p.status])).toEqual([["update_config", "proposed"]]);
     expect(all[0].payload).toMatchObject({ key: "agent.trusted_agents" });

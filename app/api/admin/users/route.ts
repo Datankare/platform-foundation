@@ -16,7 +16,7 @@
  *   { users: [{ id, email, displayName, roleId, roleName, roleDisplayName, status, statusUntil,
  *               emailVerified, createdAt, lastSignInAt, entitlements: [{ code, name, expiresAt }] }],
  *     roles: [{ id, name, displayName }],
- *     page: { limit, offset, hasMore, sort, dir } }
+ *     page: { limit, offset, hasMore, sort, dir, total, totalCapped } }
  *
  *   - search (`q`): a substring of the address or the display name, a bound parameter matched as
  *     text — never filter syntax built from input (audit B-16); likeTerm escapes the LIKE
@@ -37,7 +37,12 @@
  *     likeTerm as the search's. A bad value, or a filter given twice, is refused
  *     (request.invalid_value). Bound parameters only; the same bounded scan as a search;
  *   - paging: at most 100 a page, an offset of at most 10,000 (900 with a search or a filter); one row more is
- *     read to say whether there is a next page — no count of the table;
+ *     read to say whether there is a next page;
+ *   - total (TASK-216, SF-admin-041 — the pager read "1–25" with no total): how many accounts
+ *     match the search and the filters, counted in the same transaction by one statement with
+ *     the list's own conditions. Bounded: at most USER_COUNT_CAP + 1 rows are counted, so a very
+ *     large tenant's count costs no more than that scan — `totalCapped: true` then, and `total`
+ *     is the cap ("more than 10,000"). Under the same statement timeout as the list;
  *   - status: the account's standing as the status guard reads it — an expired restriction or
  *     suspension is "active" — or "deleted" for an account erased and awaiting its purge;
  *   - email: NULL for an account whose address was never recorded — it is recorded from a
@@ -110,6 +115,12 @@ const GET_RESPONSE: ResponseSchema = {
         },
         sort: {
           type: "string",
+        },
+        total: {
+          type: "number",
+        },
+        totalCapped: {
+          type: "boolean",
         },
       },
     },

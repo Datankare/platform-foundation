@@ -28,6 +28,7 @@ const DATE_TIME = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit",
   minute: "2-digit",
 });
+const TIME = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" });
 const FULL = new Intl.DateTimeFormat("en-GB", {
   day: "numeric",
   month: "short",
@@ -58,6 +59,11 @@ export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return t("never");
   const d = parsed(iso);
   return d ? DATE_TIME.format(d) : t("dash");
+}
+
+/** "14:05" — when a panel was read, in the admin's own time (PanelState). */
+export function formatTime(when: Date): string {
+  return TIME.format(when);
 }
 
 /** The whole timestamp in UTC, for a tooltip: "26 Oct 2026, 14:05:33 UTC" (or the text as given). */

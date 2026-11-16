@@ -193,9 +193,36 @@ export function handledCodes(text: string): string[] {
   return m ? [...m[1].matchAll(/["']([^"']+)["']/g)].map((x) => x[1]) : [];
 }
 
-/** Whether a caller routes its refusals through the shared handler. */
+/**
+ * The admin console's one call helper (TASK-216): every call a screen makes through it has its
+ * refusal read by the shared handler there — checked below, so the name cannot drift from what
+ * the helper does.
+ */
+const ADMIN_CALL_FILE = "components/admin/ui/admin-call.ts";
+
+/**
+ * Whether a caller routes its refusals through the shared handler: it calls handleRefusal or
+ * readRefusal itself, or makes its calls through adminCall (which calls handleRefusal for every
+ * refused answer).
+ */
 export function usesSharedHandler(text: string): boolean {
-  return /\b(?:handleRefusal|readRefusal)\(/.test(text);
+  return /\b(?:handleRefusal|readRefusal|adminCall)\(/.test(text);
+}
+
+/**
+ * A file that only NAMES routes another file requests (TASK-216): the admin console's section
+ * registry holds each section's endpoint, and the section's console reads it through the call
+ * helper. The registry's routes are judged by the file that requests them — which must really
+ * take them from the registry and read them through the helper (the test below).
+ */
+export const REQUESTED_BY: Readonly<Record<string, string>> = {
+  "components/admin/ui/sections.ts": "components/admin/SectionConsole.tsx",
+};
+
+/** The source of the file that requests `file`'s routes ("" when it requests its own). */
+function requesterOf(file: string): string {
+  const by = REQUESTED_BY[file];
+  return by ? read(join(ROOT, by)) : "";
 }
 
 /** The transport every screen calls the API through, and the refusals it handles itself. */
@@ -206,7 +233,8 @@ export function transportCodes(): string[] {
 
 /** Whether a caller makes its API calls through the transport (and no other way). */
 export function usesTransportOnly(text: string): boolean {
-  return /\bapiFetch\(/.test(text) && !/(?<![\w.])fetch\(/.test(text);
+  // adminCall makes its request through apiFetch (checked below).
+  return /\b(?:apiFetch|adminCall)\(/.test(text) && !/(?<![\w.])fetch\(/.test(text);
 }
 
 function callerFiles(): string[] {
@@ -248,7 +276,11 @@ export function gaps(): string[] {
   const all = routes(guardTable(guardModules()));
   const transport = transportCodes();
   return [
-    ...new Set(callerFiles().flatMap((f) => callerGaps(rel(f), read(f), all, transport))),
+    ...new Set(
+      callerFiles().flatMap((f) =>
+        callerGaps(rel(f), `${read(f)}\n${requesterOf(rel(f))}`, all, transport)
+      )
+    ),
   ].sort();
 }
 
@@ -355,6 +387,28 @@ describe("refusal coverage (TASK-181)", () => {
       "app.c.d",
     ]);
     expect(usesSharedHandler("const r = await readRefusal(res);")).toBe(true);
+    // TASK-216: a screen that calls through the console's one helper is covered by it …
+    expect(usesSharedHandler('const a = await adminCall("/api/admin/x");')).toBe(true);
+    expect(usesTransportOnly('const a = await adminCall("/api/admin/x");')).toBe(true);
+    expect(usesSharedHandler("const a = await myAdminCall(x);")).toBe(false);
+    // … because the helper is what it is counted as: the shared handler for every refused
+    // answer, over the one transport, and no fetch of its own.
+    const helper = read(join(ROOT, ADMIN_CALL_FILE));
+    expect(helper).toMatch(/\bhandleRefusal\(/);
+    expect(helper).toMatch(/\bapiFetch\(/);
+    expect(helper).not.toMatch(/(?<![\w.])fetch\(/);
+    // And a file whose routes another file requests names a file that does: it takes the
+    // endpoint from the registry and reads it through the helper's hook.
+    for (const [names, requests] of Object.entries(REQUESTED_BY)) {
+      expect(apiLiterals(read(join(ROOT, names)), names).length).toBeGreaterThan(0);
+      const requester = read(join(ROOT, requests));
+      expect(requester).toMatch(/\bsectionEndpoint\(/);
+      expect(requester).toMatch(/\busePanelRead\(endpoint\b/);
+      expect(usesSharedHandler(requester)).toBe(true);
+    }
+    expect(read(join(ROOT, "components/admin/ui/PanelState.tsx"))).toMatch(
+      /\badminCall\(url\)/
+    );
   });
 
   it("no screen or hook throws a refusal away for fixed text", () => {

@@ -9,6 +9,13 @@
  */
 
 import { renderMessage } from "@/platform/errors/messages";
+import { readableStatus } from "@/components/admin/admin-format";
+import {
+  filterLabel,
+  readableCode,
+  SHORT_ID,
+  tableLabel,
+} from "@/components/admin/ui/labels";
 import {
   checkSearchFilter,
   SEARCH_FILTERS,
@@ -50,6 +57,19 @@ function shownValue(
 }
 
 /**
+ * A filter's value as the plan shows it: a stored code by its name, and an account id (the admin typed one — the planner is
+ * given no way to look an account up) cut to its first characters, never the whole UUID.
+ */
+function filterValue(name: string, value: FilterValue): FilterValue {
+  if (typeof value !== "string") return value;
+  if (name === "actor_id" || name === "target_id") return `${value.slice(0, SHORT_ID)}…`;
+  // A standing and an audit action are stored codes: named as the console names them.
+  if (name === "status") return readableStatus(value);
+  if (name === "action") return readableCode(value);
+  return value;
+}
+
+/**
  * "Search users where role is moderator, signed in within the last 7 days". Only a filter the
  * table takes, with a value the server's check accepts, is shown with its value (round 2: a
  * non-numeric day count rendered the raw ICU template; TASK-190: any value the server refuses);
@@ -71,11 +91,14 @@ export function describeSearch(input: Readonly<Record<string, unknown>>): string
     if (shown === undefined) continue;
     parts.push(
       shown !== null
-        ? renderMessage(`${KEY}.filters.${name}`, { value: shown })
-        : renderMessage(`${KEY}.filters.invalid`, { name })
+        ? renderMessage(`${KEY}.filters.${name}`, { value: filterValue(name, shown) })
+        : // The filter by its name in words, never the planner's key (TASK-216, SF-admin-023).
+          renderMessage(`${KEY}.filters.invalid`, { name: filterLabel(name) })
     );
   }
+  // The table by its name in words ("the audit log"), never its stored name.
+  const named = tableLabel(table);
   return parts.length === 0
-    ? renderMessage(`${KEY}.plan`, { table })
-    : renderMessage(`${KEY}.plan_where`, { table, filters: parts.join(", ") });
+    ? renderMessage(`${KEY}.plan`, { table: named })
+    : renderMessage(`${KEY}.plan_where`, { table: named, filters: parts.join(", ") });
 }

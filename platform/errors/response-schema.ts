@@ -14,8 +14,9 @@
  *   a list          each element as its `items` says
  *   a scalar        a string, number, boolean or null; an object or list given for it is not one
  *   a stored document  `json: "<why, four words or more>"` — a JSON value kept in a column and
- *                   returned as it is (an audit record's details, a setting's value): any value
- *                   there, and only there. Any other node with no type, properties, items or values
+ *                   returned as it is (an audit record's details, a setting's value), or a tool's
+ *                   input as the command bar's planner proposed it (checked against the tool's
+ *                   schema where it runs): any value there, and only there. Any other node with no type, properties, items or values
  *                   is read closed
  *
  * An error (status 400 and over) is checked against the registry's one error body (ERROR_BODY:
@@ -131,6 +132,15 @@ export const SETTING_VALUE: ResponseSchemaNode = stored(
 /** A tool's own result (an admin agent's configuration tool): what it read, or what it proposed. */
 export const TOOL_RESULT: ResponseSchemaNode = stored(
   "a tool's own result: the settings it read, or the change it proposed and its approval"
+);
+
+/**
+ * A tool's input as the command bar's planner model proposed it (TASK-216): shown to be confirmed,
+ * and checked against the tool's own schema by the route that runs it — a policy's rules are a
+ * list of objects, so no fixed shape of scalars holds every tool's input.
+ */
+export const PLANNED_INPUT: ResponseSchemaNode = stored(
+  "a tool's input as the planner model proposed it, checked where it runs"
 );
 
 /** What a workflow made of its caller's own content, returned to that caller. */

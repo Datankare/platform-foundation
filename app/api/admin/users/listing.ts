@@ -45,3 +45,6 @@ export const USER_STATUS_SQL = `(case when u.deleted_at is not null then 'delete
          when u.account_status = 'restricted' and u.restricted_until <= now() then 'active'
          when u.account_status = 'suspended' and u.suspended_until <= now() then 'active'
          else u.account_status::text end)`;
+
+/** The most accounts the list counts (`page.total`); beyond it the answer is "more than". */
+export const USER_COUNT_CAP = 10_000;

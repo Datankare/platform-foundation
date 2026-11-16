@@ -1,68 +1,20 @@
 "use client";
 
-import { shown, type ShownText } from "@/platform/errors/shown-text";
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import AdminShell, {
-  permittedSections,
-  sectionTitle,
-} from "@/components/admin/AdminShell";
-import { UsersPanel, type UserListFilters } from "@/components/admin/UsersPanel";
-import {
-  afterFiltersChanged,
-  applyUsersSearch,
-  resultsFor,
-} from "@/components/admin/users-search-handoff";
-import { mayShowDetails, ShowDetailsToggle } from "@/components/admin/ShowDetailsToggle";
-import { sectionPlaceholder } from "@/components/admin/section-hints";
-import type { AdminSection } from "@/components/admin/AdminShell";
-import AdminPromptBar from "@/components/admin/AdminPromptBar";
-import ActionConfirmPanel from "@/components/admin/ActionConfirmPanel";
-import ExecutionResultsPanel, {
-  type SearchResultTable,
-} from "@/components/admin/ExecutionResultsPanel";
-import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
-import { DualControlKeysPanel } from "@/components/admin/DualControlKeysPanel";
-import {
-  RolesDataView,
-  EntitlementsDataView,
-  AuditDataView,
-  PasswordPolicyDataView,
-  PerAccountRestrictionsDataView,
-  ApprovalPolicyDataView,
-  CapabilitiesDataView,
-  CapabilityMappingDataView,
-} from "@/components/admin/AdminDataViews";
-import {
-  OperatorTenantsView,
-  TenantSettingsView,
-} from "@/components/admin/TenancyPanels";
-import { OperatorJobsView } from "@/components/admin/JobsPanels";
-import { AdminKillSwitchView } from "@/components/admin/AgentKillSwitchPanel";
-import { PlatformConfigPanel } from "@/components/admin/PlatformConfigPanel";
-import { TrustedAgentsPanel } from "@/components/admin/TrustedAgentsPanel";
-import { ErasuresPanel } from "@/components/admin/ErasuresPanel";
-import ReviewDashboard from "@/components/ReviewDashboard/ReviewDashboard";
+import AdminShell, { permittedSections } from "@/components/admin/AdminShell";
+import { SectionConsole } from "@/components/admin/SectionConsole";
 import { renderMessage } from "@/platform/errors/messages";
-import { apiFetch } from "@/platform/auth/api-fetch";
 import { useAuth } from "@/platform/auth/context";
 import MfaEnrollment from "@/components/admin/MfaEnrollment";
 import { leaveConsole } from "@/components/admin/leave-console";
 import { readableRole } from "@/components/admin/admin-format";
-import {
-  isPanelUnavailable,
-  PANEL_UNAVAILABLE,
-  PanelUnavailable,
-} from "@/components/admin/PanelUnavailable";
+import { adminCall } from "@/components/admin/ui/admin-call";
+import { Reading } from "@/components/admin/ui/PanelState";
+import { BUTTON, TEXT } from "@/components/admin/ui/tokens";
 import { RefusalNotice } from "@/components/refusal/RefusalNotice";
 import { useRefusalSessionEnd } from "@/components/refusal/useRefusalSessionEnd";
-import {
-  announceSessionEnd,
-  handleRefusal,
-  networkRefusal,
-  readRefusal,
-  type Refusal,
-} from "@/platform/errors/refusal";
+import { handleRefusal, type Refusal } from "@/platform/errors/refusal";
 
 /** The console's own user (GET /api/admin/session), or why it cannot open. */
 type ConsoleSession =
@@ -73,6 +25,8 @@ type ConsoleSession =
       permissions: readonly string[];
       /** The admin's own account id (the Users panel offers no change to it). */
       userId?: string;
+      /** Who is signed in, for the header: their name, else their address (SF-admin-005). */
+      name?: string;
     }
   | { kind: "mfa_required" }
   | { kind: "refused" }
@@ -90,7 +44,7 @@ function sessionRefused(refusal: Refusal): ConsoleSession {
   if (refusal.code === "auth.permission_denied" || refusal.kind === "sign-in") {
     return { kind: "refused" };
   }
-  if (refusal.kind === "signed-out-erased") announceSessionEnd(refusal.code);
+  // An erased account's session is ended by the call helper (announceSessionEnd).
   return { kind: "refusal", refusal };
 }
 
@@ -99,139 +53,12 @@ function permissionCheck(granted: readonly string[]): (code: string) => boolean 
   return (code) => granted.includes("*") || granted.includes(code);
 }
 
-interface ActionPlan {
-  message: string;
-  actions: { tool: string; input: Record<string, unknown> }[];
-  /** Searches left out: not this screen's tables, and not named (TASK-202, N-65). */
-  scopedOut?: string[];
-  /** Each account-targeting action's account, by its index (TASK-202, N-63). */
-  accounts?: Record<number, { email: string | null; found: boolean }>;
-}
-
-interface ExecutionResult {
-  tool: string;
-  success: boolean;
-  held?: boolean;
-  /** The catalog's key and values (TASK-206, N-102), rendered by ExecutionResultsPanel. */
-  result?: ShownText;
-  /** A search's rows (TASK-189), shown as a table by ExecutionResultsPanel. */
-  table?: SearchResultTable;
-  error?: string;
-  /** A users search applied to the Users screen's list (TASK-190): no second table. */
-  listed?: boolean;
-  /** An earlier users search of the plan (TASK-190 round 1): one line. */
-  earlier?: boolean;
-  /** A refused users search; the list kept its filters (TASK-190 rounds 1 and 2). */
-  keptFilters?: "previous" | "earlier";
-}
-
-const ENDPOINTS: Record<string, string> = {
-  // users: the Users panel reads its own pages (search, sort, paging — TASK-185).
-  roles: "/api/admin/roles",
-  entitlements: "/api/admin/entitlements",
-  audit: "/api/admin/audit?offset=0",
-  approvals: "/api/admin/approvals",
-  // Every setting with its metadata, for the edit panel (TASK-202, N-60).
-  "platform-config": "/api/admin/config?enhanced=true",
-  // The open erasures, operators only (TASK-202, S3-E19).
-  erasures: "/api/operator/erasures",
-  "password-policy": "/api/admin/password-policy",
-  "agent-registry": "/api/admin/agent-registry",
-  "per-account": "/api/admin/per-account",
-  "approval-policy": "/api/admin/approval-policy",
-  capabilities: "/api/admin/capabilities",
-  "capability-mapping": "/api/admin/capability-mapping",
-  tenant: "/api/admin/tenant",
-  tenants: "/api/operator/tenants",
-  jobs: "/api/operator/jobs",
-};
-
-/**
- * One read of a panel's data: undefined when the panel has none or the read failed; the
- * PANEL_UNAVAILABLE marker when the server answered 503 — the data could not be read, which the
- * panel must say, never show as an empty list (review 14 L-1).
- */
-async function fetchPanelData(panel: AdminSection): Promise<unknown> {
-  const endpoint = ENDPOINTS[panel];
-  if (!endpoint) return undefined;
-  const res = await apiFetch(endpoint);
-  if (res.status === 503) return PANEL_UNAVAILABLE;
-  return res.ok ? res.json() : undefined;
-}
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-/** A section's view: its data, and — for the views that change something — the admin's permissions. */
-type DataViewProps = { data: any; hasPermission: (code: string) => boolean };
-
-const DATA_VIEWS: Record<string, React.FC<DataViewProps>> = {
-  roles: RolesDataView,
-  entitlements: EntitlementsDataView,
-  audit: AuditDataView,
-  approvals: HeldActionsPanel,
-  "dual-control": DualControlKeysPanel,
-  "password-policy": PasswordPolicyDataView,
-  "platform-config": PlatformConfigPanel,
-  "agent-registry": TrustedAgentsPanel,
-  erasures: ErasuresPanel,
-  "per-account": PerAccountRestrictionsDataView,
-  "approval-policy": ApprovalPolicyDataView,
-  capabilities: CapabilitiesDataView,
-  "capability-mapping": CapabilityMappingDataView,
-  tenant: TenantSettingsView,
-  tenants: OperatorTenantsView,
-  jobs: OperatorJobsView,
-  "kill-switch": AdminKillSwitchView,
-};
-
-/**
- * Sections that are a form of their own, with no command bar: the kill switch (TASK-172), and the
- * moderation review queue (TASK-210 — the command bar has no moderation tool; the queue is decided
- * item by item, by a person).
- */
-const NO_PROMPT_BAR: ReadonlySet<string> = new Set(["kill-switch", "moderation"]);
-
-/**
- * A planned approve/reject (ADR-040 040c), sent to the deterministic decision route — real admin
- * identity and server-side enforcement — never the command-bar executor. Its answer in words
- * (TASK-202, N-62): recorded, or the refusal's catalog message.
- */
-async function decideFromPlan(decision: {
-  tool: string;
-  input: Record<string, unknown>;
-}): Promise<ExecutionResult> {
-  const id = String(decision.input.proposalId ?? "");
-  const res = await apiFetch(`/api/admin/approvals/${encodeURIComponent(id)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      decision: decision.tool === "approve_hold" ? "approve" : "reject",
-      source: decision.input.source,
-    }),
-  });
-  const refused = res.ok ? undefined : await readRefusal(res);
-  return {
-    tool: decision.tool,
-    success: res.ok,
-    result: res.ok ? shown("screens.admin_console.results.decision_recorded") : undefined,
-    // Refused: the catalog's sentence the route's coded answer carries (apiError).
-    error: refused?.message,
-  };
-}
-
 export default function AdminPage() {
-  const [currentPlan, setCurrentPlan] = useState<ActionPlan | null>(null);
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [results, setResults] = useState<ExecutionResult[] | null>(null);
-  const [panelData, setPanelData] = useState<Record<string, unknown>>({});
-  // The section chosen in the shell; none at first. What is open and read is `openPanel`, which
-  // waits for the session (TASK-184: the console opened "roles" at once and read it before the
-  // session answered — a 403 for anyone without admin_manage_roles, and for every admin before
-  // the second-factor check).
-  const [activePanel, setActivePanel] = useState<AdminSection | null>(null);
   const router = useRouter();
   const [session, setSession] = useState<ConsoleSession>({ kind: "loading" });
   const [sessionAttempt, setSessionAttempt] = useState(0);
+  // "Show details" (admins and super-admins only): in memory for this console session.
+  const [showDetails, setShowDetails] = useState(false);
   const { signOut, session: pageSession } = useAuth();
   useRefusalSessionEnd();
   // The sign-in session ended while the console was open (ADR-057 D5: a staff session idle for
@@ -240,72 +67,40 @@ export default function AdminPage() {
   const sessionEnded = pageSession?.status === "signed-out";
 
   // Which sections to show: the admin's own permissions (audit B-14 — every section was shown
-  // to every admin). Display only: each section's route checks its own permission.
+  // to every admin). Display only: each section's route checks its own permission. Through the
+  // one call helper: a refusal by its code, and no answer at all, are both said.
   useEffect(() => {
     let current = true;
-    void apiFetch("/api/admin/session")
-      .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as {
-          code?: unknown;
-          message?: unknown;
-          params?: unknown;
-          roleName?: unknown;
-          permissions?: unknown;
-          userId?: unknown;
-        };
-        if (!current) return;
-        if (res.ok && Array.isArray(body.permissions)) {
-          setSession({
-            kind: "admin",
-            roleName: typeof body.roleName === "string" ? body.roleName : "",
-            ...(typeof body.userId === "string" ? { userId: body.userId } : {}),
-            permissions: body.permissions.filter(
-              (p): p is string => typeof p === "string"
-            ),
-          });
-        } else {
-          setSession(
-            sessionRefused(
-              handleRefusal(body.code, {
-                message: body.message,
-                params: body.params,
-                status: res.status,
-              })
-            )
-          );
-        }
-      })
-      .catch(() => {
-        if (current) setSession({ kind: "refusal", refusal: networkRefusal() });
+    void adminCall("/api/admin/session").then((answer) => {
+      if (!current) return;
+      if (!answer.ok) {
+        setSession(sessionRefused(answer.refusal));
+        return;
+      }
+      const body = answer.body;
+      if (!Array.isArray(body.permissions)) {
+        setSession(sessionRefused(handleRefusal(undefined, { status: answer.status })));
+        return;
+      }
+      const text = (value: unknown) =>
+        typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+      const name = text(body.displayName) ?? text(body.email);
+      setSession({
+        kind: "admin",
+        roleName: typeof body.roleName === "string" ? body.roleName : "",
+        ...(typeof body.userId === "string" ? { userId: body.userId } : {}),
+        ...(name ? { name } : {}),
+        permissions: body.permissions.filter((p): p is string => typeof p === "string"),
       });
+    });
     return () => {
       current = false;
     };
   }, [sessionAttempt]);
 
-  const showPanelData = useCallback((panel: AdminSection, data: unknown) => {
-    if (data !== undefined) setPanelData((prev) => ({ ...prev, [panel]: data }));
-  }, []);
-
-  /** Reloads a panel's data (after an action). */
-  // The Users panel reads its own pages; a change made from the command bar re-reads them.
-  const [usersRefresh, setUsersRefresh] = useState(0);
-  // The command bar's users-search filters, applied to the Users list (TASK-190).
-  const [userFilters, setUserFilters] = useState<UserListFilters>({});
-  // Bumped on each hand-off: the Users panel clears its own search box (TASK-190 round 1).
-  const [usersHandoff, setUsersHandoff] = useState(0);
-  // "Show details" (admins and super-admins only): in memory for this console session.
-  const [showDetails, setShowDetails] = useState(false);
-  const refreshData = useCallback(
-    async (panel: AdminSection) => {
-      if (panel === "users") setUsersRefresh((n) => n + 1);
-      showPanelData(panel, await fetchPanelData(panel));
-    },
-    [showPanelData]
-  );
-
-  // The sections this admin may open, in the shell's order (AdminShell's one mapping); none until
-  // the session has answered "admin".
+  // The sections this admin may open, in the registry's order; none until the session has
+  // answered "admin". The shell opens the first (or the one the address names) and the section's
+  // console reads only that one.
   const permitted = useMemo(
     () =>
       session.kind === "admin"
@@ -313,169 +108,21 @@ export default function AdminPage() {
         : [],
     [session]
   );
-
-  // The open panel: the one chosen, while the session permits it, else the first permitted
-  // section; none while nothing is permitted.
-  const openPanel =
-    activePanel !== null && permitted.includes(activePanel)
-      ? activePanel
-      : (permitted[0] ?? null);
-
-  // The open panel's data — so only ever a section the session permits; a response for a panel
-  // since left is dropped.
-  useEffect(() => {
-    if (openPanel === null) return;
-    let current = true;
-    void fetchPanelData(openPanel).then((data) => {
-      if (current) showPanelData(openPanel, data);
-    });
-    return () => {
-      current = false;
-    };
-  }, [openPanel, showPanelData]);
-
-  const handleConfirm = async (actions: ActionPlan["actions"]) => {
-    setIsExecuting(true);
-    try {
-      // ADR-040 040c: an approve/reject action routes through the deterministic decision
-      // route (real admin identity + server-side enforcement), NOT the command-bar executor
-      // (which runs under a non-authenticated actor and cannot clear a hold).
-      const decision = actions.find(
-        (a) => a.tool === "approve_hold" || a.tool === "reject_hold"
-      );
-      if (decision) {
-        setResults([await decideFromPlan(decision)]);
-        setCurrentPlan(null);
-        if (openPanel !== null) await refreshData(openPanel);
-        return;
-      }
-      const res = await apiFetch("/api/admin/ai/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actions }),
-      });
-      if (res.ok) {
-        const { results: execResults } = (await res.json()) as {
-          results: ExecutionResult[];
-        };
-        const applied = applyUsersSearch(
-          openPanel,
-          execResults ?? [],
-          actions,
-          userFilters
-        );
-        setResults(applied.results);
-        if (applied.filters) {
-          setUserFilters(applied.filters);
-          setUsersHandoff((n) => n + 1);
-        }
-        setCurrentPlan(null);
-        if (openPanel !== null) await refreshData(openPanel);
-      } else {
-        // The plan refused as a whole (no result per action — its shape, the caller, a limit):
-        // said as the shared handler words it, never dropped silently (round 11, item 1). A held
-        // plan is 202, read above with its results.
-        const refusal = await readRefusal(res);
-        setResults([
-          { tool: actions[0]?.tool ?? "", success: false, error: refusal.message },
-        ]);
-      }
-    } finally {
-      setIsExecuting(false);
-    }
-  };
-
-  function renderSection(section: AdminSection): React.ReactNode {
-    const DataView = DATA_VIEWS[section];
-    const title = sectionTitle(section);
-    const allowed =
-      session.kind === "admin" ? permissionCheck(session.permissions) : () => false;
-    // "Show details" only where it changes something (TASK-190 round 1, item 5): the Users screen,
-    // and a section showing a search table with an id column.
-    const detailsOffered =
-      session.kind === "admin" &&
-      mayShowDetails(session.roleName) &&
-      (section === "users" ||
-        (results ?? []).some((r) => r.success && r.table?.columns.includes("id")));
-    const showIds = detailsOffered && showDetails;
-
-    return (
-      <div>
-        <div className="mb-4 flex items-center justify-between gap-4">
-          <h2 className="text-xl font-bold text-white">{title}</h2>
-          {detailsOffered && (
-            <ShowDetailsToggle pressed={showDetails} onChange={setShowDetails} />
-          )}
-        </div>
-
-        {!NO_PROMPT_BAR.has(section) && (
-          <AdminPromptBar
-            panel={section}
-            placeholder={sectionPlaceholder(section, allowed)}
-            onPlanReceived={(plan) => {
-              setCurrentPlan(plan);
-              setResults(null);
-            }}
-          />
-        )}
-
-        {currentPlan && (
-          <ActionConfirmPanel
-            plan={currentPlan}
-            onConfirm={handleConfirm}
-            onCancel={() => setCurrentPlan(null)}
-            isExecuting={isExecuting}
-          />
-        )}
-
-        {results && (
-          <ExecutionResultsPanel
-            // A users search is "in the list below" only on the Users screen.
-            results={resultsFor(section, results)}
-            showIds={showIds}
-            onDismiss={() => setResults(null)}
-          />
-        )}
-
-        {section === "users" && (
-          <UsersPanel
-            hasPermission={allowed}
-            refreshKey={usersRefresh}
-            selfId={session.kind === "admin" ? session.userId : undefined}
-            filters={userFilters}
-            onFiltersChange={(next) => {
-              // The search's row no longer describes the list: dismissed (round 1, item 1).
-              setUserFilters(next);
-              setResults((current) => afterFiltersChanged(current));
-            }}
-            showIds={showIds}
-            handoff={usersHandoff}
-          />
-        )}
-
-        {/* The review queue reads and acts on its own routes (can_moderate, TASK-210). */}
-        {section === "moderation" && <ReviewDashboard variant="dark" />}
-
-        {DataView &&
-          (isPanelUnavailable(panelData[section]) ? (
-            <PanelUnavailable panel={title} onRetry={() => void refreshData(section)} />
-          ) : (
-            <DataView data={panelData[section]} hasPermission={allowed} />
-          ))}
-      </div>
-    );
-  }
+  const allowed = useMemo(
+    () => (session.kind === "admin" ? permissionCheck(session.permissions) : () => false),
+    [session]
+  );
 
   // Nobody, or someone without administrative access: no console shell at all (audit B-14).
   if (session.kind === "refused" || sessionEnded) {
     return (
       <main className="mx-auto max-w-md p-8 text-center">
-        <p className="mb-4 text-sm text-gray-300">
+        <p className={`mb-4 text-sm ${TEXT.quiet}`}>
           {renderMessage("screens.admin_console.refused")}
         </p>
         <button
           type="button"
-          className="rounded bg-blue-700 px-4 py-2 text-sm text-white"
+          className={BUTTON.primary}
           onClick={() => router.push("/auth")}
         >
           {renderMessage("screens.admin_console.sign_in")}
@@ -515,11 +162,8 @@ export default function AdminPage() {
   // Nothing is shown, and nothing read, until the session has answered.
   if (session.kind === "loading") {
     return (
-      <main
-        role="status"
-        className="mx-auto max-w-md p-8 text-center text-sm text-gray-300"
-      >
-        {renderMessage("screens.admin_console.loading")}
+      <main className="mx-auto max-w-md p-8 text-center">
+        <Reading text={renderMessage("screens.admin_console.loading")} />
       </main>
     );
   }
@@ -538,7 +182,7 @@ export default function AdminPage() {
         />
         <button
           type="button"
-          className="mt-4 rounded bg-blue-700 px-4 py-2 text-sm text-white"
+          className={`mt-4 ${BUTTON.primary}`}
           onClick={() => {
             void signOut().then((ended) => {
               if (ended) router.push("/auth");
@@ -551,15 +195,20 @@ export default function AdminPage() {
     );
   }
 
+  const role = session.roleName
+    ? // The role as the Users screen reads one ("super_admin" → "Super admin").
+      readableRole(session.roleName, null)
+    : renderMessage("screens.admin_console.admin_fallback");
+  const admin = {
+    roleName: session.roleName,
+    ...(session.userId ? { userId: session.userId } : {}),
+  };
   return (
     <AdminShell
-      adminName={
-        // The role as the Users screen reads one ("super_admin" → "Super admin").
-        session.roleName
-          ? readableRole(session.roleName, null)
-          : renderMessage("screens.admin_console.admin_fallback")
-      }
-      hasPermission={permissionCheck(session.permissions)}
+      // Who is signed in, then their role (SF-admin-005: it named only the role).
+      adminName={session.name ?? role}
+      adminRole={session.name ? role : undefined}
+      hasPermission={allowed}
       onSignOut={() => {
         // The session ends — the server revokes it and this browser forgets its tokens — then a
         // full load to sign-in (TASK-184: it only left for "/", still signed in).
@@ -571,9 +220,18 @@ export default function AdminPage() {
             if (ended) leaveConsole("/auth");
           });
       }}
-      onSectionChange={(section) => setActivePanel(section)}
     >
-      {renderSection}
+      {(section) => (
+        // Each section has its own console: its plan, its outcomes and its read are its own.
+        <SectionConsole
+          key={section}
+          section={section}
+          admin={admin}
+          hasPermission={allowed}
+          showDetails={showDetails}
+          onShowDetails={setShowDetails}
+        />
+      )}
     </AdminShell>
   );
 }

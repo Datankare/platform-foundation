@@ -253,7 +253,11 @@ describe("the Users list applies the command bar's filters, as chips", () => {
     );
     const { rerender } = render(<Holder initial={{ role: "free" }} handoff={1} />);
     await screen.findByText("u0@example.com");
-    fireEvent.click(screen.getByRole("button", { name: u("next") }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: renderMessage("screens.admin_console.ui.table.next"),
+      })
+    );
     await waitFor(() => expect(listReads().at(-1)!.get("offset")).toBe("25"));
     await screen.findByText("u0@example.com");
     fireEvent.click(screen.getByText("u3@example.com"));
@@ -434,7 +438,7 @@ describe("the results row of a users search on the Users screen: one line, no ta
     expect(within(grid).queryByText(MOD.createdAt)).toBeNull();
   });
 
-  it("round 1 (4): only `id` is behind Show details; actor and target as on the Audit log", () => {
+  it("round 1 (4): ids and references are behind Show details", () => {
     const ACTOR = "aaaaaaaa-1111-4111-8111-111111111111";
     const TARGET = "bbbbbbbb-2222-4222-8222-222222222222";
     const audit = {
@@ -454,25 +458,30 @@ describe("the results row of a users search on the Users screen: one line, no ta
     const { rerender } = render(
       <ExecutionResultsPanel results={[audit]} onDismiss={jest.fn()} />
     );
-    let grid = screen.getByRole("table", { name: "Search results from audit_log" });
+    let grid = screen.getByRole("table", { name: "Search results from the audit log" });
+    // TASK-216 (SF-admin-024): a reference to another row is a detail like the row's own id —
+    // it was shown whole to everyone. (An audit search's own answer names its actor and target
+    // by address in their own columns — handlers/search.ts withAccountNames.) The action is
+    // named, never the stored code.
     expect(
       within(grid)
         .getAllByRole("columnheader")
         .map((h) => h.textContent)
-    ).toEqual(["Action", "Actor", "Target", "Created"]);
-    // TASK-202 (N-63): an id with no name beside it is shown whole (an audit search's own
-    // answer names it by address in its actor column — handlers/search.ts withAccountNames).
-    expect(within(grid).getByText(ACTOR)).toHaveAttribute("title", ACTOR);
-    expect(within(grid).getByText(TARGET)).toHaveAttribute("title", TARGET);
+    ).toEqual(["Action", "Created"]);
+    expect(within(grid).getByText("Role changed")).toBeDefined();
+    expect(within(grid).queryByText(ACTOR)).toBeNull();
+    expect(within(grid).queryByText(TARGET)).toBeNull();
     expect(within(grid).queryByText(MOD_ID)).toBeNull();
     rerender(<ExecutionResultsPanel results={[audit]} showIds onDismiss={jest.fn()} />);
-    grid = screen.getByRole("table", { name: "Search results from audit_log" });
+    grid = screen.getByRole("table", { name: "Search results from the audit log" });
     expect(
       within(grid)
         .getAllByRole("columnheader")
         .map((h) => h.textContent)
     ).toEqual(["Id", "Action", "Actor", "Target", "Created"]);
     expect(within(grid).getByText(MOD_ID)).toBeDefined();
+    expect(within(grid).getByText(ACTOR)).toBeDefined();
+    expect(within(grid).getByText(TARGET)).toBeDefined();
   });
 
   it("readable cells: status capitalised, role in sentence case, JSON left as JSON", () => {

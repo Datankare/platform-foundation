@@ -13,11 +13,20 @@
  *   erase account  POST /api/admin/gdpr, after a confirmation — held (202) for a second admin's
  *                  approval, shown as held (TASK-194).
  *
- * Which actions are shown comes from USER_ROW_ACTION_PERMISSIONS, the map the routes' guards are
- * checked against (__tests__/admin-authorization-matrix.test.ts). Display only: each route
+ * Which actions are offered comes from USER_ROW_ACTION_PERMISSIONS, the map the routes' guards are
+ * checked against (__tests__/admin-authorization-matrix.test.ts): one the admin's permissions do
+ * not allow is shown disabled, saying which permission it needs (the shared gate). Display only: each route
  * refuses an admin without the permission whatever this shows. Every refusal is shown through
  * the shared handler (readRefusal → RefusalNotice; a 503 read as "could not be read", never an
  * empty list), so each code the routes can return has its screen (refusal-coverage).
+ *
+ * TASK-216 (SF-admin-040 to 043, and the Users side of 036): the screen is built from the console's
+ * shared parts — the list is the one table (it scrolls inside its card; ids only with "Show
+ * details"; "1–25 of 312" from the route's count), its read goes through PanelState, the detail
+ * opens beside the list (in its place on a narrow screen) with focus, a role change is confirmed
+ * naming the account and "from → to", an erasure's confirmation asks which kind of reason it has,
+ * and every outcome — changed, held for a second administrator, refused — is listed with whom it
+ * was for and what happens next, until dismissed.
  *
  * Display: a missing display name falls back to the address, then "—". A missing address reads
  * "Unknown (never signed in since <created>)" only when no sign-in is recorded; an account that
@@ -28,18 +37,8 @@
  * 2026". Every word is from the catalog (screens.admin_console.users).
  */
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { apiFetch } from "@/platform/auth/api-fetch";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { renderMessage } from "@/platform/errors/messages";
-import {
-  announceSessionEnd,
-  handleRefusal,
-  networkRefusal,
-  readRefusal,
-  type Refusal,
-} from "@/platform/errors/refusal";
-import { RefusalNotice } from "@/components/refusal/RefusalNotice";
-import { PanelUnavailable } from "@/components/admin/PanelUnavailable";
 import { sectionTitle } from "@/components/admin/AdminShell";
 import { USER_ROW_ACTION_PERMISSIONS } from "@/app/api/admin/ai/tool-permissions";
 import type { SortDirection, UserSort } from "@/app/api/admin/users/listing";
@@ -48,14 +47,33 @@ import {
   type UserListFilter,
 } from "@/app/api/admin/ai/search-filters";
 import { PROTECTED_ROLES } from "@/platform/auth/role-governance";
+import { PURGE_REASONS } from "@/platform/gdpr/types";
 import {
   formatDate,
   formatDateTime,
-  fullTimestamp,
   readableRole,
   readableStatus,
   shownStatus,
 } from "@/components/admin/admin-format";
+import { adminCall } from "@/components/admin/ui/admin-call";
+import { AdminTable, type Column } from "@/components/admin/ui/AdminTable";
+import { ConfirmStep } from "@/components/admin/ui/ConfirmStep";
+import {
+  DetailFacts,
+  DetailLayout,
+  DetailPanel,
+} from "@/components/admin/ui/DetailPanel";
+import { Field, Select, TextInput } from "@/components/admin/ui/Field";
+import {
+  OutcomeList,
+  outcome,
+  refusedOutcome,
+  type OutcomeEntry,
+} from "@/components/admin/ui/Outcome";
+import { PanelState, usePanelSearch } from "@/components/admin/ui/PanelState";
+import { GatedButton, needsPermission } from "@/components/admin/ui/PermissionGate";
+import { IdDetail } from "@/components/admin/ui/Ref";
+import { BUTTON, TEXT, TONE } from "@/components/admin/ui/tokens";
 
 const t = (key: string, values?: Record<string, string | number>) =>
   renderMessage(`screens.admin_console.users.${key}`, values);
@@ -92,6 +110,9 @@ interface UsersPage {
   readonly users: readonly ListedUser[];
   readonly roles: readonly ListedRole[];
   readonly hasMore: boolean;
+  /** How many accounts match in all (the route's count); not a number when it sent none. */
+  readonly total: unknown;
+  readonly totalCapped: boolean;
 }
 
 const SORT_OPTIONS: readonly { sort: UserSort; dir: SortDirection; key: string }[] = [
@@ -130,38 +151,6 @@ export function shownEmail(
     ? t("unknown_not_received", { date: formatDate(user.lastSignInAt) })
     : t("unknown_email", { date: formatDate(user.createdAt) });
 }
-
-function shownRefusal(refusal: Refusal): Refusal {
-  if (refusal.kind === "signed-out-erased") announceSessionEnd(refusal.code);
-  return refusal;
-}
-
-type Body = Record<string, unknown>;
-
-/** A response's JSON body, read once ({} when it has none). */
-async function bodyOf(res: Response): Promise<Body> {
-  const parsed = (await res.json().catch(() => ({}))) as unknown;
-  return parsed && typeof parsed === "object" ? (parsed as Body) : {};
-}
-
-/** The refusal a refused action's body carries (the shared handler decides what it needs). */
-function refusalOf(res: Response, body: Body): Refusal {
-  return shownRefusal(
-    handleRefusal(body.code, {
-      message: typeof body.message === "string" ? body.message : body.error,
-      params: body.params,
-      status: res.status,
-    })
-  );
-}
-
-const BUTTON =
-  "rounded bg-blue-700 px-3 py-1.5 text-sm text-white hover:bg-blue-800 disabled:opacity-40";
-const QUIET =
-  "rounded border border-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 disabled:opacity-40";
-const th =
-  "text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800";
-const td = "py-3 px-4 text-gray-300 border-b border-gray-800/50";
 
 /**
  * The command bar's users-search filters, as the server validated them (TASK-190): the list
@@ -270,14 +259,8 @@ export function UsersPanel({
   useClearedOnHandoff(handoff ?? 0, setDraft, setQuery);
   const [order, setOrder] = useState(0);
   const [offset, setOffset] = useState(0);
-  const [reads, setReads] = useState(0);
-  const [page, setPage] = useState<UsersPage | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-  const [refusal, setRefusal] = useState<Refusal | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Each row's open button, so closing the detail panel returns focus to the row it came from.
-  const rowButtons = useRef(new Map<string, HTMLButtonElement>());
-  const returnTo = useRef<string | null>(null);
+  const [outcomes, setOutcomes] = useState<OutcomeEntry[]>([]);
 
   const { sort, dir } = SORT_OPTIONS[order]!;
   const applied = listFilters(filters);
@@ -291,287 +274,209 @@ export function UsersPanel({
     setOffset(0);
     setSelectedId(null);
   }
-  // The read the screen asks for now, and the last one answered: loading while they differ.
-  const want = [sort, dir, offset, query, reads, refreshKey, filterKey].join("\u0000");
-  const [answered, setAnswered] = useState<string | null>(null);
-  const loading = answered !== want;
 
-  useEffect(() => {
-    if (selectedId !== null || returnTo.current === null) return;
-    rowButtons.current.get(returnTo.current)?.focus();
-    returnTo.current = null;
-  }, [selectedId]);
+  // TASK-215 (audit A-17): the search text and the filters go in the body of a POST, never in
+  // the URL — a URL is kept by every proxy and access log on the way.
+  const search = useMemo(
+    () =>
+      JSON.stringify({
+        sort,
+        dir,
+        limit: USERS_PAGE_SIZE,
+        offset,
+        ...(query ? { q: query } : {}),
+        ...Object.fromEntries(JSON.parse(filterKey) as [string, string | number][]),
+      }),
+    [sort, dir, offset, query, filterKey]
+  );
+  const { read, reload } = usePanelSearch("/api/admin/users/search", search, refreshKey);
 
-  useEffect(() => {
-    let current = true;
-    // TASK-215 (audit A-17): the search text and the filters go in the body of a POST, never in
-    // the URL — a URL is kept by every proxy and access log on the way.
-    const search = {
-      sort,
-      dir,
-      limit: USERS_PAGE_SIZE,
-      offset,
-      ...(query ? { q: query } : {}),
-      ...Object.fromEntries(JSON.parse(filterKey) as [string, string | number][]),
-    };
-    void apiFetch("/api/admin/users/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(search),
-    })
-      .then(async (res) => {
-        if (!current) return;
-        if (res.ok) {
-          const body = (await res.json().catch(() => ({}))) as {
-            users?: unknown;
-            roles?: unknown;
-            page?: { hasMore?: unknown };
-          };
-          if (!current) return;
-          setAnswered(want);
-          setUnavailable(false);
-          setRefusal(null);
-          setPage({
-            users: Array.isArray(body.users) ? (body.users as ListedUser[]) : [],
-            roles: Array.isArray(body.roles) ? (body.roles as ListedRole[]) : [],
-            hasMore: body.page?.hasMore === true,
-          });
-          return;
+  const page: UsersPage | null =
+    read.phase === "ready"
+      ? {
+          users: Array.isArray(read.body.users) ? (read.body.users as ListedUser[]) : [],
+          roles: Array.isArray(read.body.roles) ? (read.body.roles as ListedRole[]) : [],
+          hasMore:
+            (read.body.page as { hasMore?: unknown } | undefined)?.hasMore === true,
+          total: (read.body.page as { total?: unknown } | undefined)?.total,
+          totalCapped:
+            (read.body.page as { totalCapped?: unknown } | undefined)?.totalCapped ===
+            true,
         }
-        const refused = await readRefusal(res);
-        if (!current) return;
-        setAnswered(want);
-        // A refused re-read never leaves the previous page on screen as if it were current.
-        setPage(null);
-        setSelectedId(null);
-        if (res.status === 503 && refused.code === "service.unavailable") {
-          setUnavailable(true);
-          setRefusal(null);
-        } else {
-          setUnavailable(false);
-          setRefusal(shownRefusal(refused));
-        }
-      })
-      .catch(() => {
-        if (!current) return;
-        setAnswered(want);
-        setPage(null);
-        setSelectedId(null);
-        setRefusal(networkRefusal());
-      });
-    return () => {
-      current = false;
-    };
-  }, [sort, dir, offset, query, reads, refreshKey, filterKey, want]);
-
-  const reload = useCallback(() => setReads((n) => n + 1), []);
-
-  if (unavailable) {
-    return <PanelUnavailable panel={sectionTitle("users")} onRetry={reload} />;
-  }
-
+      : null;
+  const loading = read.phase === "loading" || (read.phase === "ready" && read.refreshing);
   const users = page?.users ?? [];
   const selected = users.find((u) => u.id === selectedId) ?? null;
 
-  return (
-    <div className="space-y-4">
-      <form
-        role="search"
-        className="flex flex-wrap items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setOffset(0);
-          setSelectedId(null);
-          setQuery(draft.trim());
-          onFiltersChange?.({ ...filters });
-        }}
-      >
-        <label className="flex flex-1 flex-col text-xs text-gray-400">
-          {t("search_label")}
-          <input
-            type="search"
-            value={draft}
-            maxLength={100}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={t("search_placeholder")}
-            className="mt-1 rounded-lg border border-gray-700 bg-[#0a0f1e] px-3 py-2 text-sm text-white"
-          />
-        </label>
-        <button type="submit" className={BUTTON}>
-          {t("search")}
+  const columns: Column<ListedUser>[] = [
+    { id: "id", header: t("col_id"), kind: "id", value: (u) => u.id },
+    {
+      id: "email",
+      header: t("col_email"),
+      cell: (u) => (
+        <button
+          type="button"
+          className={`${BUTTON.link} break-words`}
+          aria-label={t("open_row", { name: rowLabel(u) })}
+          data-open-row={u.id}
+          onClick={() => setSelectedId(u.id)}
+        >
+          {shownEmail(u)}
         </button>
-        {query && (
-          <button
-            type="button"
-            className={QUIET}
-            onClick={() => {
-              setDraft("");
-              setQuery("");
-              setOffset(0);
-            }}
-          >
-            {t("clear")}
-          </button>
-        )}
-        <label className="flex flex-col text-xs text-gray-400">
-          {t("sort_label")}
-          <select
-            value={order}
-            onChange={(e) => {
-              setOrder(Number(e.target.value));
-              setOffset(0);
-            }}
-            className="mt-1 rounded-lg border border-gray-700 bg-[#0a0f1e] px-3 py-2 text-sm text-white"
-          >
-            {SORT_OPTIONS.map((o, i) => (
-              <option key={o.key} value={i}>
-                {t(o.key)}
-              </option>
-            ))}
-          </select>
-        </label>
-      </form>
+      ),
+    },
+    { id: "name", header: t("col_name"), value: (u) => shownName(u) },
+    {
+      id: "role",
+      header: t("col_role"),
+      value: (u) => readableRole(u.roleName, u.roleDisplayName),
+    },
+    { id: "status", header: t("col_status"), value: (u) => shownStatus(u) },
+    {
+      id: "verified",
+      header: t("col_verified"),
+      secondary: true,
+      value: (u) => (u.emailVerified ? t("yes") : t("no")),
+    },
+    {
+      id: "created",
+      header: t("col_created"),
+      kind: "date",
+      secondary: true,
+      value: (u) => u.createdAt,
+    },
+    {
+      id: "last_sign_in",
+      header: t("col_last_sign_in"),
+      kind: "date",
+      value: (u) => u.lastSignInAt,
+    },
+  ];
 
-      <FilterChips
-        applied={applied}
-        // Undefined only while the first page is read: a role chip waits for the roles (round 2, 9).
-        roles={page?.roles ?? (loading ? undefined : [])}
-        onRemove={(name) => {
-          const next: UserListFilters = { ...filters };
-          delete next[name];
-          onFiltersChange?.(next);
-        }}
-        onClear={() => onFiltersChange?.({})}
+  return (
+    <div className="min-w-0 space-y-4">
+      <OutcomeList
+        outcomes={outcomes}
+        label={t("outcomes_label")}
+        onDismiss={(id) => setOutcomes((shown) => shown.filter((o) => o.id !== id))}
       />
 
-      {refusal && <RefusalNotice refusal={refusal} onRetry={reload} />}
+      <DetailLayout
+        detail={
+          selected && page ? (
+            <UserDetail
+              key={selected.id}
+              user={selected}
+              roles={page.roles}
+              hasPermission={hasPermission}
+              isSelf={selected.id === selfId}
+              showId={showIds}
+              onClose={() => setSelectedId(null)}
+              onChanged={reload}
+              onOutcome={(entry) => setOutcomes((shown) => [...shown, entry])}
+            />
+          ) : null
+        }
+      >
+        <div className="min-w-0 space-y-4">
+          <form
+            role="search"
+            className="flex flex-wrap items-end gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setOffset(0);
+              setSelectedId(null);
+              setQuery(draft.trim());
+              onFiltersChange?.({ ...filters });
+            }}
+          >
+            <Field label={t("search_label")} className="flex-1 basis-56">
+              {(control) => (
+                <TextInput
+                  {...control}
+                  type="search"
+                  value={draft}
+                  maxLength={100}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder={t("search_placeholder")}
+                />
+              )}
+            </Field>
+            <button type="submit" className={BUTTON.primary}>
+              {t("search")}
+            </button>
+            {query && (
+              <button
+                type="button"
+                className={BUTTON.quiet}
+                onClick={() => {
+                  setDraft("");
+                  setQuery("");
+                  setOffset(0);
+                }}
+              >
+                {t("clear")}
+              </button>
+            )}
+          </form>
 
-      {loading && !refusal && (
-        <p role="status" className="text-sm text-gray-400">
-          {t("loading")}
-        </p>
-      )}
+          <FilterChips
+            applied={applied}
+            // Undefined only while the first page is read: a role chip waits for the roles (round 2, 9).
+            roles={page?.roles ?? (loading ? undefined : [])}
+            onRemove={(name) => {
+              const next: UserListFilters = { ...filters };
+              delete next[name];
+              onFiltersChange?.(next);
+            }}
+            onClear={() => onFiltersChange?.({})}
+          />
 
-      {page && (
-        <div className="overflow-x-auto rounded-xl border border-gray-800 bg-[#111827]">
-          <table className="w-full border-collapse text-left text-sm">
-            <thead>
-              <tr>
-                {showIds && <th className={th}>{t("col_id")}</th>}
-                <th className={th}>{t("col_email")}</th>
-                <th className={th}>{t("col_name")}</th>
-                <th className={th}>{t("col_role")}</th>
-                <th className={th}>{t("col_status")}</th>
-                <th className={th}>{t("col_verified")}</th>
-                <th className={th}>{t("col_created")}</th>
-                <th className={th}>{t("col_last_sign_in")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr
-                  key={u.id}
-                  onClick={() => setSelectedId(u.id)}
-                  aria-current={u.id === selectedId ? "true" : undefined}
-                  className={`cursor-pointer hover:bg-gray-800/40 ${
-                    u.id === selectedId ? "bg-blue-900/20" : ""
-                  }`}
-                >
-                  {showIds && (
-                    <td className={td}>
-                      <code className="text-xs">{u.id}</code>
-                    </td>
-                  )}
-                  <td className={td}>
-                    <button
-                      type="button"
-                      className="text-left text-blue-300 hover:underline"
-                      aria-label={t("open_row", { name: rowLabel(u) })}
-                      ref={(el) => {
-                        if (el) rowButtons.current.set(u.id, el);
-                        else rowButtons.current.delete(u.id);
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedId(u.id);
-                      }}
-                    >
-                      {shownEmail(u)}
-                    </button>
-                  </td>
-                  <td className={td}>{shownName(u)}</td>
-                  <td className={td} title={u.roleName}>
-                    {readableRole(u.roleName, u.roleDisplayName)}
-                  </td>
-                  <td className={td}>{shownStatus(u)}</td>
-                  <td className={td}>{u.emailVerified ? t("yes") : t("no")}</td>
-                  <td className={td} title={fullTimestamp(u.createdAt)}>
-                    {formatDate(u.createdAt)}
-                  </td>
-                  <td
-                    className={td}
-                    title={u.lastSignInAt ? fullTimestamp(u.lastSignInAt) : undefined}
-                  >
-                    {u.lastSignInAt ? formatDate(u.lastSignInAt) : t("never")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {users.length === 0 && (
-            <p className="py-8 text-center text-sm text-gray-400">
-              {applied.length > 0
-                ? t("empty_filtered")
-                : query
-                  ? t("empty_search", { query })
-                  : t("empty")}
-            </p>
-          )}
+          <PanelState read={read} panel={sectionTitle("users")} onReload={reload}>
+            {() => (
+              <AdminTable
+                caption={sectionTitle("users")}
+                columns={columns}
+                rows={users}
+                rowKey={(u) => u.id}
+                showIds={showIds}
+                compact={selected !== null}
+                selectedKey={selectedId}
+                onRowClick={(u) => setSelectedId(u.id)}
+                empty={
+                  applied.length > 0
+                    ? t("empty_filtered")
+                    : query
+                      ? t("empty_search", { query })
+                      : t("empty")
+                }
+                sort={{
+                  label: t("sort_label"),
+                  value: String(order),
+                  options: SORT_OPTIONS.map((o, i) => ({
+                    id: String(i),
+                    label: t(o.key),
+                  })),
+                  onChange: (id) => {
+                    setOrder(Number(id));
+                    setOffset(0);
+                  },
+                }}
+                page={{
+                  offset,
+                  size: USERS_PAGE_SIZE,
+                  shown: users.length,
+                  hasMore: page?.hasMore === true,
+                  total: typeof page?.total === "number" ? page.total : null,
+                  totalCapped: page?.totalCapped === true,
+                  busy: loading,
+                  onPage: setOffset,
+                }}
+              />
+            )}
+          </PanelState>
         </div>
-      )}
-
-      {page && (offset > 0 || page.hasMore) && (
-        <nav className="flex items-center gap-3 text-sm text-gray-400">
-          <button
-            type="button"
-            className={QUIET}
-            disabled={loading || offset === 0}
-            onClick={() => setOffset(Math.max(0, offset - USERS_PAGE_SIZE))}
-          >
-            {t("previous")}
-          </button>
-          <span>
-            {t("page_range", {
-              from: users.length ? offset + 1 : offset,
-              to: offset + users.length,
-            })}
-          </span>
-          <button
-            type="button"
-            className={QUIET}
-            disabled={loading || !page.hasMore}
-            onClick={() => setOffset(offset + USERS_PAGE_SIZE)}
-          >
-            {t("next")}
-          </button>
-        </nav>
-      )}
-
-      {selected && page && (
-        <UserDetail
-          key={selected.id}
-          user={selected}
-          roles={page.roles}
-          hasPermission={hasPermission}
-          isSelf={selected.id === selfId}
-          showId={showIds}
-          onClose={() => {
-            returnTo.current = selected.id;
-            setSelectedId(null);
-          }}
-          onChanged={reload}
-        />
-      )}
+      </DetailLayout>
     </div>
   );
 }
@@ -596,7 +501,7 @@ function FilterChips({
       aria-label={t("filters_label")}
       className="flex flex-wrap items-center gap-2"
     >
-      <span className="text-xs text-gray-400">{t("filters_label")}</span>
+      <span className={`text-xs ${TEXT.faint}`}>{t("filters_label")}</span>
       {applied.map(([name, value]) => {
         // A role chip is named once the roles are read — "Role: …" until then — so its words
         // never change on screen (round 2, item 9); a read that failed names it from the value.
@@ -619,7 +524,7 @@ function FilterChips({
       })}
       <button
         type="button"
-        className="text-xs text-gray-400 underline hover:text-gray-200"
+        className={`text-xs underline ${TEXT.quiet}`}
         onClick={onClear}
       >
         {t("filters_clear_all")}
@@ -641,24 +546,23 @@ function usePendingErasure(
   useEffect(() => {
     if (!mayErase) return;
     let live = true;
-    void apiFetch(`/api/admin/gdpr?userId=${encodeURIComponent(userId)}`)
-      .then(async (res): Promise<Body> => (res.ok ? bodyOf(res) : {}))
-      .then((body) => {
-        if (live && body.pending && typeof body.pending === "object") setPending(true);
-      })
-      .catch(() => undefined);
+    void adminCall(`/api/admin/gdpr?userId=${encodeURIComponent(userId)}`).then(
+      (answer) => {
+        if (
+          live &&
+          answer.ok &&
+          answer.body.pending &&
+          typeof answer.body.pending === "object"
+        )
+          setPending(true);
+      }
+    );
     return () => {
       live = false;
     };
   }, [mayErase, userId]);
   return [pending, setPending];
 }
-
-type Outcome =
-  | { readonly kind: "done"; readonly text: string }
-  | { readonly kind: "info"; readonly text: string }
-  | { readonly kind: "held"; readonly text: string }
-  | { readonly kind: "refused"; readonly refusal: Refusal };
 
 function UserDetail({
   user,
@@ -668,26 +572,27 @@ function UserDetail({
   showId,
   onClose,
   onChanged,
+  onOutcome,
 }: {
   readonly user: ListedUser;
   readonly roles: readonly ListedRole[];
   readonly hasPermission: (code: string) => boolean;
   /** The admin's own account: no role change or erasure (the routes refuse both). */
   readonly isSelf: boolean;
-  /** "Show details" is on: the account id is shown (TASK-190 — ids are hidden by default). */
+  /** "Show details" is on: the account id and the role's stored name are shown (TASK-190). */
   readonly showId: boolean;
   readonly onClose: () => void;
   readonly onChanged: () => void;
+  /** What became of an action here: listed by the screen, kept until dismissed. */
+  readonly onOutcome: (entry: OutcomeEntry) => void;
 }) {
   const [roleId, setRoleId] = useState(user.roleId);
   const [busy, setBusy] = useState(false);
-  const [outcome, setOutcome] = useState<Outcome | null>(null);
-  const [confirmErase, setConfirmErase] = useState(false);
-  const focusEraseNext = useRef(false);
-  const heading = useRef<HTMLHeadingElement>(null);
-  const dialog = useRef<HTMLDivElement>(null);
+  const [asking, setAsking] = useState<"role" | "erase" | null>(null);
+  const [roleProblem, setRoleProblem] = useState<string | null>(null);
+  // What opened each confirmation: focus returns there when it is cancelled.
+  const roleButton = useRef<HTMLButtonElement>(null);
   const eraseButton = useRef<HTMLButtonElement>(null);
-  const heldNote = useRef<HTMLParagraphElement>(null);
 
   // The role shown follows the account's: a re-read after a change (or by another admin) moves it.
   const [shownRoleOf, setShownRoleOf] = useState(user.roleId);
@@ -695,18 +600,6 @@ function UserDetail({
     setShownRoleOf(user.roleId);
     setRoleId(user.roleId);
   }
-  // Opened: focus moves to the panel's heading.
-  useEffect(() => heading.current?.focus(), []);
-  // The erase confirmation takes focus; cancelled or refused, focus returns to its button — held,
-  // the button is gone (the erasure is pending), so focus goes to what says so (TASK-207: it was
-  // dropped to the page).
-  useEffect(() => {
-    if (confirmErase) dialog.current?.focus();
-    else if (focusEraseNext.current) {
-      focusEraseNext.current = false;
-      (eraseButton.current ?? heldNote.current)?.focus();
-    }
-  }, [confirmErase]);
 
   // The routes refuse these (auth.role_self_change, admin.self_target; auth.role_database_only,
   // auth.role_protected): no action is offered that can only be refused — and the panel says why.
@@ -718,80 +611,81 @@ function UserDetail({
 
   const [erasePending, setErasePending] = usePendingErasure(mayErase, user.id);
 
-  const closeErase = () => {
-    focusEraseNext.current = true;
-    setConfirmErase(false);
-  };
+  // The account as every outcome and confirmation names it: by name or address, never by id.
+  const account = rowLabel(user);
+  const roleNow = readableRole(user.roleName, user.roleDisplayName);
+  const chosen = roles.find((r) => r.id === roleId);
+  const roleNext = chosen ? readableRole(chosen.name, chosen.displayName) : roleNow;
 
   async function changeRole() {
-    if (roleId === user.roleId) {
-      setOutcome({ kind: "info", text: t("change_role_same") });
-      return;
-    }
     setBusy(true);
-    setOutcome(null);
-    try {
-      const res = await apiFetch("/api/admin/users", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id, roleId }),
-      });
-      const body = await bodyOf(res);
-      if (res.status === 202 && body.held === true) {
-        setOutcome({ kind: "held", text: t("held") });
-      } else if (res.ok && body.success === true) {
-        setOutcome({ kind: "done", text: t("changed") });
-        onChanged();
-      } else {
-        // Anything else is not a change: a refusal (by its code), or an answer that says neither.
-        setOutcome({ kind: "refused", refusal: refusalOf(res, body) });
-      }
-    } catch {
-      setOutcome({ kind: "refused", refusal: networkRefusal() });
-    } finally {
-      setBusy(false);
+    const answer = await adminCall("/api/admin/users", {
+      method: "PATCH",
+      json: { userId: user.id, roleId },
+    });
+    setBusy(false);
+    setAsking(null);
+    if (answer.ok && answer.status === 202 && answer.body.held === true) {
+      onOutcome(
+        outcome("held", t("role_held", { from: roleNow, to: roleNext }), {
+          who: account,
+          next: t("next_role_held", { from: roleNow }),
+        })
+      );
+    } else if (answer.ok && answer.body.success === true) {
+      onOutcome(
+        outcome("applied", t("role_changed", { from: roleNow, to: roleNext }), {
+          who: account,
+          next: t("next_role_changed"),
+        })
+      );
+      onChanged();
+    } else if (answer.ok) {
+      // An answer that says neither: not a change, and said as that.
+      onOutcome(outcome("refused", t("role_unconfirmed"), { who: account }));
+    } else {
+      onOutcome(refusedOutcome(answer.refusal, { who: account }));
     }
   }
 
-  async function erase() {
+  async function erase(reason: string) {
     setBusy(true);
-    setOutcome(null);
-    try {
-      const res = await apiFetch("/api/admin/gdpr", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id, reason: "admin-action" }),
-      });
-      const body = await bodyOf(res);
-      // An erasure asked here is always held for a second admin (TASK-194, audit C-6;
-      // ALWAYS_HELD_ACTIONS): nothing is erased yet. Any other answer is a refusal by its code,
-      // or one that says neither (TASK-207: a 200 "completed" was shown as erased, an answer this
-      // route never gives this request).
-      if (res.status === 202 && body.held === true) {
-        setOutcome({ kind: "held", text: t("erase_held") });
-        setErasePending(true);
-      } else {
-        setOutcome({ kind: "refused", refusal: refusalOf(res, body) });
-      }
-    } catch {
-      setOutcome({ kind: "refused", refusal: networkRefusal() });
-    } finally {
-      setBusy(false);
-      closeErase();
+    const answer = await adminCall("/api/admin/gdpr", {
+      method: "POST",
+      json: { userId: user.id, reason },
+    });
+    setBusy(false);
+    setAsking(null);
+    // An erasure asked here is always held for a second admin (TASK-194, audit C-6;
+    // ALWAYS_HELD_ACTIONS): nothing is erased yet. Any other answer is a refusal by its code,
+    // or one that says neither (TASK-207: a 200 "completed" was shown as erased, an answer this
+    // route never gives this request).
+    if (answer.ok && answer.status === 202 && answer.body.held === true) {
+      onOutcome(
+        outcome("held", t("erase_held"), { who: account, next: t("next_erase_held") })
+      );
+      setErasePending(true);
+    } else if (answer.ok) {
+      onOutcome(outcome("refused", t("erase_unconfirmed"), { who: account }));
+    } else {
+      onOutcome(refusedOutcome(answer.refusal, { who: account }));
     }
   }
 
-  const rows: [string, React.ReactNode][] = [
+  const facts: [string, React.ReactNode][] = [
     ...(showId
-      ? ([[t("field_identity"), <code key="id">{user.id}</code>]] as [
+      ? ([[t("field_identity"), <IdDetail key="id" id={user.id} show />]] as [
           string,
           React.ReactNode,
         ][])
       : []),
     [t("field_email"), shownEmail(user)],
     [t("field_name"), shownName(user)],
-    [t("field_role"), readableRole(user.roleName, user.roleDisplayName)],
-    [t("field_role_raw"), <code key="role">{user.roleName}</code>],
+    [t("field_role"), roleNow],
+    // The role's stored name is a detail (SF-admin-042): only with "Show details".
+    ...(showId
+      ? ([[t("field_role_raw"), user.roleName]] as [string, React.ReactNode][])
+      : []),
     [t("field_status"), shownStatus(user)],
     [t("field_verified"), user.emailVerified ? t("yes") : t("no")],
     [t("field_created"), formatDateTime(user.createdAt)],
@@ -811,152 +705,122 @@ function UserDetail({
   ];
 
   return (
-    <section
-      aria-labelledby="user-detail-title"
-      className="rounded-xl border border-gray-700 bg-[#111827] p-5"
+    <DetailPanel
+      title={t("detail_named", { name: shownName(user) })}
+      onClose={onClose}
+      // Closed: focus returns to the row it was opened from.
+      returnFocus={() =>
+        document.querySelector<HTMLElement>(`[data-open-row="${CSS.escape(user.id)}"]`)
+      }
     >
-      <div className="mb-4 flex items-center justify-between">
-        <h3
-          id="user-detail-title"
-          ref={heading}
-          tabIndex={-1}
-          className="text-lg font-semibold text-white focus:outline-none"
-        >
-          {t("detail_title")}: {shownName(user)}
-        </h3>
-        <button type="button" className={QUIET} onClick={onClose}>
-          {t("close")}
-        </button>
-      </div>
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
-        {rows.map(([label, value]) => (
-          <React.Fragment key={label}>
-            <dt className="text-gray-400">{label}</dt>
-            <dd className="text-gray-200 break-all">{value}</dd>
-          </React.Fragment>
-        ))}
-      </dl>
+      <DetailFacts facts={facts} />
 
       <div className="mt-5 space-y-3 border-t border-gray-800 pt-4">
-        {mayChangeRole && (
+        {actionable && (
           <div className="flex flex-wrap items-end gap-2">
-            <label className="flex flex-col text-xs text-gray-400">
-              {t("change_role_label")}
-              <select
-                value={roleId}
-                onChange={(e) => setRoleId(e.target.value)}
-                className="mt-1 rounded-lg border border-gray-700 bg-[#0a0f1e] px-3 py-2 text-sm text-white"
+            {mayChangeRole && (
+              <Field
+                label={t("change_role_label")}
+                error={roleProblem}
+                className="flex-1 basis-40"
               >
-                {roles.map((r) => (
-                  <option key={r.id} value={r.id} title={r.name}>
-                    {readableRole(r.name, r.displayName)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              className={BUTTON}
-              disabled={busy}
-              onClick={() => void changeRole()}
+                {(control) => (
+                  <Select
+                    {...control}
+                    value={roleId}
+                    disabled={asking !== null}
+                    onChange={(e) => {
+                      setRoleId(e.target.value);
+                      setRoleProblem(null);
+                    }}
+                  >
+                    {roles.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {readableRole(r.name, r.displayName)}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            )}
+            {/* Refused by the route without the permission: shown disabled, saying which. */}
+            <GatedButton
+              ref={roleButton}
+              allowed={mayChangeRole}
+              reason={needsPermission(USER_ROW_ACTION_PERMISSIONS.change_role)}
+              className={BUTTON.primary}
+              disabled={asking !== null}
+              onClick={() => {
+                if (roleId === user.roleId) setRoleProblem(t("change_role_same"));
+                else setAsking("role");
+              }}
             >
-              {busy ? t("working") : t("change_role_submit")}
-            </button>
+              {t("change_role_submit")}
+            </GatedButton>
           </div>
         )}
+        {mayChangeRole && asking === "role" && (
+          <ConfirmStep
+            action="users.change_role"
+            title={t("confirm_role_title", { account })}
+            confirmLabel={t("confirm_role_submit")}
+            returnFocus={roleButton}
+            busy={busy}
+            onConfirm={() => void changeRole()}
+            onCancel={() => setAsking(null)}
+          >
+            <p data-role-change="true">
+              {t("confirm_role_change", { from: roleNow, to: roleNext })}
+            </p>
+          </ConfirmStep>
+        )}
 
-        {mayErase && erasePending && outcome?.kind !== "held" && (
+        {mayErase && erasePending && (
           <p
-            role="status"
             data-erase-pending="true"
-            className="rounded-lg border border-amber-700 bg-amber-900/20 px-3 py-2 text-sm text-amber-200"
+            className={`rounded-lg border px-3 py-2 text-sm ${TONE.held}`}
           >
             {t("erase_pending")}
           </p>
         )}
-        {mayErase &&
-          !erasePending &&
-          (confirmErase ? (
-            <div
-              ref={dialog}
-              role="alertdialog"
-              aria-labelledby="erase-title"
-              aria-describedby="erase-warning"
-              tabIndex={-1}
-              onKeyDown={(e) => {
-                if (e.key === "Escape" && !busy) closeErase();
-              }}
-              className="rounded-lg border border-red-800 bg-red-900/20 p-3 text-sm text-red-200 focus:outline-none"
-            >
-              <p id="erase-title" className="mb-1 font-semibold">
-                {t("erase")}
-              </p>
-              <p id="erase-warning" className="mb-2">
-                {t("erase_warning")}
-              </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className="rounded bg-red-700 px-3 py-1.5 text-sm text-white hover:bg-red-600 disabled:opacity-40"
-                  disabled={busy}
-                  onClick={() => void erase()}
-                >
-                  {busy ? t("working") : t("erase_confirm")}
-                </button>
-                <button
-                  type="button"
-                  className={QUIET}
-                  disabled={busy}
-                  onClick={closeErase}
-                >
-                  {t("erase_cancel")}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              ref={eraseButton}
-              type="button"
-              className={QUIET}
-              onClick={() => setConfirmErase(true)}
-            >
-              {t("erase")}
-            </button>
-          ))}
+        {actionable && !erasePending && (
+          <GatedButton
+            ref={eraseButton}
+            allowed={mayErase}
+            reason={needsPermission(USER_ROW_ACTION_PERMISSIONS.erase_account)}
+            className={BUTTON.quiet}
+            disabled={asking !== null}
+            onClick={() => setAsking("erase")}
+          >
+            {t("erase")}
+          </GatedButton>
+        )}
+        {mayErase && !erasePending && asking === "erase" && (
+          <ConfirmStep
+            action="users.erase"
+            title={t("confirm_erase_title", { account })}
+            confirmLabel={t("erase_confirm")}
+            returnFocus={eraseButton}
+            busy={busy}
+            choiceLabel={t("erase_reason_label")}
+            choices={PURGE_REASONS.map((reason) => ({
+              value: reason,
+              label: t(`erase_reason_${reason.replace(/-/g, "_")}`),
+            }))}
+            onConfirm={(given) => void erase(given.choice ?? "admin-action")}
+            onCancel={() => setAsking(null)}
+          >
+            <p>{t("erase_warning")}</p>
+          </ConfirmStep>
+        )}
 
         {isSelf ? (
-          <p className="text-sm text-gray-400">{t("self_row")}</p>
+          <p className={`text-sm ${TEXT.quiet}`}>{t("self_row")}</p>
         ) : isProtected ? (
-          <p className="text-sm text-gray-400">{t("protected_row")}</p>
-        ) : (
-          !mayChangeRole &&
-          !mayErase && <p className="text-sm text-gray-400">{t("no_actions")}</p>
-        )}
-        <p className="text-xs text-gray-500">{t("not_shown")}</p>
-
-        {outcome?.kind === "done" && (
-          <p role="status" className="text-sm text-green-400">
-            {outcome.text}
-          </p>
-        )}
-        {outcome?.kind === "info" && (
-          <p role="status" className="text-sm text-gray-300">
-            {outcome.text}
-          </p>
-        )}
-        {outcome?.kind === "held" && (
-          <p
-            ref={heldNote}
-            role="status"
-            data-held="true"
-            tabIndex={-1}
-            className="rounded-lg border border-amber-700 bg-amber-900/20 px-3 py-2 text-sm text-amber-200 focus:outline-none"
-          >
-            {outcome.text}
-          </p>
-        )}
-        {outcome?.kind === "refused" && <RefusalNotice refusal={outcome.refusal} />}
+          <p className={`text-sm ${TEXT.quiet}`}>{t("protected_row")}</p>
+        ) : null}
+        <p className={`text-xs ${TEXT.faint}`}>{t("not_shown")}</p>
       </div>
-    </section>
+    </DetailPanel>
   );
 }

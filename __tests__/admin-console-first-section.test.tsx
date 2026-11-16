@@ -143,10 +143,12 @@ beforeEach(() => {
 });
 
 describe("the one mapping: permittedSections (AdminShell's order)", () => {
-  it("a moderator may open Approvals, Moderation, then Tenant — nothing else", () => {
+  // TASK-216 (SF-admin-008): the sections are grouped — People, Access, Safety, Settings,
+  // Operations — so a moderator's own queue (People) comes first.
+  it("a moderator may open Moderation, Approvals, then Tenant — nothing else", () => {
     expect(permittedSections((c) => MODERATOR.includes(c))).toEqual([
-      "approvals",
       "moderation",
+      "approvals",
       "tenant",
     ]);
   });
@@ -180,44 +182,49 @@ describe("the one mapping: permittedSections (AdminShell's order)", () => {
 });
 
 describe("the console's first panel (TASK-184)", () => {
-  it("a moderator opens on Approvals, reads only it, and is refused nothing", async () => {
+  it("a moderator opens on Moderation, reads only it, and is refused nothing", async () => {
     serve(admin(MODERATOR_SESSION), sessionOf(MODERATOR_SESSION));
     render(<AdminPage />);
-    await waitFor(() => expect(panelReads()).toEqual(["/api/admin/approvals"]));
+    await waitFor(() => expect(panelReads()).toEqual(["/api/moderation/review"]));
     await settle();
-    // TASK-185: a proper title from the one source (it read the raw id, "approvals").
-    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/^Approvals$/);
-    // No example command it cannot run: Approvals has none, so the generic prompt, and no
-    // second, fixed hint line under the command bar.
-    expect(screen.getByRole("textbox")).toHaveAttribute(
-      "placeholder",
-      renderMessage("screens.admin_console.hints.generic")
-    );
-    expect(screen.queryByText(/Try:/)).toBeNull();
-    expect(requested()).not.toContain("/api/admin/roles");
-    expect(requested()).not.toContain("/api/admin/users/search");
-    expect(panelReads()).toEqual(["/api/admin/approvals"]);
-    await noRefusedRead();
-    // Only the sections it may open are offered; the second one reads its own route.
-    expect(screen.queryByText("Roles")).toBeNull();
-    fireEvent.click(within(screen.getByRole("navigation")).getByText("Tenant"));
-    await waitFor(() =>
-      expect(panelReads()).toEqual(["/api/admin/approvals", "/api/admin/tenant"])
-    );
-    await noRefusedRead();
     // TASK-210: the review queue, on its own section — read from its route, with no command bar
-    // (the queue is decided item by item).
-    fireEvent.click(within(screen.getByRole("navigation")).getByText("Moderation"));
-    await waitFor(() =>
-      expect(panelReads()).toEqual([
-        "/api/admin/approvals",
-        "/api/admin/tenant",
-        "/api/moderation/review",
-      ])
-    );
+    // (the queue is decided item by item; the registry gives the bar nothing to do there).
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/^Moderation$/);
     expect(await screen.findByTestId("rd-list")).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).toBeNull();
+    expect(requested()).not.toContain("/api/admin/roles");
+    expect(requested()).not.toContain("/api/admin/users/search");
+    expect(panelReads()).toEqual(["/api/moderation/review"]);
+    await noRefusedRead();
+    // Only the sections it may open are offered; the second one reads its own route.
+    expect(screen.queryByText("Roles")).toBeNull();
+    fireEvent.click(within(screen.getByRole("navigation")).getByText("Approvals"));
+    await waitFor(() =>
+      expect(panelReads()).toEqual(["/api/moderation/review", "/api/admin/approvals"])
+    );
+    // TASK-185: a proper title from the one source (it read the raw id, "approvals").
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/^Approvals$/);
+    // No example command it cannot run: Approvals has none, so the generic prompt — as help
+    // text under the labelled input (TASK-216), with what the bar can do here.
+    const input = screen.getByRole("textbox", { name: "Command" });
+    const help = document.getElementById(input.getAttribute("aria-describedby")!);
+    expect(help?.textContent).toContain(
+      renderMessage("screens.admin_console.hints.generic")
+    );
+    expect(help?.textContent).toContain("Approve a held change");
+    expect(screen.queryByText(/Try:/)).toBeNull();
+    await noRefusedRead();
+    // TASK-216 (SF-admin-020): no command bar where it can do nothing — Tenant has no command
+    // and no table of its own.
+    fireEvent.click(within(screen.getByRole("navigation")).getByText("Tenant"));
+    await waitFor(() =>
+      expect(panelReads()).toEqual([
+        "/api/moderation/review",
+        "/api/admin/approvals",
+        "/api/admin/tenant",
+      ])
+    );
+    expect(screen.queryByRole("textbox", { name: "Command" })).toBeNull();
     await noRefusedRead();
   });
 
@@ -226,13 +233,13 @@ describe("the console's first panel (TASK-184)", () => {
     fetchMock.mockImplementation(async (url: unknown) => {
       const p = path(url);
       if (p === "/api/admin/session") return new Promise((resolve) => (answer = resolve));
-      return json("GET /api/admin/approvals — none held");
+      return json("GET /api/moderation/review — one pending escalation");
     });
     render(<AdminPage />);
     await settle();
     expect(requested()).toEqual(["/api/admin/session"]);
     await act(async () => answer(json(MODERATOR_SESSION)));
-    await waitFor(() => expect(panelReads()).toEqual(["/api/admin/approvals"]));
+    await waitFor(() => expect(panelReads()).toEqual(["/api/moderation/review"]));
   });
 
   it("the dev-bypass admin ('*') opens on the shell's first section, Users — read once, no 403", async () => {
@@ -262,7 +269,7 @@ describe("the console's first panel (TASK-184)", () => {
       MODERATOR
     );
     render(<AdminPage />);
-    await waitFor(() => expect(panelReads()).toEqual(["/api/admin/approvals"]));
+    await waitFor(() => expect(panelReads()).toEqual(["/api/moderation/review"]));
     await settle();
     await noRefusedRead();
   });

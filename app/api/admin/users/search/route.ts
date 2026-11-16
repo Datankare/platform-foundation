@@ -62,6 +62,12 @@ const POST_RESPONSE: ResponseSchema = {
         sort: {
           type: "string",
         },
+        total: {
+          type: "number",
+        },
+        totalCapped: {
+          type: "boolean",
+        },
       },
     },
     roles: {

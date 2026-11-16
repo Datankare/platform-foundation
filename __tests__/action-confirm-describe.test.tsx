@@ -22,16 +22,19 @@ const d = (key: string, values?: MessageValues) =>
 const p = (key: string, values?: MessageValues) =>
   renderMessage(`screens.admin_console.plan.${key}`, values);
 const none = p("none");
+const unlisted = d("held_unlisted");
 
 describe("describeAction: each tool in the catalog's words", () => {
   const cases: [string, Record<string, unknown>, string][] = [
-    ["approve_hold", { summary: "a setting" }, d("approve_hold", { what: "a setting" })],
-    ["approve_hold", { proposalId: "p-1" }, d("approve_hold", { what: "p-1" })],
-    ["reject_hold", {}, d("reject_hold", { what: "" })],
+    // A held change is named as the Approvals list names it (the third argument, below) — never
+    // by the hold's id or the planner's own summary (TASK-216, SF-admin-013).
+    ["approve_hold", { summary: "a setting" }, d("approve_hold", { what: unlisted })],
+    ["approve_hold", { proposalId: "p-1" }, d("approve_hold", { what: unlisted })],
+    ["reject_hold", {}, d("reject_hold", { what: unlisted })],
     [
       "create_role",
       { name: "mod", display_name: "Mod", permissions: ["a", 2] },
-      d("create_role", { role: "Mod", permissions: ["a", "2"] }),
+      d("create_role", { role: "Mod", permissions: ["A", "2"] }),
     ],
     [
       "create_role",
@@ -39,19 +42,19 @@ describe("describeAction: each tool in the catalog's words", () => {
       d("create_role", { role: "mod", permissions: "none" }),
     ],
     ["create_role", {}, d("create_role", { role: "", permissions: "none" })],
-    ["delete_role", { role_name: "old" }, d("delete_role", { role: "old" })],
+    ["delete_role", { role_name: "old" }, d("delete_role", { role: "Old" })],
     ["delete_role", {}, d("delete_role", { role: "" })],
     [
       "duplicate_role",
       { source_role: "a", new_display_name: "B" },
-      d("duplicate_role", { source: "a", role: "B" }),
+      d("duplicate_role", { source: "A", role: "B" }),
     ],
     ["duplicate_role", { new_name: "b" }, d("duplicate_role", { source: "", role: "b" })],
     ["duplicate_role", {}, d("duplicate_role", { source: "", role: "" })],
     [
       "assign_permissions",
       { role_name: "r", add: ["x"], remove: [] },
-      d("assign_permissions", { role: "r", add: ["x"], remove: none }),
+      d("assign_permissions", { role: "R", add: ["X"], remove: none }),
     ],
     [
       "assign_permissions",
@@ -61,13 +64,13 @@ describe("describeAction: each tool in the catalog's words", () => {
     [
       "change_user_role",
       { user_identifier: "u-1", new_role: "admin" },
-      d("change_user_role", { account: "u-1", role: "admin" }),
+      d("change_user_role", { account: "u-1", role: "Admin" }),
     ],
     ["change_user_role", {}, d("change_user_role", { account: "", role: "" })],
     [
       "create_entitlement_group",
       { code: "g", permissions: ["p"] },
-      d("create_entitlement_group", { group: "g", permissions: ["p"] }),
+      d("create_entitlement_group", { group: "g", permissions: ["P"] }),
     ],
     [
       "create_entitlement_group",
@@ -97,17 +100,39 @@ describe("describeAction: each tool in the catalog's words", () => {
     [
       "update_password_policy",
       { require_special: true },
-      d("update_password_policy", { changes: d("policy_other") }),
+      // Every field of the policy is said (TASK-216, SF-admin-014: "see the details").
+      d("update_password_policy", {
+        changes: [d("policy_require_special", { on: "yes" })],
+      }),
+    ],
+    [
+      "update_password_policy",
+      { require_uppercase: false, password_history_count: 5 },
+      d("update_password_policy", {
+        changes: [
+          d("policy_require_uppercase", { on: "no" }),
+          d("policy_history", { value: 5 }),
+        ],
+      }),
+    ],
+    [
+      "update_password_policy",
+      {},
+      d("update_password_policy", { changes: d("policy_nothing") }),
     ],
     [
       "register_agent",
       { agent_id: "a", owner: "acme", scopes: ["s"] },
-      d("register_agent", { agent: "a", owner: "acme", scopes: ["s"] }),
+      d("register_agent", { agent: "a", owner: "Acme", scopes: ["S"] }),
     ],
     [
       "register_agent",
       {},
-      d("register_agent", { agent: "", owner: "first-party", scopes: none }),
+      d("register_agent", {
+        agent: "",
+        owner: renderMessage("screens.admin_console.labels.owners.first-party"),
+        scopes: none,
+      }),
     ],
     ["suspend_agent", { agent_id: "a" }, d("suspend_agent", { agent: "a" })],
     ["suspend_agent", {}, d("suspend_agent", { agent: "" })],
@@ -120,7 +145,7 @@ describe("describeAction: each tool in the catalog's words", () => {
     [
       "set_agent_scope",
       { agent_id: "a", scopes: ["s", "t"] },
-      d("set_agent_scope", { agent: "a", scopes: ["s", "t"] }),
+      d("set_agent_scope", { agent: "a", scopes: ["S", "T"] }),
     ],
     ["set_agent_scope", {}, d("set_agent_scope", { agent: "", scopes: none })],
     [
@@ -136,7 +161,7 @@ describe("describeAction: each tool in the catalog's words", () => {
     [
       "block_user_feature",
       { feature: "f", user_id: "u", reason: "  " },
-      d("block_user_feature", { feature: "f", account: "u", reason: "none" }),
+      d("block_user_feature", { feature: "F", account: "u", reason: "none" }),
     ],
     [
       "block_user_feature",
@@ -146,13 +171,13 @@ describe("describeAction: each tool in the catalog's words", () => {
     [
       "unblock_user_feature",
       { feature: "f", user_id: "u" },
-      d("unblock_user_feature", { feature: "f", account: "u" }),
+      d("unblock_user_feature", { feature: "F", account: "u" }),
     ],
     ["unblock_user_feature", {}, d("unblock_user_feature", { feature: "", account: "" })],
     [
       "set_approval_policy",
       { default_approver: "admin", rules: [{}, {}] },
-      d("set_approval_policy", { approver: "admin", rules: 2 }),
+      d("set_approval_policy", { approver: "Admin", rules: 2 }),
     ],
     [
       "set_approval_policy",
@@ -162,21 +187,40 @@ describe("describeAction: each tool in the catalog's words", () => {
     [
       "set_capability_mapping",
       { capability: "c", features: ["f"] },
-      d("set_mapping", { capability: "c", features: ["f"] }),
+      d("set_mapping", { capability: "C", features: ["F"] }),
     ],
     ["set_capability_mapping", {}, d("set_mapping", { capability: "", features: none })],
     [
       "set_capability_mapping",
       { capability: "c", remove: true },
-      d("remove_mapping", { capability: "c" }),
+      d("remove_mapping", { capability: "C" }),
     ],
     ["set_capability_mapping", { remove: true }, d("remove_mapping", { capability: "" })],
     ["purge_user_data", { userId: "u-9" }, d("purge_user_data", { account: "u-9" })],
     ["purge_user_data", {}, d("purge_user_data", { account: "" })],
-    ["drop_everything", {}, d("other", { tool: "drop_everything" })],
+    [
+      "drop_everything",
+      {},
+      renderMessage("screens.admin_console.tools.unknown", { tool: "Drop everything" }),
+    ],
   ];
   it.each(cases)("%s %j", (tool, input, expected) => {
     expect(describeAction({ tool, input })).toBe(expected);
+  });
+
+  it("a role is named by the display name the planner route read; a held change as the list names it", () => {
+    expect(
+      describeAction(
+        { tool: "change_user_role", input: { user_identifier: "u", new_role: "mod_l2" } },
+        undefined,
+        { roles: { mod_l2: "Senior Moderator" } }
+      )
+    ).toBe(d("change_user_role", { account: "u", role: "Senior moderator" }));
+    expect(
+      describeAction({ tool: "reject_hold", input: { proposalId: "p-1" } }, undefined, {
+        held: { what: "ann@example.test's role change", tool: "change_user_role" },
+      })
+    ).toBe(d("reject_hold", { what: "ann@example.test's role change" }));
   });
 
   it("a search is described as the search panel describes it", () => {
@@ -257,7 +301,7 @@ describe("ActionConfirmPanel: its states", () => {
         isExecuting={false}
       />
     );
-    expect(screen.getByText(`⚠ ${p("destructive")}`)).toBeDefined();
+    expect(screen.getByText(p("destructive"))).toBeDefined();
     expect(screen.getByText(p("destructive_note"))).toBeDefined();
   });
 
@@ -292,7 +336,9 @@ describe("ActionConfirmPanel: its states", () => {
         isExecuting={false}
       />
     );
-    expect(screen.getByText(p("scoped_out", { tables: ["audit_log"] }))).toBeDefined();
+    expect(
+      screen.getByText(p("scoped_out", { tables: ["the audit log"] }))
+    ).toBeDefined();
     expect(screen.queryByRole("checkbox")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: p("dismiss") }));
     expect(onCancel).toHaveBeenCalledTimes(1);

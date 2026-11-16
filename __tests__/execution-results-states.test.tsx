@@ -74,7 +74,8 @@ describe("ExecutionResultsPanel: each kind of result", () => {
         account: { id: "u-9", email: "leaver@example.test" },
       },
     ];
-    const id = renderMessage("screens.admin_console.people.id", { id: "u-9" });
+    // The id is a detail (TASK-216): on its own, only while details are shown.
+    const id = "u-9";
     const { rerender } = render(
       <ExecutionResultsPanel onDismiss={jest.fn()} results={results} />
     );
@@ -111,7 +112,8 @@ describe("ExecutionResultsPanel: each kind of result", () => {
 
   it("a tool the catalog does not name is named as unknown, with its id", () => {
     expect(toolLabel("drop_everything")).toBe(
-      renderMessage("screens.admin_console.tools.unknown", { tool: "drop_everything" })
+      // By its name made readable — never the stored tool id (TASK-216).
+      renderMessage("screens.admin_console.tools.unknown", { tool: "Drop everything" })
     );
     expect(toolLabel("create_role")).not.toBe(
       renderMessage("screens.admin_console.tools.unknown", { tool: "create_role" })

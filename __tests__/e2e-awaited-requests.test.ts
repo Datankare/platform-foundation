@@ -164,7 +164,41 @@ type Env = ReadonlyMap<string, ts.Expression>;
  * and the rows of literal for-of loops (through `env`).
  */
 class Reader {
-  constructor(readonly sf: ts.SourceFile) {}
+  /**
+   * `elsewhere`: the Reader of the one other module that declares an exported function of a name
+   * (client modules only): a path a function of another module returns is read there (TASK-216:
+   * the console's section registry, components/admin/ui/sections.ts, gives each section's read).
+   */
+  constructor(
+    readonly sf: ts.SourceFile,
+    private readonly elsewhere?: (name: string) => Reader | undefined
+  ) {}
+
+  /** Whether this file imports `name` by that name (`import { name } from "…"`). */
+  imports(name: string): boolean {
+    return this.sf.statements.some(
+      (st) =>
+        ts.isImportDeclaration(st) &&
+        !!st.importClause?.namedBindings &&
+        ts.isNamedImports(st.importClause.namedBindings) &&
+        st.importClause.namedBindings.elements.some(
+          (el) => el.name.text === name && !el.propertyName
+        )
+    );
+  }
+
+  /** The exported functions this file declares, by name. */
+  exportedFunctions(): string[] {
+    const out: string[] = [];
+    for (const st of this.sf.statements)
+      if (
+        ts.isFunctionDeclaration(st) &&
+        st.name &&
+        st.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+      )
+        out.push(st.name.text);
+    return out;
+  }
 
   /** The const (or let with an initializer) `name` visible from `at`, if any. */
   declaration(name: string, at: ts.Node): ts.Expression | undefined {
@@ -288,6 +322,8 @@ class Reader {
     if (depth > 8) return undefined;
     const x = strip(e);
     if (ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x)) return [[x.text]];
+    // null: no request at all (a section that reads for itself: `… ? SECTION_READS[id] : null`).
+    if (x.kind === ts.SyntaxKind.NullKeyword) return [];
     if (ts.isTemplateExpression(x)) {
       const parts: (string | null)[] = [x.head.text];
       for (const span of x.templateSpans) parts.push(null, span.literal.text);
@@ -313,13 +349,21 @@ class Reader {
       return init ? this.values(init, at, env, depth + 1) : undefined;
     }
     if (ts.isCallExpression(x) && ts.isIdentifier(x.expression)) {
-      // A call of the file's own function: whatever it returns.
-      const fn = this.fn(x.expression.text);
-      const rets = fn ? this.returns(fn) : [];
-      if (!fn || !rets.length) return undefined;
+      // A call of the file's own function, or of one it imports from another client module:
+      // whatever it returns, read in its own file.
+      const name = x.expression.text;
+      const own = this.fn(name);
+      const home: Reader | undefined = own
+        ? this
+        : this.imports(name)
+          ? this.elsewhere?.(name)
+          : undefined;
+      const fn = own ?? home?.fn(name);
+      const rets = fn && home ? home.returns(fn) : [];
+      if (!fn || !home || !rets.length) return undefined;
       const all: PathValue[] = [];
       for (const ret of rets) {
-        const v = this.values(ret, ret, new Map(), depth + 1);
+        const v = home.values(ret, ret, new Map(), depth + 1);
         if (!v) return undefined;
         all.push(...v);
       }
@@ -625,12 +669,27 @@ export function specTargets(specs: readonly SourceText[]): SpecScan {
  */
 type MethodSpec =
   | { readonly kind: "fixed"; readonly methods: readonly (string | null)[] }
-  | { readonly kind: "param" | "init"; readonly index: number };
+  | { readonly kind: "param"; readonly index: number }
+  /** An options parameter whose `method` is sent; `fallback` when the caller's gives none. */
+  | { readonly kind: "init"; readonly index: number; readonly fallback: string };
 /** How a request's path is given: read values, or a parameter of the enclosing function. */
 type PathSpec =
   | { readonly kind: "fixed"; readonly values: readonly PathValue[] }
   | { readonly kind: "param"; readonly index: number }
   | { readonly kind: "unread" };
+/**
+ * The function whose parameter a spec reads — not always the nearest enclosing one: a parameter
+ * read inside a callback (an effect, a `.then`) is still its own function's (TASK-216: the
+ * console's panel reads call adminCall inside useCallback).
+ */
+type Owned<T> = T & { readonly owner?: ts.FunctionLikeDeclaration };
+
+/** A spec without the function it was read from (helpers are compared as JSON). */
+function bare<T extends object>(spec: Owned<T>): T {
+  const { owner: _owner, ...rest } = spec;
+  void _owner;
+  return rest as T;
+}
 
 /** A function that sends a request with a path or method its callers give. */
 interface Helper {
@@ -653,6 +712,20 @@ export function clientRequests(clients: readonly SourceText[]): Sent[] {
       return all.length === 1 ? all[0][1] : undefined;
     })();
 
+  // Each exported function's module, where exactly one client module exports that name.
+  const readers = new Map<string, Reader>();
+  const exporters = new Map<string, Reader[]>();
+  const elsewhere = (name: string) => {
+    const by = exporters.get(name);
+    return by?.length === 1 ? by[0] : undefined;
+  };
+  for (const { file, sf } of parsed) {
+    const reader = new Reader(sf, elsewhere);
+    readers.set(file, reader);
+    for (const name of reader.exportedFunctions())
+      exporters.set(name, [...(exporters.get(name) ?? []), reader]);
+  }
+
   let sent: Sent[] = [];
   for (let pass = 0; pass < 8; pass++) {
     sent = [];
@@ -663,8 +736,9 @@ export function clientRequests(clients: readonly SourceText[]): Sent[] {
       helpers.set(key, [...list, h]);
       grew = true;
     };
-    for (const { file, sf } of parsed) {
-      const r = new Reader(sf);
+    for (const { file } of parsed) {
+      const r = readers.get(file)!;
+      const sf = r.sf;
       /** The parameter index `e` names in the function enclosing `at`, with that function. */
       const param = (e: ts.Expression | undefined, at: ts.Node) => {
         const x = e && strip(e);
@@ -676,26 +750,46 @@ export function clientRequests(clients: readonly SourceText[]): Sent[] {
         );
         return { fn, index };
       };
-      const methodExpr = (e: ts.Expression, at: ts.Node, env: Env): MethodSpec => {
+      const methodExpr = (e: ts.Expression, at: ts.Node, env: Env): Owned<MethodSpec> => {
         const t = r.text(e, at, env);
         if (t) return { kind: "fixed", methods: t.map((m) => m.toUpperCase()) };
         const p = param(e, at);
-        return p ? { kind: "param", index: p.index } : { kind: "fixed", methods: [null] };
+        if (p) return { kind: "param", index: p.index, owner: p.fn };
+        // An options parameter's own method — `options.method`, or `options.method ?? "GET"`:
+        // the method its caller's argument gives, or the fallback when it gives none (TASK-216:
+        // adminCall).
+        let x = strip(e);
+        let fallback = "GET";
+        if (
+          ts.isBinaryExpression(x) &&
+          x.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+        ) {
+          const f = r.text(x.right, at, env);
+          if (f?.length !== 1) return { kind: "fixed", methods: [null] };
+          fallback = f[0].toUpperCase();
+          x = strip(x.left);
+        }
+        if (ts.isPropertyAccessExpression(x) && x.name.text === "method") {
+          const o = param(x.expression, at);
+          if (o) return { kind: "init", index: o.index, fallback, owner: o.fn };
+        }
+        return { kind: "fixed", methods: [null] };
       };
       const initSpec = (
         e: ts.Expression | undefined,
         at: ts.Node,
         env: Env,
-        depth = 0
-      ): MethodSpec => {
-        if (!e) return { kind: "fixed", methods: ["GET"] };
+        depth = 0,
+        fallback = "GET"
+      ): Owned<MethodSpec> => {
+        if (!e) return { kind: "fixed", methods: [fallback] };
         const o = strip(e);
         if (ts.isIdentifier(o)) {
           const p = param(o, at);
-          if (p) return { kind: "init", index: p.index };
+          if (p) return { kind: "init", index: p.index, fallback, owner: p.fn };
           const init = depth < 4 ? r.declaration(o.text, at) : undefined;
           return init
-            ? initSpec(init, at, env, depth + 1)
+            ? initSpec(init, at, env, depth + 1, fallback)
             : { kind: "fixed", methods: [null] };
         }
         if (!ts.isObjectLiteralExpression(o)) return { kind: "fixed", methods: [null] };
@@ -714,9 +808,9 @@ export function clientRequests(clients: readonly SourceText[]): Sent[] {
             env
           );
         const spreads = o.properties.filter(ts.isSpreadAssignment);
-        if (spreads.length === 0) return { kind: "fixed", methods: ["GET"] };
+        if (spreads.length === 0) return { kind: "fixed", methods: [fallback] };
         if (spreads.length === 1)
-          return initSpec(spreads[0].expression, at, env, depth + 1);
+          return initSpec(spreads[0].expression, at, env, depth + 1, fallback);
         return { kind: "fixed", methods: [null] };
       };
       /** A helper's spec at one call: the caller's arguments put in for its parameters. */
@@ -726,7 +820,7 @@ export function clientRequests(clients: readonly SourceText[]): Sent[] {
         at: ts.Node,
         env: Env
       ) => {
-        let path: PathSpec;
+        let path: Owned<PathSpec>;
         if (h.path.kind === "param") {
           const e = args[h.path.index];
           const v = e ? r.values(e, at, env) : undefined;
@@ -734,15 +828,15 @@ export function clientRequests(clients: readonly SourceText[]): Sent[] {
           path = v
             ? { kind: "fixed", values: v }
             : p
-              ? { kind: "param", index: p.index }
+              ? { kind: "param", index: p.index, owner: p.fn }
               : { kind: "unread" };
         } else path = h.path;
-        let method: MethodSpec;
+        let method: Owned<MethodSpec>;
         if (h.method.kind === "param") {
           const e = args[h.method.index];
           method = e ? methodExpr(e, at, env) : { kind: "fixed", methods: [null] };
         } else if (h.method.kind === "init")
-          method = initSpec(args[h.method.index], at, env);
+          method = initSpec(args[h.method.index], at, env, 0, h.method.fallback);
         else method = h.method;
         return { path, method };
       };
@@ -768,23 +862,29 @@ export function clientRequests(clients: readonly SourceText[]): Sent[] {
           else if (ts.isCallExpression(n) && /fetch/i.test(callee))
             specs.push({
               path: { kind: "param", index: 0 },
-              method: { kind: "init", index: 1 },
+              method: { kind: "init", index: 1, fallback: "GET" },
             });
           else if (ts.isCallExpression(n)) specs.push(...(helperOf(file, callee) ?? []));
           for (const h of specs)
             for (const env of r.envs(n)) {
               const { path, method } = atCall(h, args, n, env);
-              const enclosing = (() => {
-                for (let p: ts.Node | undefined = n.parent; p; p = p.parent)
-                  if (ts.isFunctionLike(p)) return p as ts.FunctionLikeDeclaration;
-                return undefined;
-              })();
-              const name = enclosing && functionName(enclosing);
               if (path.kind === "param" || method.kind !== "fixed") {
-                // Given by the enclosing function's callers: it is a helper, read at each call
-                // (a fetch-named one is already read as fetch(path, init) where it is called).
+                // Given by its function's callers — the function whose parameter it is, however
+                // deep in a callback the request is sent: a helper, read at each call (a
+                // fetch-named one is already read as fetch(path, init) where it is called). A
+                // path and a method from two different functions' parameters cannot be.
+                const owners = [path.owner, method.owner].filter(
+                  (o): o is ts.FunctionLikeDeclaration => o !== undefined
+                );
+                const owner = owners.every((o) => o === owners[0])
+                  ? owners[0]
+                  : undefined;
+                const name = owner && functionName(owner);
                 if (name && !/fetch/i.test(name)) {
-                  addHelper(`${file}#${name}`, { path, method });
+                  addHelper(`${file}#${name}`, {
+                    path: bare(path),
+                    method: bare(method),
+                  });
                   continue;
                 }
               }
@@ -1141,6 +1241,112 @@ describe("browser specs wait for requests the app makes (TASK-217)", () => {
       )
     ).toEqual([
       'ANY_METHOD "components/X.tsx: /api/x": names no request with an unread method — remove it',
+    ]);
+  });
+
+  it("[self-test] an options parameter's method, and a parameter read inside a callback, are followed to the callers (TASK-216)", () => {
+    // The console's call helper and its panel reads, as written: `options.method ?? "GET"`, and
+    // the call made inside useCallback — a parameter of the hook, not of the callback.
+    const call: SourceText = {
+      file: "components/admin/ui/admin-call.ts",
+      text: [
+        `export async function adminCall(url: string, options: CallOptions = {}) {`,
+        `  return apiFetch(url, { method: options.method ?? "GET", ...(options.json ? { body: "" } : {}) });`,
+        `}`,
+      ].join("\n"),
+    };
+    const panel: SourceText = {
+      file: "components/admin/ui/PanelState.tsx",
+      text: [
+        `export function usePanelRead(url: string | null, again: unknown = 0) {`,
+        `  const send = useCallback(() => (url === null ? null : adminCall(url)), [url]);`,
+        `  return usePanelAnswer(send, again);`,
+        `}`,
+        `export function usePanelSearch(url: string, body: string, again: unknown = 0) {`,
+        `  const send = useCallback(() => adminCall(url, { method: "POST", json: JSON.parse(body) }), [url, body]);`,
+        `  return usePanelAnswer(send, again);`,
+        `}`,
+      ].join("\n"),
+    };
+    const screens: SourceText = {
+      file: "components/admin/Screens.tsx",
+      text: [
+        `usePanelRead("/api/admin/tenant", 0);`,
+        `usePanelSearch("/api/admin/users/search", "{}", 0);`,
+        `void adminCall("/api/admin/users", { method: "PATCH", json: {} });`,
+        `void adminCall("/api/admin/gdpr?userId=1");`,
+      ].join("\n"),
+    };
+    const sent = clientRequests([call, panel, screens]).map(
+      (x) => `${x.method} ${x.path.map((p) => p ?? "*").join("")}`
+    );
+    expect([...new Set(sent)].sort()).toEqual([
+      "GET /api/admin/gdpr?userId=1",
+      "GET /api/admin/tenant",
+      "PATCH /api/admin/users",
+      "POST /api/admin/users/search",
+    ]);
+    // Without the callback's owner the panel reads were never seen: a wait on the search had no
+    // sender, and one for GET on it would not be refused.
+    const waitFor = (method: string): SourceText => ({
+      file: "e2e/s.spec.ts",
+      text: `page.waitForResponse((r) => new URL(r.url()).pathname === "/api/admin/users/search" && r.request().method() === "${method}");`,
+    });
+    expect(
+      awaitedRequestFindings([waitFor("POST")], [call, panel, screens], [], {}, {})
+    ).toEqual([]);
+    expect(
+      awaitedRequestFindings([waitFor("GET")], [call, panel, screens], [], {}, {})
+    ).toEqual([
+      "e2e/s.spec.ts:1: waits for GET /api/admin/users/search (equals) — no screen or client module sends it",
+    ]);
+    // A path another client module's function returns is read in that module — a literal map,
+    // and null for "no request" (the console's section registry and its console).
+    const registry: SourceText = {
+      file: "components/admin/ui/sections.ts",
+      text: [
+        `const SECTION_READS = { roles: "/api/admin/roles", audit: "/api/admin/audit?offset=0" } as const;`,
+        `export function sectionEndpoint(id: string): string | null {`,
+        `  return id in SECTION_READS ? SECTION_READS[id as keyof typeof SECTION_READS] : null;`,
+        `}`,
+      ].join("\n"),
+    };
+    const console_: SourceText = {
+      file: "components/admin/SectionConsole.tsx",
+      text: [
+        `import { sectionEndpoint } from "@/components/admin/ui/sections";`,
+        `const endpoint = sectionEndpoint(section);`,
+        `const { read } = usePanelRead(endpoint, refresh);`,
+      ].join("\n"),
+    };
+    expect(
+      clientRequests([call, panel, registry, console_])
+        .map((x) => `${x.method} ${x.path.join("")}`)
+        .filter((x) => !x.includes("*"))
+        .sort()
+    ).toEqual(["GET /api/admin/audit?offset=0", "GET /api/admin/roles"]);
+    // Not imported by that name: not read (a same-named function elsewhere is not this one).
+    const unrelated: SourceText = {
+      ...console_,
+      text: console_.text.replace(
+        `import { sectionEndpoint } from "@/components/admin/ui/sections";`,
+        ""
+      ),
+    };
+    expect(clientRequests([call, panel, registry, unrelated])).toEqual([]);
+
+    // A fallback that is not one method cannot be read: the request is a finding.
+    const opaque: SourceText = {
+      file: "components/Y.tsx",
+      text: [
+        `async function send(url: string, options: { method?: string }) {`,
+        `  return apiFetch(url, { method: options.method ?? pick() });`,
+        `}`,
+        `void send("/api/y", {});`,
+      ].join("\n"),
+    };
+    expect(awaitedRequestFindings([], [opaque], [], {}, {})).toEqual([
+      "components/Y.tsx: /api/y: a request whose method the scan cannot read (it would answer a wait for any method) — make it readable, or list it in ANY_METHOD with why",
     ]);
   });
 });

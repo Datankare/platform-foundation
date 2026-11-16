@@ -27,6 +27,15 @@ import { ROLE_PERMISSIONS } from "./helpers/test-identities";
 
 const t = (key: string, values?: Record<string, string | number>) =>
   renderMessage(`screens.admin_console.users.${key}`, values);
+/** The shared table's and confirm step's own words (components/admin/ui). */
+const table = (key: string, values?: Record<string, string | number>) =>
+  renderMessage(`screens.admin_console.ui.table.${key}`, values);
+const confirmWords = (key: string) =>
+  renderMessage(`screens.admin_console.confirm.${key}`);
+const detailRegion = () => screen.queryByRole("region", { name: /^Account: / });
+/** The outcome list's entry that says `text` (its standing is its data-outcome). */
+const outcomeOf = async (text: string) =>
+  (await screen.findByText(text)).closest("[data-outcome]") as HTMLElement;
 
 // Every answer is the route's own (__tests__/fixtures/route-responses.json, made by the handlers).
 type Listed = {
@@ -114,7 +123,7 @@ async function shown(hasPermission: (c: string) => boolean = everything) {
 
 function openRow(label: string) {
   fireEvent.click(screen.getByRole("button", { name: t("open_row", { name: label }) }));
-  return screen.getByRole("region", { name: new RegExp(t("detail_title")) });
+  return screen.getByRole("region", { name: /^Account: / });
 }
 
 describe("what a row shows", () => {
@@ -157,7 +166,7 @@ describe("what a row shows", () => {
     expect(text).not.toMatch(/never signed in/);
   });
 
-  it("the table: readable role with the stored name as its tooltip, standing, verification, dates", async () => {
+  it("the table: readable role (its stored name nowhere), standing, verification, dates", async () => {
     await shown();
     const rows = screen.getAllByRole("row");
     const staff = rows.find((r) =>
@@ -166,10 +175,9 @@ describe("what a row shows", () => {
     expect(
       within(staff).getByText("Unknown (never signed in since 7 Jun 2026)")
     ).toBeDefined();
-    expect(within(staff).getByText("Super admin")).toHaveAttribute(
-      "title",
-      "super_admin"
-    );
+    // TASK-216 (SF-admin-042): the role by its name; the stored code is a detail, not a tooltip.
+    expect(within(staff).getByText("Super admin")).not.toHaveAttribute("title");
+    expect(screen.queryByText("super_admin")).toBeNull();
     expect(within(staff).getByText(t("never"))).toBeDefined();
     expect(within(staff).getByText(t("no"))).toBeDefined();
     const ann = rows.find((r) => within(r).queryByText("ann@example.com"))!;
@@ -264,14 +272,14 @@ describe("search, sort and paging go to the server", () => {
   it("next and previous pages move the offset; previous is off on the first page", async () => {
     onList = () => respond("POST /api/admin/users/search — a page of 25, more to read");
     await shown();
-    expect(screen.getByRole("button", { name: t("previous") })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: t("next") }));
+    expect(screen.getByRole("button", { name: table("previous") })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: table("next") }));
     await waitFor(() => expect(listCalls()).toHaveLength(2));
     expect(listCalls()[1]!.get("offset")).toBe(String(USERS_PAGE_SIZE));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: t("previous") })).not.toBeDisabled()
+      expect(screen.getByRole("button", { name: table("previous") })).not.toBeDisabled()
     );
-    fireEvent.click(screen.getByRole("button", { name: t("previous") }));
+    fireEvent.click(screen.getByRole("button", { name: table("previous") }));
     await waitFor(() => expect(listCalls()).toHaveLength(3));
     expect(listCalls()[2]!.get("offset")).toBe("0");
   });
@@ -295,7 +303,8 @@ describe("the detail panel", () => {
     // TASK-190: the account id is hidden by default, shown with "Show details" (UsersPanel showIds).
     expect(within(panel).queryByText(user().id)).toBeNull();
     expect(within(panel).getAllByText("Free").length).toBeGreaterThan(0);
-    expect(within(panel).getByText("free")).toBeDefined();
+    // The role's stored name is a detail too (TASK-216, SF-admin-042).
+    expect(within(panel).queryByText("free")).toBeNull();
     expect(within(panel).getByText(/26 Oct 2026/)).toBeDefined();
     expect(within(panel).getByText(/27 Oct 2026/)).toBeDefined();
     expect(within(panel).getByText("Beta access (until 1 Dec 2026)")).toBeDefined();
@@ -304,8 +313,24 @@ describe("the detail panel", () => {
   it("an account never signed in: Never, and the missing address explained", async () => {
     await shown();
     const panel = openRow("Unknown (never signed in since 7 Jun 2026)");
-    expect(within(panel).getByText("super_admin")).toBeDefined();
+    expect(within(panel).getByText("Super admin")).toBeDefined();
+    expect(within(panel).queryByText("super_admin")).toBeNull();
     expect(within(panel).getByText(t("never"))).toBeDefined();
+  });
+
+  it("with Show details: the account id and the role's stored name", async () => {
+    render(<UsersPanel hasPermission={everything} showIds />);
+    await screen.findAllByText("ann@example.com");
+    const panel = openRow("Ann");
+    expect(within(panel).getByText(user().id)).toBeDefined();
+    expect(within(panel).getByText("free")).toBeDefined();
+  });
+
+  it("values wrap at words, never mid-word (SF-admin-042)", async () => {
+    await shown();
+    const panel = openRow("Ann");
+    expect(panel.querySelector(".break-all")).toBeNull();
+    expect(panel.querySelector("dd")?.className).toMatch(/\bbreak-words\b/);
   });
 });
 
@@ -317,15 +342,22 @@ describe("actions: shown only with the permission their route requires", () => {
     });
   });
 
-  it("an admin (no admin_purge_user_data) is offered a role change, not an erasure", async () => {
+  // TASK-216: a control the route would refuse is shown disabled, with the reason — by the
+  // permission's name, never its code (the shared gate).
+  it("an admin (no admin_purge_user_data) is offered a role change; erasure is disabled, saying what it needs", async () => {
     const admin = ROLE_PERMISSIONS.admin!;
     expect(admin).not.toContain("admin_purge_user_data");
     await shown((c) => admin.includes(c));
     const panel = openRow("Ann");
     expect(
       within(panel).getByRole("button", { name: t("change_role_submit") })
-    ).toBeDefined();
-    expect(within(panel).queryByRole("button", { name: t("erase") })).toBeNull();
+    ).not.toBeDisabled();
+    const erase = within(panel).getByRole("button", { name: t("erase") });
+    expect(erase).toBeDisabled();
+    expect(erase).toHaveAccessibleDescription("Needs the permission “Purge user data”.");
+    fireEvent.click(erase);
+    expect(within(panel).queryByRole("alertdialog")).toBeNull();
+    expect(panel.textContent).not.toContain("admin_purge_user_data");
   });
 
   it("a super_admin is offered both", async () => {
@@ -338,26 +370,31 @@ describe("actions: shown only with the permission their route requires", () => {
     expect(within(panel).getByRole("button", { name: t("erase") })).toBeDefined();
   });
 
-  it("without either permission: no action, and it says so", async () => {
+  it("without either permission: both disabled, each saying the permission it needs; no role to choose", async () => {
     await shown(only("can_access_admin"));
     const panel = openRow("Ann");
+    const change = within(panel).getByRole("button", { name: t("change_role_submit") });
+    expect(change).toBeDisabled();
+    expect(change).toHaveAccessibleDescription("Needs the permission “Manage users”.");
+    expect(within(panel).getByRole("button", { name: t("erase") })).toBeDisabled();
+    expect(within(panel).queryByRole("combobox")).toBeNull();
+    // And the read of a pending erasure is not made for someone who cannot erase.
     expect(
-      within(panel).queryByRole("button", { name: t("change_role_submit") })
-    ).toBeNull();
-    expect(within(panel).queryByRole("button", { name: t("erase") })).toBeNull();
-    expect(within(panel).getByText(t("no_actions"))).toBeDefined();
+      fetchMock.mock.calls.some(([u]) => String(u).startsWith("/api/admin/gdpr"))
+    ).toBe(false);
   });
 
-  it("role options are readable, with the stored name as their tooltip", async () => {
+  it("role options are readable; the stored name is not their tooltip", async () => {
     await shown();
     const panel = openRow("Ann");
     const option = within(panel).getByRole("option", { name: "Super admin" });
-    expect(option).toHaveAttribute("title", "super_admin");
+    expect(option).not.toHaveAttribute("title");
   });
 });
 
 describe("change role", () => {
-  async function change(to = roleId("moderator")) {
+  /** Choose a role and ask; the confirm step is then open (unless the role is the same). */
+  async function ask(to = roleId("moderator")) {
     await shown();
     const panel = openRow("Ann");
     fireEvent.change(
@@ -366,13 +403,45 @@ describe("change role", () => {
         target: { value: to },
       }
     );
+    fireEvent.click(within(panel).getByRole("button", { name: t("change_role_submit") }));
+    return panel;
+  }
+  async function change(to = roleId("moderator")) {
+    const panel = await ask(to);
     await act(async () => {
       fireEvent.click(
-        within(panel).getByRole("button", { name: t("change_role_submit") })
+        within(panel).getByRole("button", { name: t("confirm_role_submit") })
       );
     });
     return panel;
   }
+  const sent = () => fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH");
+
+  // TASK-216 (SF-admin-040): a role change went on one click, with no "from → to".
+  it("asks first, naming the account and from → to; nothing is sent until confirmed", async () => {
+    const panel = await ask();
+    const dialog = within(panel).getByRole("alertdialog");
+    expect(dialog).toHaveAccessibleName(t("confirm_role_title", { account: "Ann" }));
+    expect(dialog).toHaveTextContent(
+      t("confirm_role_change", { from: "Free", to: "Moderator" })
+    );
+    expect(dialog).toHaveTextContent(
+      renderMessage("screens.admin_console.confirm.consequence.change_user_role")
+    );
+    // Consequential, not irreversible: not marked as something that cannot be undone.
+    expect(dialog).toHaveAttribute("data-risk", "consequential");
+    expect(dialog).not.toHaveTextContent(confirmWords("irreversible"));
+    await waitFor(() => expect(dialog).toHaveFocus());
+    expect(sent()).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: confirmWords("cancel") }));
+    expect(within(panel).queryByRole("alertdialog")).toBeNull();
+    expect(sent()).toBe(false);
+    await waitFor(() =>
+      expect(
+        within(panel).getByRole("button", { name: t("change_role_submit") })
+      ).toHaveFocus()
+    );
+  });
 
   it("sends the account and the role chosen", async () => {
     await change();
@@ -385,23 +454,42 @@ describe("change role", () => {
 
   it("held for a second admin (202 held): shown as held for approval — never as changed", async () => {
     onPatch = () => respond("PATCH /api/admin/users — held for a second admin");
-    const panel = await change();
-    const held = await within(panel).findByText(t("held"));
-    expect(held).toHaveAttribute("data-held", "true");
-    expect(within(panel).queryByText(t("changed"))).toBeNull();
+    await change();
+    const held = await outcomeOf(t("role_held", { from: "Free", to: "Moderator" }));
+    expect(held).toHaveAttribute("data-outcome", "held");
+    // What changed, for whom, and what happens next — and it took focus.
+    expect(held).toHaveTextContent("Held for approval");
+    expect(held).toHaveTextContent("For: Ann");
+    expect(held).toHaveTextContent(t("next_role_held", { from: "Free" }));
+    await waitFor(() => expect(held).toHaveFocus());
+    expect(document.querySelector('[data-outcome="applied"]')).toBeNull();
     // Nothing changed yet: the list is not re-read as if it had.
     expect(listCalls()).toHaveLength(1);
   });
 
-  it("done (200 success): changed, and the list read again", async () => {
-    const panel = await change();
-    expect(await within(panel).findByText(t("changed"))).toBeDefined();
+  it("done (200 success): says to what, and the list read again", async () => {
+    await change();
+    const done = await outcomeOf(t("role_changed", { from: "Free", to: "Moderator" }));
+    expect(done).toHaveAttribute("data-outcome", "applied");
+    expect(done).toHaveTextContent("For: Ann");
+    expect(done).toHaveTextContent(t("next_role_changed"));
     await waitFor(() => expect(listCalls()).toHaveLength(2));
   });
 
-  it("the same role: nothing sent", async () => {
-    await change(roleId("free"));
-    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  it("the outcome stays until dismissed — closing the panel does not take it away", async () => {
+    const panel = await change();
+    const done = await outcomeOf(t("role_changed", { from: "Free", to: "Moderator" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(detailRegion()).toBeNull());
+    expect(done).toBeInTheDocument();
+    fireEvent.click(within(done).getByRole("button", { name: "Dismiss" }));
+    expect(document.querySelector("[data-outcome]")).toBeNull();
+  });
+
+  it("the same role: nothing sent, and no confirmation asked", async () => {
+    const panel = await ask(roleId("free"));
+    expect(within(panel).queryByRole("alertdialog")).toBeNull();
+    expect(sent()).toBe(false);
   });
 
   it.each(
@@ -412,20 +500,34 @@ describe("change role", () => {
     ])
   )("%s: the refusal is shown by its code, never success or held", async (name) => {
     onPatch = () => respond(name);
-    const panel = await change();
-    expect(await within(panel).findByText(messageOf(name))).toBeDefined();
-    expect(within(panel).queryByText(t("changed"))).toBeNull();
-    expect(within(panel).queryByText(t("held"))).toBeNull();
+    await change();
+    const refused = await outcomeOf(messageOf(name));
+    expect(refused).toHaveAttribute("data-outcome", "refused");
+    expect(refused).toHaveTextContent("Not done");
+    expect(document.querySelector('[data-outcome="applied"]')).toBeNull();
+    expect(document.querySelector('[data-outcome="held"]')).toBeNull();
   });
 
   it("the network fails: said so", async () => {
     onPatch = () => {
       throw new TypeError("Failed to fetch");
     };
-    const panel = await change();
-    expect(
-      await within(panel).findByText(renderMessage("screens.refusal.network"))
-    ).toBeDefined();
+    await change();
+    expect(await outcomeOf(renderMessage("screens.refusal.network"))).toHaveAttribute(
+      "data-outcome",
+      "refused"
+    );
+  });
+
+  it("[hostile] a 200 that says neither changed nor held is not a change", async () => {
+    // A 200 whose body says neither (another route's own answer stands in for one).
+    onPatch = () => respond("GET /api/admin/gdpr — no erasure pending");
+    await change();
+    expect(await outcomeOf(t("role_unconfirmed"))).toHaveAttribute(
+      "data-outcome",
+      "refused"
+    );
+    expect(listCalls()).toHaveLength(1);
   });
 });
 
@@ -445,7 +547,7 @@ describe("erase account data", () => {
     await shown();
     const panel = openRow("Ann");
     fireEvent.click(within(panel).getByRole("button", { name: t("erase") }));
-    fireEvent.click(within(panel).getByRole("button", { name: t("erase_cancel") }));
+    fireEvent.click(within(panel).getByRole("button", { name: confirmWords("cancel") }));
     // Only the read of a pending erasure (round 1, A6) — no erasure sent.
     expect(
       fetchMock.mock.calls.some(
@@ -456,10 +558,10 @@ describe("erase account data", () => {
 
   it("confirmed: held for a second admin — sent as an admin-action erasure of that account", async () => {
     const panel = await erase();
-    expect(await within(panel).findByText(t("erase_held"))).toHaveAttribute(
-      "data-held",
-      "true"
-    );
+    const held = await outcomeOf(t("erase_held"));
+    expect(held).toHaveAttribute("data-outcome", "held");
+    expect(held).toHaveTextContent("For: Ann");
+    expect(held).toHaveTextContent(t("next_erase_held"));
     // Nothing is erased yet: no second erasure is offered, the pending one is not repeated.
     expect(within(panel).queryByRole("button", { name: t("erase") })).toBeNull();
     const call = fetchMock.mock.calls.find(
@@ -467,21 +569,48 @@ describe("erase account data", () => {
     )!;
     expect(JSON.parse(String(call[1].body))).toEqual({
       userId: user().id,
-      reason: "admin-action",
+      reason: "user-request",
     });
   });
 
-  it("the held answer stays until the panel is closed; nothing was erased, so the list is not read again", async () => {
+  it("the held answer stays when the panel is closed; nothing was erased, so the list is not read again", async () => {
     const panel = await erase();
-    expect(await within(panel).findByText(t("erase_held"))).toBeDefined();
+    const held = await outcomeOf(t("erase_held"));
     expect(listCalls()).toHaveLength(1);
-    fireEvent.click(within(panel).getByRole("button", { name: t("close") }));
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("region", { name: new RegExp(t("detail_title")) })
-      ).toBeNull()
-    );
+    fireEvent.click(within(panel).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(detailRegion()).toBeNull());
+    expect(held).toBeInTheDocument();
     expect(listCalls()).toHaveLength(1);
+  });
+
+  // TASK-216 (SF-admin-036, the requester's side): the reason was always the code "admin-action".
+  it("the confirmation asks which kind of reason; the one chosen is sent", async () => {
+    await shown();
+    const panel = openRow("Ann");
+    fireEvent.click(within(panel).getByRole("button", { name: t("erase") }));
+    const dialog = within(panel).getByRole("alertdialog");
+    const kinds = within(dialog).getByRole("combobox", { name: t("erase_reason_label") });
+    expect(
+      within(kinds)
+        .getAllByRole("option")
+        .map((o) => o.textContent)
+    ).toEqual([
+      t("erase_reason_user_request"),
+      t("erase_reason_admin_action"),
+      t("erase_reason_account_deletion"),
+      t("erase_reason_legal_order"),
+    ]);
+    fireEvent.change(kinds, { target: { value: "legal-order" } });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: t("erase_confirm") }));
+    });
+    const call = fetchMock.mock.calls.find(
+      ([u, init]) => String(u).startsWith("/api/admin/gdpr") && init?.method === "POST"
+    )!;
+    expect(JSON.parse(String(call[1].body))).toEqual({
+      userId: user().id,
+      reason: "legal-order",
+    });
   });
 
   // TASK-194 round 1, A6: an erasure already waiting for approval is shown after a reload, and
@@ -522,9 +651,9 @@ describe("erase account data", () => {
       !init?.method || init.method === "GET"
         ? respond("GET /api/admin/gdpr — no erasure pending")
         : respond(name);
-    const panel = await erase();
-    expect(await within(panel).findByText(messageOf(name))).toBeDefined();
-    expect(within(panel).queryByText(t("erase_held"))).toBeNull();
+    await erase();
+    expect(await outcomeOf(messageOf(name))).toHaveAttribute("data-outcome", "refused");
+    expect(screen.queryByText(t("erase_held"))).toBeNull();
   });
 });
 
@@ -574,7 +703,7 @@ describe("focus and the selected row (TASK-185 review)", () => {
       name: t("open_row", { name: "Unknown (never signed in since 7 Jun 2026)" }),
     });
     expect(other.closest("tr")).not.toHaveAttribute("aria-current");
-    fireEvent.click(within(panel).getByRole("button", { name: t("close") }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(opener).toHaveFocus());
     expect(opener.closest("tr")).not.toHaveAttribute("aria-current");
   });
@@ -584,10 +713,18 @@ describe("focus and the selected row (TASK-185 review)", () => {
     const panel = openRow("Ann");
     fireEvent.click(within(panel).getByRole("button", { name: t("erase") }));
     const dialog = within(panel).getByRole("alertdialog");
-    expect(dialog).toHaveAccessibleName(t("erase"));
-    expect(dialog).toHaveAccessibleDescription(t("erase_warning"));
+    expect(dialog).toHaveAccessibleName(t("confirm_erase_title", { account: "Ann" }));
+    // Irreversible: marked so in words, and it says what will be lost (TASK-216).
+    expect(dialog).toHaveAttribute("data-risk", "irreversible");
+    const description = dialog.getAttribute("aria-describedby")!;
+    const said = document.getElementById(description)!.textContent;
+    expect(said).toContain(confirmWords("irreversible"));
+    expect(said).toContain(t("erase_warning"));
+    expect(said).toContain(
+      renderMessage("screens.admin_console.confirm.consequence.purge_user_data")
+    );
     await waitFor(() => expect(dialog).toHaveFocus());
-    fireEvent.click(within(dialog).getByRole("button", { name: t("erase_cancel") }));
+    fireEvent.click(within(dialog).getByRole("button", { name: confirmWords("cancel") }));
     await waitFor(() =>
       expect(within(panel).getByRole("button", { name: t("erase") })).toHaveFocus()
     );
@@ -611,11 +748,11 @@ describe("focus and the selected row (TASK-185 review)", () => {
     await act(async () => {
       fireEvent.click(within(panel).getByRole("button", { name: t("erase_confirm") }));
     });
-    const held = await within(panel).findByText(t("erase_held"));
+    const held = await outcomeOf(t("erase_held"));
     await waitFor(() => expect(held).toHaveFocus());
   });
 
-  it("refused, focus returns to Erase", async () => {
+  it("refused, focus moves to the outcome that says why", async () => {
     onErase = (_u, init) =>
       !init?.method || init.method === "GET"
         ? respond("GET /api/admin/gdpr — no erasure pending")
@@ -626,12 +763,12 @@ describe("focus and the selected row (TASK-185 review)", () => {
     await act(async () => {
       fireEvent.click(within(panel).getByRole("button", { name: t("erase_confirm") }));
     });
-    await within(panel).findByText(
+    const refused = await outcomeOf(
       messageOf("POST /api/admin/gdpr — refused (no such account)")
     );
-    await waitFor(() =>
-      expect(within(panel).getByRole("button", { name: t("erase") })).toHaveFocus()
-    );
+    await waitFor(() => expect(refused).toHaveFocus());
+    // And the erasure can be asked for again.
+    expect(within(panel).getByRole("button", { name: t("erase") })).not.toBeDisabled();
   });
 });
 
@@ -671,9 +808,9 @@ describe("the role shown, the same-role answer, loading (TASK-185 review)", () =
     rerender(<UsersPanel hasPermission={everything} refreshKey={1} />);
     await waitFor(() =>
       expect(
-        within(
-          screen.getByRole("region", { name: new RegExp(t("detail_title")) })
-        ).getByRole("combobox", { name: t("change_role_label") })
+        within(detailRegion()!).getByRole("combobox", {
+          name: t("change_role_label"),
+        })
       ).toHaveValue(roleId("moderator"))
     );
   });
@@ -682,9 +819,12 @@ describe("the role shown, the same-role answer, loading (TASK-185 review)", () =
     await shown();
     const panel = openRow("Ann");
     fireEvent.click(within(panel).getByRole("button", { name: t("change_role_submit") }));
+    // Said at the field, tied to it (TASK-216: the shared Field) — not as an outcome.
     const said = await within(panel).findByText(t("change_role_same"));
-    expect(said.className).not.toMatch(/green/);
-    expect(within(panel).queryByText(t("changed"))).toBeNull();
+    const select = within(panel).getByRole("combobox", { name: t("change_role_label") });
+    expect(select).toHaveAttribute("aria-invalid", "true");
+    expect(select.getAttribute("aria-describedby")).toContain(said.id);
+    expect(document.querySelector("[data-outcome]")).toBeNull();
   });
 
   it("paging is off while a page is being read", async () => {
@@ -692,17 +832,21 @@ describe("the role shown, the same-role answer, loading (TASK-185 review)", () =
     await shown();
     let release: (v: unknown) => void = () => undefined;
     onList = () => new Promise((r) => (release = r));
-    fireEvent.click(screen.getByRole("button", { name: t("next") }));
+    fireEvent.click(screen.getByRole("button", { name: table("next") }));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: t("next") })).toBeDisabled()
+      expect(screen.getByRole("button", { name: table("next") })).toBeDisabled()
     );
-    expect(screen.getByRole("button", { name: t("previous") })).toBeDisabled();
-    expect(screen.getByText(t("loading"))).toBeDefined();
+    expect(screen.getByRole("button", { name: table("previous") })).toBeDisabled();
+    expect(
+      screen.getByText(
+        renderMessage("screens.admin_console.ui.reading_again", { panel: "Users" })
+      )
+    ).toHaveAttribute("role", "status");
     await act(async () =>
       release(respond("POST /api/admin/users/search — a page of 25, more to read"))
     );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: t("next") })).not.toBeDisabled()
+      expect(screen.getByRole("button", { name: table("next") })).not.toBeDisabled()
     );
   });
 
@@ -718,8 +862,89 @@ describe("the role shown, the same-role answer, loading (TASK-185 review)", () =
       )
     ).toBeDefined();
     expect(screen.queryByText("ann@example.com")).toBeNull();
-    expect(
-      screen.queryByRole("region", { name: new RegExp(t("detail_title")) })
-    ).toBeNull();
+    expect(detailRegion()).toBeNull();
+  });
+});
+
+// TASK-216: the screen is the console's shared parts — the one table, its pager's count, the
+// panel state for every failed read, the detail beside the list.
+describe("the shared parts (TASK-216)", () => {
+  it("the list is the one table: a caption, header scope, inside a region that scrolls itself", async () => {
+    await shown();
+    const list = screen.getByRole("table", { name: "Users" });
+    for (const th of within(list).getAllByRole("columnheader"))
+      expect(th).toHaveAttribute("scope", "col");
+    const card = list.closest('[role="region"]')!;
+    expect(card).toHaveAccessibleName("Users");
+    expect(card.className).toMatch(/\boverflow-x-auto\b/);
+    expect(card.className).toMatch(/\bmax-w-full\b/);
+    // Reachable and scrollable from the keyboard (2.1.1).
+    expect(card).toHaveAttribute("tabindex", "0");
+  });
+
+  it("the pager says how many there are in all, from the route's count (SF-admin-041)", async () => {
+    onList = () => respond("POST /api/admin/users/search — a page of 25, more to read");
+    await shown();
+    const total = (
+      routeAnswer("POST /api/admin/users/search — a page of 25, more to read")[1] as {
+        page: { total: number };
+      }
+    ).page.total;
+    expect(total).toBeGreaterThan(USERS_PAGE_SIZE);
+    expect(screen.getByText(table("range_of", { from: 1, to: 25, total }))).toBeDefined();
+  });
+
+  it("[hostile] no count in the answer: the range alone, never 'of undefined'", async () => {
+    // The route's own answer, as a server before the count sent it: without the two fields.
+    const body = JSON.parse(
+      JSON.stringify(
+        routeAnswer("POST /api/admin/users/search — a page of 25, more to read")[1]
+      )
+    ) as { page: Record<string, unknown> };
+    delete body.page.total;
+    delete body.page.totalCapped;
+    onList = () => ({ ok: true, status: 200, json: async () => body });
+    await shown();
+    expect(screen.getByText(table("range", { from: 1, to: 25 }))).toBeDefined();
+  });
+
+  it("the detail opens beside the list, which leaves out its secondary columns; closed, they are back (SF-admin-043)", async () => {
+    await shown();
+    expect(screen.getByRole("columnheader", { name: t("col_created") })).toBeDefined();
+    const panel = openRow("Ann");
+    const layout = panel.closest("[data-detail-open]")!;
+    expect(layout).toHaveAttribute("data-detail-open", "true");
+    // Wide: side by side. Narrow: the list gives way to the detail.
+    expect(layout.className).toMatch(/xl:grid-cols-/);
+    expect(layout.querySelector("[data-detail-list]")?.className).toMatch(
+      /\bhidden xl:block\b/
+    );
+    expect(screen.queryByRole("columnheader", { name: t("col_created") })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: t("col_verified") })).toBeNull();
+    fireEvent.keyDown(panel, { key: "Escape" });
+    await waitFor(() => expect(detailRegion()).toBeNull());
+    expect(screen.getByRole("columnheader", { name: t("col_created") })).toBeDefined();
+  });
+
+  it("a read that gets no answer at all is said, with a retry — never 'no users'", async () => {
+    onList = () => {
+      throw new TypeError("Failed to fetch");
+    };
+    render(<UsersPanel hasPermission={everything} />);
+    const failed = await screen.findByRole("alert");
+    expect(failed).toHaveTextContent(renderMessage("screens.refusal.network"));
+    expect(failed).toHaveTextContent("Could not read Users");
+    expect(screen.queryByText(t("empty"))).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    onList = () => respond(LIST);
+    fireEvent.click(within(failed).getByRole("button", { name: /^Try reading/ }));
+    expect(await screen.findByText("ann@example.com")).toBeDefined();
+  });
+
+  it("Refresh reads the list again and says when it was read", async () => {
+    await shown();
+    expect(screen.getByText(/^Read at \d\d:\d\d$/)).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Read Users again" }));
+    await waitFor(() => expect(listCalls()).toHaveLength(2));
   });
 });

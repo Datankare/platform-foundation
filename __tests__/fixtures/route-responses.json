@@ -662,7 +662,9 @@
         "can_moderate",
         "can_translate",
         "can_view_profile"
-      ]
+      ],
+      "email": null,
+      "displayName": null
     }
   },
   "GET /api/admin/session — a super admin": {
@@ -693,7 +695,42 @@
         "config_manage_standard",
         "config_view",
         "platform_operate"
-      ]
+      ],
+      "email": null,
+      "displayName": null
+    }
+  },
+  "GET /api/admin/session — a super admin with a name and an address": {
+    "status": 200,
+    "body": {
+      "userId": "00000000-0000-4000-9000-97a91570000b",
+      "roleName": "super_admin",
+      "permissions": [
+        "admin_manage_account_restrictions",
+        "admin_manage_agents",
+        "admin_manage_approval_policy",
+        "admin_manage_config",
+        "admin_manage_entitlements",
+        "admin_manage_roles",
+        "admin_manage_users",
+        "admin_purge_user_data",
+        "admin_view_audit",
+        "can_access_admin",
+        "can_create_group",
+        "can_delete_account",
+        "can_edit_profile",
+        "can_export_data",
+        "can_moderate",
+        "can_play",
+        "can_translate",
+        "can_view_profile",
+        "config_manage_safety",
+        "config_manage_standard",
+        "config_view",
+        "platform_operate"
+      ],
+      "email": "root@example.com",
+      "displayName": "Root Admin"
     }
   },
   "GET /api/admin/session — the development bypass": {
@@ -701,7 +738,9 @@
     "body": {
       "userId": "00000000-0000-0000-0000-000000000000",
       "roleName": "dev-bypass",
-      "permissions": ["*"]
+      "permissions": ["*"],
+      "email": null,
+      "displayName": null
     }
   },
   "GET /api/admin/session — a role made for roles only": {
@@ -709,7 +748,9 @@
     "body": {
       "userId": "00000000-0000-4000-9000-fa36e0400013",
       "roleName": "roles_admin",
-      "permissions": ["can_access_admin", "admin_manage_roles"]
+      "permissions": ["can_access_admin", "admin_manage_roles"],
+      "email": null,
+      "displayName": null
     }
   },
   "GET /api/admin/session — a moderator whose permission rows hold non-codes": {
@@ -726,7 +767,9 @@
         ["*"],
         "can_access_admin",
         "can_moderate"
-      ]
+      ],
+      "email": null,
+      "displayName": null
     }
   },
   "GET /api/admin/session — refused (no second factor)": {
@@ -822,7 +865,9 @@
         "offset": 0,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 0,
+        "totalCapped": false
       }
     }
   },
@@ -1140,7 +1185,9 @@
         "offset": 0,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 2,
+        "totalCapped": false
       }
     }
   },
@@ -1546,7 +1593,9 @@
         "offset": 0,
         "hasMore": true,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 26,
+        "totalCapped": false
       }
     }
   },
@@ -1592,7 +1641,9 @@
         "offset": 25,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 1,
+        "totalCapped": false
       }
     }
   },
@@ -1638,7 +1689,9 @@
         "offset": 0,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 1,
+        "totalCapped": false
       }
     }
   },
@@ -1684,7 +1737,9 @@
         "offset": 0,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 1,
+        "totalCapped": false
       }
     }
   },
@@ -1730,7 +1785,9 @@
         "offset": 0,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 1,
+        "totalCapped": false
       }
     }
   },
@@ -1797,7 +1854,9 @@
         "offset": 0,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 2,
+        "totalCapped": false
       }
     }
   },
@@ -1827,7 +1886,9 @@
         "offset": 0,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 0,
+        "totalCapped": false
       }
     }
   },
@@ -1939,12 +2000,12 @@
     "status": 403,
     "body": {
       "code": "auth.role_database_only",
-      "message": "The super_admin role can only be assigned directly in the database.",
+      "message": "The super admin role can only be assigned directly in the database.",
       "params": {
         "role": "super_admin"
       },
       "success": false,
-      "error": "The super_admin role can only be assigned directly in the database."
+      "error": "The super admin role can only be assigned directly in the database."
     }
   },
   "PATCH /api/admin/users — refused (the roles store down)": {
@@ -4403,7 +4464,9 @@
         "offset": 0,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 2,
+        "totalCapped": false
       }
     }
   },
@@ -4449,7 +4512,9 @@
         "offset": 0,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 1,
+        "totalCapped": false
       }
     }
   },
@@ -4479,7 +4544,9 @@
         "offset": 0,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 0,
+        "totalCapped": false
       }
     }
   },
@@ -4530,7 +4597,9 @@
         "offset": 0,
         "hasMore": false,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 1,
+        "totalCapped": false
       }
     }
   },
@@ -4936,7 +5005,9 @@
         "offset": 0,
         "hasMore": true,
         "sort": "created",
-        "dir": "desc"
+        "dir": "desc",
+        "total": 26,
+        "totalCapped": false
       }
     }
   },
@@ -4960,7 +5031,9 @@
         "can_view_profile",
         "config_manage_standard",
         "config_view"
-      ]
+      ],
+      "email": null,
+      "displayName": null
     }
   },
   "GET /api/admin/session — a moderator whose role was given user management": {
@@ -4968,7 +5041,9 @@
     "body": {
       "userId": "00000000-0000-4000-9000-c46063b10017",
       "roleName": "moderator",
-      "permissions": ["can_access_admin", "admin_manage_users"]
+      "permissions": ["can_access_admin", "admin_manage_users"],
+      "email": null,
+      "displayName": null
     }
   },
   "POST /api/admin/ai — a plan: search users, role as the model gave it": {
@@ -5065,6 +5140,215 @@
       },
       "success": false,
       "error": "Too many requests. Try again in a moment."
+    }
+  },
+  "POST /api/admin/ai — a plan: three searches on Roles": {
+    "status": 200,
+    "body": {
+      "plan": {
+        "message": "Three searches.",
+        "actions": [
+          {
+            "tool": "search",
+            "input": {
+              "table": "roles"
+            }
+          },
+          {
+            "tool": "search",
+            "input": {
+              "table": "permissions"
+            }
+          },
+          {
+            "tool": "search",
+            "input": {
+              "table": "role_permissions"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "POST /api/admin/ai — a plan: erase Ann, change her role, and search": {
+    "status": 200,
+    "body": {
+      "plan": {
+        "message": "Three changes.",
+        "actions": [
+          {
+            "tool": "purge_user_data",
+            "input": {
+              "userId": "11111111-1111-4111-8111-111111111111"
+            }
+          },
+          {
+            "tool": "change_user_role",
+            "input": {
+              "user_identifier": "11111111-1111-4111-8111-111111111111",
+              "new_role": "mod_l2"
+            }
+          },
+          {
+            "tool": "search",
+            "input": {
+              "table": "users"
+            }
+          }
+        ],
+        "accounts": {
+          "0": {
+            "email": "ann@example.com",
+            "found": true
+          },
+          "1": {
+            "email": "ann@example.com",
+            "found": true
+          }
+        },
+        "roles": {
+          "mod_l2": "Senior Moderator"
+        }
+      }
+    }
+  },
+  "POST /api/admin/ai — a plan: a role change for an account that is not found": {
+    "status": 200,
+    "body": {
+      "plan": {
+        "message": "One change.",
+        "actions": [
+          {
+            "tool": "change_user_role",
+            "input": {
+              "user_identifier": "nobody@example.com",
+              "new_role": "admin"
+            }
+          }
+        ],
+        "accounts": {
+          "0": {
+            "email": null,
+            "found": false
+          }
+        }
+      }
+    }
+  },
+  "POST /api/admin/ai — a plan: change a role's permissions, then delete it": {
+    "status": 200,
+    "body": {
+      "plan": {
+        "message": "Two changes.",
+        "actions": [
+          {
+            "tool": "assign_permissions",
+            "input": {
+              "role_name": "mod_l2",
+              "add": ["admin_view_audit"],
+              "remove": ["can_play"]
+            }
+          },
+          {
+            "tool": "delete_role",
+            "input": {
+              "role_name": "mod_l2"
+            }
+          }
+        ],
+        "roles": {
+          "mod_l2": "Senior Moderator"
+        }
+      }
+    }
+  },
+  "POST /api/admin/ai — a plan: approve the held change": {
+    "status": 200,
+    "body": {
+      "plan": {
+        "message": "One held change.",
+        "actions": [
+          {
+            "tool": "approve_hold",
+            "input": {
+              "proposalId": "00000000-0000-4000-8000-0000000000ff",
+              "source": "runtime"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "POST /api/admin/ai — a plan: reject the held change": {
+    "status": 200,
+    "body": {
+      "plan": {
+        "message": "One held change.",
+        "actions": [
+          {
+            "tool": "reject_hold",
+            "input": {
+              "proposalId": "00000000-0000-4000-8000-0000000000ff",
+              "source": "runtime"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "POST /api/admin/ai — a plan: approve a held change that is not in the list": {
+    "status": 200,
+    "body": {
+      "plan": {
+        "message": "One held change.",
+        "actions": [
+          {
+            "tool": "approve_hold",
+            "input": {
+              "proposalId": "99999999-9999-4999-8999-999999999999",
+              "source": "runtime"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "POST /api/admin/ai — a plan: register an agent": {
+    "status": 200,
+    "body": {
+      "plan": {
+        "message": "Registering.",
+        "actions": [
+          {
+            "tool": "register_agent",
+            "input": {
+              "agent_id": "agent:e2e-helper",
+              "scopes": []
+            }
+          }
+        ]
+      }
+    }
+  },
+  "POST /api/admin/ai — an answer with nothing to do": {
+    "status": 200,
+    "body": {
+      "plan": {
+        "message": "There is nothing to change.",
+        "actions": []
+      }
+    }
+  },
+  "POST /api/admin/approvals/[id] — approved and applied, its record not stored": {
+    "status": 200,
+    "body": {
+      "decision": "approve",
+      "source": "runtime",
+      "outcome": "approved",
+      "applied": true,
+      "recorded": false,
+      "warning": "Applied, but its record could not be stored.",
+      "requestId": "req-test"
     }
   },
   "GET /api/admin/tenant — a shared deployment's tenant, its spend under the cap": {
@@ -5936,6 +6220,18 @@
       "pendingApproval": {
         "id": "00000000-0000-4000-8000-0000000000ff"
       },
+      "requestId": "req-test"
+    }
+  },
+  "POST /api/operator/tenants/[id]/approvals/[approvalId] — approved and applied, its record not stored": {
+    "status": 200,
+    "body": {
+      "decision": "approve",
+      "source": "runtime",
+      "outcome": "approved",
+      "applied": true,
+      "recorded": false,
+      "warning": "Applied, but its record could not be stored.",
       "requestId": "req-test"
     }
   },

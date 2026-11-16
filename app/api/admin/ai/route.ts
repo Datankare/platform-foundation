@@ -45,7 +45,7 @@ import {
   permissionOrderSql,
   roleOrderSql,
 } from "@/platform/auth/catalog-order";
-import type { ResponseSchema } from "@/platform/errors/response-schema";
+import { PLANNED_INPUT, type ResponseSchema } from "@/platform/errors/response-schema";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const PROMPT_BODY_SCHEMA: InputSchemaNode = {
@@ -173,6 +173,43 @@ async function planAccounts(
   return out;
 }
 
+/** The inputs of a plan's actions that name a role by its stored name. */
+const ROLE_NAME_FIELDS = ["role_name", "new_role", "source_role"] as const;
+
+/**
+ * The display name of each role a plan names (TASK-216, SF-admin-013), by its stored name: the
+ * confirm step then says "Moderator", never "moderator_l2". Only for an action the admin may run
+ * (its own permission), as the accounts above; the roles are the shared catalogue. A name the
+ * catalogue does not hold, or a read that fails, has none: the confirm step then writes the
+ * stored name readably itself.
+ */
+async function planRoles(
+  actions: readonly { tool: string; input: Record<string, unknown> }[],
+  admin: VerifiedAdmin
+): Promise<Record<string, string>> {
+  const names = new Set<string>();
+  for (const action of actions) {
+    const tool = action.tool as AdminToolId;
+    if (!Object.prototype.hasOwnProperty.call(ADMIN_TOOL_PERMISSIONS, tool)) continue;
+    if (!holds(admin, ADMIN_TOOL_PERMISSIONS[tool])) continue;
+    for (const field of ROLE_NAME_FIELDS) {
+      const value = action.input?.[field];
+      if (typeof value === "string" && value !== "" && value.length <= 64)
+        names.add(value);
+    }
+  }
+  if (names.size === 0) return {};
+  const rows = await contextRows((tx) =>
+    tx.query<{ name: string; display_name: string | null }>(
+      "select name, display_name from roles where name = any($1::text[])",
+      [[...names]]
+    )
+  );
+  const out: Record<string, string> = {};
+  for (const row of rows) if (row.display_name) out[row.name] = row.display_name;
+  return out;
+}
+
 const POST_RESPONSE: ResponseSchema = {
   type: "object",
   properties: {
@@ -198,15 +235,11 @@ const POST_RESPONSE: ResponseSchema = {
           items: {
             type: "object",
             properties: {
-              input: {
-                type: "object",
-                values: {
-                  type: ["boolean", "null", "number", "string", "array"],
-                  items: {
-                    type: ["boolean", "null", "number", "string"],
-                  },
-                },
-              },
+              // The model's proposal, shown to be confirmed: any JSON its tool takes — a
+              // policy's rules are a list of objects — and checked again, against the tool's own
+              // schema, by the route that runs it (TASK-216: declared as scalars only, a
+              // set_approval_policy plan was refused here and stripped in production).
+              input: PLANNED_INPUT,
               tool: {
                 type: "string",
               },
@@ -215,6 +248,13 @@ const POST_RESPONSE: ResponseSchema = {
         },
         message: {
           type: "string",
+        },
+        // TASK-216 (SF-admin-013): each role the plan names, its display name by its stored name.
+        roles: {
+          type: "object",
+          values: {
+            type: "string",
+          },
         },
         scopedOut: {
           type: "array",
@@ -304,12 +344,14 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     // The accounts the plan acts on, by address (TASK-202, N-63): the confirm step names each
     // as a person reads it, never by the id the planner put in.
     const accounts = await planAccounts(scoped.actions, admin);
+    const roles = await planRoles(scoped.actions, admin);
     return NextResponse.json({
       plan: {
         ...plan,
         actions: scoped.actions,
         ...(scoped.dropped.length ? { scopedOut: scoped.dropped } : {}),
         ...(Object.keys(accounts).length ? { accounts } : {}),
+        ...(Object.keys(roles).length ? { roles } : {}),
       },
     });
   } catch (err) {

@@ -153,11 +153,19 @@ async function queueRead(page: Page, act: () => Promise<void>): Promise<void> {
 
 /** The Moderation section opened, its queue read (under `filter`, when one is chosen). */
 async function openQueue(page: Page, filter?: "Pending" | "Resolved"): Promise<void> {
+  // A moderator's console opens on Moderation (TASK-216: the sections are grouped, People
+  // first), so the queue is already open: it is read again with its Refresh. From another
+  // section, the navigation opens it.
+  const heading = page.getByRole("heading", { level: 2 });
+  await expect(heading).toBeVisible();
+  const open = (await heading.textContent())?.trim() === "Moderation";
   await queueRead(page, () =>
-    page
-      .getByRole("navigation")
-      .getByRole("button", { name: /^Moderation/ })
-      .click()
+    open
+      ? page.getByTestId("rd-refresh").click()
+      : page
+          .getByRole("navigation")
+          .getByRole("button", { name: /^Moderation/ })
+          .click()
   );
   await expect(page.getByRole("heading", { level: 2 })).toHaveText("Moderation");
   if (filter) {

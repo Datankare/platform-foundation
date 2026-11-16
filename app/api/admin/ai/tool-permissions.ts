@@ -89,6 +89,33 @@ export const PANEL_CONTEXT_PERMISSIONS: Readonly<Record<string, string>> = {
   approvals: "can_access_admin",
 };
 
+/**
+ * The command-bar tools the planner is given on each panel, by name (TASK-216). The schemas
+ * themselves are app/api/admin/ai/tool-schemas/ — server code; this list is the client-safe
+ * copy the console's section registry reads to say what the command bar can do on a section
+ * (components/admin/ui/sections.ts). __tests__/admin-console-registries.test.ts holds the two
+ * equal: a tool added to a panel's schemas and not here fails there.
+ */
+export const PANEL_TOOLS = {
+  roles: ["create_role", "delete_role", "duplicate_role", "assign_permissions"],
+  users: ["change_user_role"],
+  entitlements: ["create_entitlement_group"],
+  "password-policy": ["update_password_policy"],
+  "agent-registry": [
+    "register_agent",
+    "suspend_agent",
+    "set_agent_scope",
+    "set_agent_ttl",
+  ],
+  "per-account": ["block_user_feature", "unblock_user_feature"],
+  "approval-policy": ["set_approval_policy"],
+  "capability-mapping": ["set_capability_mapping"],
+  approvals: ["approve_hold", "reject_hold"],
+} as const satisfies Record<
+  string,
+  readonly (AdminToolId | keyof typeof CLIENT_ROUTED_TOOLS)[]
+>;
+
 /** The permission any command-bar tool name requires, or undefined for an unknown tool. */
 export function toolPermission(tool: string): string | undefined {
   if (Object.prototype.hasOwnProperty.call(ADMIN_TOOL_PERMISSIONS, tool)) {

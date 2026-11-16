@@ -6,9 +6,11 @@
  * Its permission is the server's own: toolPermission (app/api/admin/ai/tool-permissions.ts, the
  * map the executor checks) and, for a search, the table's SEARCHABLE_TABLES permission. An
  * example the admin's permissions do not allow is not offered; a section with none left shows
- * the generic prompt. Before this, every section's hint was fixed text, and the command bar
- * showed a second, generic line ("Create a moderator role…") under every section — to roles that
- * cannot create a role.
+ * the generic prompt.
+ *
+ * The examples themselves live in the one section registry (components/admin/ui/sections.ts,
+ * TASK-216): this module only reads them. They are help text under the command input, never its
+ * placeholder (SF-admin-017: a placeholder is cut at 390 px and gone at the first key).
  *
  * Display only: the planner and the executor check every action themselves.
  *
@@ -17,29 +19,14 @@
 
 import { renderMessage } from "@/platform/errors/messages";
 import { SEARCHABLE_TABLES, toolPermission } from "@/app/api/admin/ai/tool-permissions";
-
-interface SectionHint {
-  /** screens.admin_console.hints.<key> */
-  readonly key: string;
-  /** The command-bar tool the example runs. */
-  readonly tool: string;
-  /** For `search`: the table it reads (its own permission applies too). */
-  readonly table?: keyof typeof SEARCHABLE_TABLES;
-}
-
-const SECTION_HINTS: Readonly<Record<string, readonly SectionHint[]>> = {
-  users: [
-    { key: "users_show", tool: "search", table: "users" },
-    { key: "users_change_role", tool: "change_user_role" },
-  ],
-  roles: [
-    { key: "roles_create", tool: "create_role" },
-    { key: "roles_show", tool: "search", table: "roles" },
-  ],
-  entitlements: [{ key: "entitlements_create", tool: "create_entitlement_group" }],
-  audit: [{ key: "audit_role_changes", tool: "search", table: "audit_log" }],
-  "password-policy": [{ key: "password_min_length", tool: "update_password_policy" }],
-};
+import {
+  SECTIONS,
+  commandBar,
+  isSection,
+  sectionHints,
+  type SectionHint,
+} from "@/components/admin/ui/sections";
+import { tableLabel, toolLabel } from "@/components/admin/ui/labels";
 
 /** Every permission an example needs; an unknown tool needs one no one holds. */
 export function hintPermissions(hint: SectionHint): string[] {
@@ -53,25 +40,54 @@ export function permittedHints(
   section: string,
   hasPermission: (code: string) => boolean
 ): string[] {
-  return (SECTION_HINTS[section] ?? [])
+  return sectionHints(section)
     .filter((h) => hintPermissions(h).every(hasPermission))
     .map((h) => h.key);
 }
 
 /** Every section's examples (for tests: each names a real tool and table). */
 export function allSectionHints(): Readonly<Record<string, readonly SectionHint[]>> {
-  return SECTION_HINTS;
+  return Object.fromEntries(
+    SECTIONS.filter((s) => sectionHints(s.id).length > 0).map((s) => [
+      s.id,
+      sectionHints(s.id),
+    ])
+  );
 }
 
-/** The command bar's placeholder for `section`: its permitted examples, or the generic prompt. */
+const t = (key: string, values?: Record<string, string | string[]>) =>
+  renderMessage(`screens.admin_console.hints.${key}`, values);
+
+/** The command bar's examples for `section`: its permitted ones, or the generic prompt. */
 export function sectionPlaceholder(
   section: string,
   hasPermission: (code: string) => boolean
 ): string {
-  const t = (key: string, values?: Record<string, string>) =>
-    renderMessage(`screens.admin_console.hints.${key}`, values);
   const [first, second] = permittedHints(section, hasPermission).map((k) => t(k));
   if (first && second) return t("try_two", { first, second });
   if (first) return t("try_one", { first });
   return t("generic");
+}
+
+/**
+ * What the command bar can do on `section`, in words (SF-admin-020): the section's own actions
+ * the admin may run, by name, and what a search there reads — or that it can only search.
+ */
+export function sectionScope(
+  section: string,
+  hasPermission: (code: string) => boolean
+): string | null {
+  const scope = isSection(section) ? commandBar(section) : null;
+  if (!scope) return null;
+  const tools = scope.tools.filter((tool) => {
+    const needed = toolPermission(tool);
+    return needed !== undefined && hasPermission(needed);
+  });
+  const tables = scope.tables.filter((table) => hasPermission(SEARCHABLE_TABLES[table]));
+  const actions = tools.map(toolLabel);
+  const searched = tables.map(tableLabel);
+  if (actions.length && searched.length) return t("scope_both", { actions, searched });
+  if (actions.length) return t("scope_actions", { actions });
+  if (searched.length) return t("scope_search", { searched });
+  return t("scope_none");
 }

@@ -21,6 +21,12 @@ export interface ExecutedResult {
   result?: ShownText;
   table?: SearchResultTable;
   error?: string;
+  /** The outcome's id, stamped by the page (TASK-216). */
+  uid?: number;
+  /** What became of it in the page's own words (TASK-216). */
+  text?: string;
+  next?: string;
+  unrecorded?: boolean;
   /** A users search applied to the Users screen's list: no second table. */
   listed?: boolean;
   /** An earlier users search of the same plan (round 1, item 6): a one-line summary. */

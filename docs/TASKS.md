@@ -7,6 +7,239 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-216 — The admin console rebuilt on shared parts, pass 1 of 3: the parts, a guard, and the console's core (shell, command bar, Users)
+
+| Field        | Detail                                                                                                           |
+| ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-216                                                                                                         |
+| **Type**     | Usability and correctness — the admin console's screens                                                          |
+| **Severity** | High (E-1, E-2, E-4), with 3 Important, 22 Low and 2 Nit screen findings on the core                             |
+| **Phase**    | Phase 5                                                                                                          |
+| **Target**   | v6.0.0 (RC)                                                                                                      |
+| **Status**   | Fixed on develop (batch 56d-1); passes 56d-2 and 56d-3 convert the remaining screens                             |
+| **Logged**   | 2026-11-13 (the 2026-11-12 screen review: 105 admin findings `SF-admin-nnn`; second-wave status S7, E-1/E-2/E-4) |
+
+Batch 56d-1, in both repositories (Playform: its TASK-5017). The owner uses this console and
+said plainly that it is not user-friendly: tables wider than the window, hex ids where a
+person's name belongs, results that vanish, a change not said for what it is.
+
+**What was wrong.** The 2026-11-12 review found the cause: every screen built the same things
+separately — 16 hand-built tables, 5 ways to show an outcome, 8 ways to ask for a reason, ids in
+11 places where a name belongs, a section keyed in 5 maps. Fixing findings one screen at a time
+would have left that in place.
+
+**What it is now.** One small set of shared parts (`components/admin/ui/`), used by every
+screen this pass touches, and a guard that keeps a screen from building one by hand again:
+
+| Part             | File                                                       | What every screen gets from it                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Table            | `AdminTable.tsx`                                           | Scrolls inside its own card (a labelled, keyboard-reachable region) and never widens the page; caption and header scope; dates the console's one way (`admin-format`); a long value cut with a "more" button; an id column only with "Show details"; sorting where the route sorts (or by header for a list read whole, `aria-sort`); paging with "1–25 of 312" when the route counts |
+| Panel state      | `PanelState.tsx` (`usePanelRead`, `ReadFailed`, `Reading`) | Reading, a failed read for **every** status and for no answer at all (what, why, "nothing is shown, nothing was changed", Try again), the read time and Refresh, and the panel's own "nothing here" only after a read that succeeded                                                                                                                                                  |
+| Outcome          | `Outcome.tsx`                                              | What changed, for whom and what happens next — "held for a second approver: nothing has changed yet", "done, but not recorded" — its standing in words, kept until its own Dismiss, a polite live region, focus on the newest                                                                                                                                                         |
+| Confirmation     | `ConfirmStep.tsx` + `confirmation-registry.ts`             | One step and one reason field: risk per action (ordinary, consequential, irreversible) from one registry; an irreversible action is marked so in words and red and says what will be lost; focus in and back; Escape; the minimum length of a reason said before the mistake                                                                                                          |
+| Permission gate  | `PermissionGate.tsx`                                       | A control the route would refuse is shown disabled with the reason (the permission by name), or not offered                                                                                                                                                                                                                                                                           |
+| Labels           | `labels.ts`, `Ref.tsx`                                     | The catalogue's name for a permission, role, table, filter, feature, job kind, setting, tool — else the code made readable, never the code; a person by name or address, the id only as a detail                                                                                                                                                                                      |
+| Call helper      | `admin-call.ts`                                            | `adminCall`: a 2xx (202 too) or the shared handler's Refusal — the catalogue's sentence for the code, the network refusal when no answer came; never throws                                                                                                                                                                                                                           |
+| Detail panel     | `DetailPanel.tsx`                                          | One placement: beside the list when wide, in its place when narrow; heading focused on open, focus back to the opener on Close or Escape                                                                                                                                                                                                                                              |
+| Field            | `Field.tsx`                                                | Label, help and error tied to the control (`aria-describedby`, `aria-invalid`), the error announced; the console's one shape of input, select, text area and checkbox                                                                                                                                                                                                                 |
+| Section registry | `sections.ts` (+ `section-views.tsx`)                      | One list: order, group, icon, title, permission, endpoint, hints; what the command bar can do on a section is derived from the server's own maps; the views map is typed over it; `?section=`                                                                                                                                                                                         |
+| Tokens           | `tokens.ts`                                                | One set of colours and control shapes (the review found four themes); every text pair meets 4.5:1                                                                                                                                                                                                                                                                                     |
+
+A screen uses them like this (Users): `usePanelRead(url)` → `<PanelState>` → `<AdminTable>`
+inside `<DetailLayout detail={<DetailPanel>…}>`; an action is `<GatedButton>` → `<ConfirmStep
+action="users.change_role">` → `adminCall(…)` → `outcome("held", …, { who, next })` into the
+screen's `<OutcomeList>`.
+
+**The guard.** `__tests__/admin-shared-components-guard.test.ts` reads every source file of the
+console's screens and refuses a raw `<table>`, a screen's own "loading"/"unavailable" state, its
+own live region, its own confirmation, its own API call, a raw form control, and a stored code
+or id written as text. Its known list holds only the screens passes 56d-2 and 56d-3 convert,
+each with its pass and exactly the rules it still breaks; it only shrinks (a fixed rule left in
+an entry fails), so the two passes can empty it. `admin-console-registries.test.ts` holds the
+two registries to the server's lists: every command-bar tool has a confirmation entry, every
+action the server always holds for a second administrator is irreversible, every section has a
+view, and the client-safe list of each panel's tools equals the planner's schemas.
+
+**Findings fixed** (what a person sees now; the test is `admin-console-core`, `admin-shell`,
+`admin-users-panel`, `admin-ui-components` or `admin-ui-shared` unless named):
+
+| Finding                   | Was                                                                                    | Now                                                                                                                                                                                          |
+| ------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E-1                       | A confirmed plan that got no answer showed nothing, and "Running…" stayed              | "Not done: unable to reach the server"; the plan stays to confirm again                                                                                                                      |
+| E-2                       | Any 2xx to a command-bar approve or reject read "Decision recorded"                    | What the decision route answered: applied; approved but still waiting for another approver (held); applied but not recorded; rejected; or why it was refused and what became of the approval |
+| E-4, SF-002, 004          | A read refused 403/404/500 or never answered was "No items" or "Loading…" for ever     | A failed read is said, with Try again, on every section the page reads; a reopened section is read again, saying so                                                                          |
+| SF-001                    | A plan made on Users followed to Roles and ran there                                   | Each section has its own plan and outcomes                                                                                                                                                   |
+| SF-003                    | No Refresh except on the review queue                                                  | Refresh and "Read at hh:mm" on every section the page reads                                                                                                                                  |
+| SF-005                    | The header named only the role                                                         | Who is signed in (name, else address), then the role — `GET /api/admin/session` sends both                                                                                                   |
+| SF-006                    | Reload returned to the first section; Back left the console                            | The section is in the address (`?section=`)                                                                                                                                                  |
+| SF-007                    | Focus stayed in the nav; the command input grabbed focus on every section              | The new section's heading takes focus; the input does not                                                                                                                                    |
+| SF-008                    | 19 sections in one flat list, two with the same icon                                   | Five groups (People, Access, Safety, Settings, Operations), an icon each                                                                                                                     |
+| SF-010                    | Only "delete role" was marked as not undoable                                          | Every irreversible action (erase, delete role, reject a held change, approving an erasure) is marked, says what is lost, and turns the button red                                            |
+| SF-011                    | A second plan kept the first plan's checked boxes                                      | Each plan has its own panel                                                                                                                                                                  |
+| SF-012                    | An account not found could still be confirmed                                          | Said, unchecked, and it cannot be confirmed; the dead catalogue keys are gone                                                                                                                |
+| SF-013                    | Role names, permission codes and the hold's UUID in the plan                           | Names; a held change named as Approvals names it — the planner route sends role display names                                                                                                |
+| SF-014                    | "Change the password policy: see the details" (there were none)                        | Every field of the policy in words                                                                                                                                                           |
+| SF-015                    | "first-party" outside the catalogue                                                    | A catalogue label                                                                                                                                                                            |
+| SF-016, 021               | A plan and its result arrived silently                                                 | Each takes focus; results are a live region                                                                                                                                                  |
+| SF-017, 019               | No label; a long placeholder teaching permission codes; "Thinking…" only a placeholder | A visible label; examples and what the bar can do here as help text; "Working out a plan…" is a status                                                                                       |
+| SF-018                    | The request was cleared when the planner refused                                       | Kept, with why beside it                                                                                                                                                                     |
+| SF-020                    | The command bar shown where it could do nothing                                        | Shown where it has a tool or a table; where it only searches it says so                                                                                                                      |
+| SF-022                    | A held result turned the whole box amber                                               | Three tones in words: Done, Held for approval, Not done (and Done, but not recorded)                                                                                                         |
+| SF-023                    | "Search audit_log where actor is 3f2a…", "3 rows of role_permissions"                  | "Search the audit log…", "3 rows of role permissions"; filters and actions by name                                                                                                           |
+| SF-024                    | Actor and target ids shown whole                                                       | Ids and references only with "Show details"; every column named                                                                                                                              |
+| SF-040                    | A role change went on one click; "Role changed."                                       | A confirm step naming the account and "From … to …"; the outcome names both roles                                                                                                            |
+| SF-041                    | "1–25" with no total                                                                   | "1–25 of 312" — the Users list counts what it matches (capped at 10,000)                                                                                                                     |
+| SF-042                    | The stored role code always shown; `break-all`                                         | The code only with "Show details"; values wrap at words                                                                                                                                      |
+| SF-043                    | The detail opened below the table and the pager                                        | Beside the list at 1280 px, in its place at 390 px, with focus                                                                                                                               |
+| SF-036 (requester's side) | An erasure's reason was always the code "admin-action"                                 | The confirmation asks which kind of reason; the note and the approver's label are pass 56d-2's                                                                                               |
+
+**Route changes.** `GET /api/admin/session` adds `email` and `displayName` (the caller's own
+row; null when none or unreadable — never a reason to refuse). The Users list —
+`POST /api/admin/users/search`, the screen's read (TASK-215: its search text in the body, never a
+URL), and `GET /api/admin/users`, which takes no search text — adds `page.total` and
+`page.totalCapped` (one bounded count with the list's own conditions, in the list's transaction:
+`app/api/admin/users/list-users.ts`). `POST /api/admin/ai` adds `plan.roles` (the display name of
+each role an action the admin may run names). Each new field is declared in its route's response
+schema (TASK-215). Fixtures from the real handlers (`__tests__/route-fixtures.test.ts`), unit
+tests (`admin-console-routes`), and the count on a real database (`db/admin-users-count`).
+
+**Rebased onto 56c, 56c3, 56c2 and 56c4 (2026-11-15).** Built first on the 56b trees; on the newer base:
+
+- The Users screen reads `POST /api/admin/users/search` through the panel read
+  (`usePanelSearch`, beside `usePanelRead`), not the GET with `?q=` it was written against.
+- `adminCall` names its method wherever a call carries a body (a body no longer implies POST;
+  the type refuses one without a method), so the awaited-requests guard (TASK-217/218) reads what
+  every call sends. The guard now also reads an options parameter's `method`
+  (`options.method ?? "GET"`), a parameter used inside a callback as its own function's (the
+  panel reads call `adminCall` inside `useCallback`), a path an imported client function returns,
+  and `null` as no request; each with a planted self-test. The registry's section reads are one
+  literal map (`SECTION_READS`), which `sectionEndpoint` and the guard both read. Every wait in
+  this pass's journeys names its method.
+- Three answers TASK-215 declared from its fixtures alone lacked what this console shows: a
+  decision's `recorded: false` and `warning` (applied, its record not stored — E-2; production
+  would have removed them, so the screen said a plain "applied"), on `POST
+/api/admin/approvals/[id]` and the operator's tenant decision; and a plan's action input,
+  declared as scalars — a `set_approval_policy` plan's rules (objects) were refused outside
+  production and stripped in it. The input is now declared as the model's proposal
+  (`PLANNED_INPUT`), checked against the tool's own schema where it runs. Each is tested and
+  fails without its fix.
+
+**Left for the next two passes** — the guard's known list names each file with its pass.
+56d-2 (governance): SF-admin-030 to 037 (036: the note and the approver's label), 050 to 063,
+070 to 075, 080 to 084, 130 to 134, 160; E-56, E-66. 56d-3 (operator and moderation):
+SF-admin-090 to 093, 100 to 108, 110 to 119, 125 to 127, 140 to 149, 150 to 152; E-87 to E-89,
+E-91. Together with this pass's 27: all 105.
+
+**Decided here** (none is the owner's to decide beyond what the review settled): a moderator
+now opens on Moderation (People is the first group), not Approvals; a failed re-read replaces
+the earlier data rather than leaving it marked stale; an id is shown whole when "Show details"
+asks for it; outcomes accumulate until dismissed, and leaving a section clears its plan and
+outcomes; the erasure's free-text note waits for pass 56d-2 because the route takes none.
+
+**Design check**
+
+- **Reach:** the console's page, shell, command bar and Users screen; every admin screen through
+  the page-level panel state and `ResultList` (now the one outcome display); the answers of
+  the routes it reads (`session`, the Users list's two readers, `ai`) growing compatibly, and two
+  decision routes' declared answers completed; the catalogue; the E2E journeys of
+  the console and of moderation (a moderator now opens on Moderation). No migration, no setting.
+- **Races:** an answer for a read since left is dropped (`usePanelRead`: the wanted read is a
+  key, and only its own answer is kept); a second plan arriving while one is open gets its own
+  panel (a key), so a selection never outlives its plan; the count runs in the list's own
+  transaction, so the page and its total are one snapshot.
+- **Dependencies down:** the database down → the section's read is a failed read with Try
+  again, never an empty list; the session's name read failing → the header shows the role alone
+  and the session still answers; no answer at all (network) → the same failed read, or a "Not
+  done" outcome for a change, and the plan or the typed request stays to be sent again.
+- **Erasure leftovers:** none — nothing is stored. The session answer carries the caller's own
+  address only while it is recorded; an erased account's row is not read (`deleted_at is null`).
+- **Screens × responses:** every call of the converted screens goes through `adminCall`: 2xx,
+  202 held, every coded refusal (the catalogue's sentence, with what its kind needs — a retry
+  time, sign-in), an uncoded or non-JSON answer (the generic sentence) and no answer (the
+  network sentence). `refusal-coverage` counts a caller through `adminCall` as routed through
+  the shared handler, and checks that the helper is what it is counted as.
+- **Journeys touched:** `e2e/admin-console.spec.ts` gains six journeys (Users and the command
+  bar: a success, a refusal, a held change, an irreversible action's confirmation; 1280 px and
+  390 px; axe on `/admin`), paced within the console's rate limit; `e2e/moderation.spec.ts`
+  reads the already-open queue with its Refresh. The planner's answer is a fixed plan in those
+  journeys (a model's plan is not the same twice); the executor, holds and decisions are real.
+  No journey exemption is added.
+- **Weakens a tenant's protection?** No. Every control added is display only, and each route
+  still checks its own permission. The count is the caller's own tenant's, under row-level
+  security (tested against a second tenant); the session names only the caller; role display
+  names are sent only for an action the caller may run.
+- _Why a guard and a known list, not a lint rule._ The repository's guards are Jest scans with
+  planted-violation self-tests (TASK-200); a known list that must equal what each file still
+  breaks cannot go stale and cannot hide a new violation in a listed file.
+- _Why the registry reads the server's maps._ What the command bar can do on a section was
+  three hand-kept lists. The tables come from `SECTION_SEARCH_TABLES` directly; the tools from
+  `PANEL_TOOLS`, a client-safe list of names beside the permissions, held equal to the planner's
+  schemas by a test — importing the schemas themselves would pull server code into the page
+  (`no-client-tokens` refused it).
+- _Why a capped count._ TASK-185 deliberately read one row more instead of counting. A count
+  under row-level security scans the tenant's matching accounts, so it stops at 10,001 rows and
+  the pager then says "of more than 10,000".
+- _Why the detail takes the list's place on a narrow screen._ An inline row expansion in a
+  seven-column table at 390 px is narrower than the detail's own form; a panel below the list
+  was the finding. One place, focused, with Close leading back to the row.
+- _Accessibility._ Labelled controls (Field), focus moved to the plan and to each outcome, live
+  regions that exist before their text, keyboard operation (Escape, focus return, a scrollable
+  table region with `tabindex`), a visible focus ring on every control, 4.5:1 text; axe runs on
+  `/admin` in the E2E journeys at 1280 px and 390 px.
+- _Credits._ Focus management and live regions follow the **WAI-ARIA Authoring Practices Guide**
+  (W3C WAI ARIA Authoring Practices Task Force; the Alert Dialog and Table patterns) and
+  **WCAG 2.2** (W3C; success criteria 1.4.1, 1.4.3, 2.1.1, 2.4.3, 2.4.7, 3.3.1, 4.1.3).
+
+**Threat model**
+
+- **Boundary:** the admin console's page ↔ its routes' answers (`GET /api/admin/session`,
+  `POST /api/admin/users/search` and `GET /api/admin/users`, `POST /api/admin/ai`, and the
+  declared answers of the two approval-decision routes). No guard, permission or write path
+  changes; a declared answer only lets a field the handler already sent reach the screen.
+- **Actors that exist today:** (1) an administrator of a tenant — anyone holding
+  `can_access_admin` — who could already read their own address and, holding
+  `admin_manage_users`, page through their tenant's accounts; (2) an administrator without a
+  tool's permission asking the planner about it; (3) anyone who can send a link to an
+  administrator (the section in the address). No other actor is given anything by this change.
+- **Bypasses:** none added. The gate, the confirmation's risk and the command bar's scope are
+  display only: a control hidden or disabled here is still refused by its route, and a plan is
+  still checked action by action by the executor (the journeys answer the planner with a fixed
+  plan in the page under test only — no production path can be handed a plan that way).
+- **Forgeries:** `?section=` naming no section, or one the caller may not open, opens the first
+  permitted section (tested) and is never written into the page as markup; a role name that is
+  not text, is empty or is over 64 characters is not looked up (tested); the count's statement
+  is a constant with bound parameters — LIKE metacharacters count what they name (tested on a
+  real database). A plan's action input is answered as the model proposed it (an administrator's
+  prompt can steer the model): the confirm step writes it as text, never markup, and the execute
+  route checks every input against its tool's own schema before anything runs (unchanged,
+  `inputKeyProblem`); the decision's `warning` is the server's own sentence.
+- **Legitimate flows:** an admin opens the console and sees who they are; reads Users with its
+  total; changes a role (held under dual control, or applied) and asks for an erasure (always
+  held); runs a command-bar plan; approves or rejects a held change from the command bar; a
+  moderator opens on their queue. Each is a journey or a screen test.
+- **Agreed before code:** the owner's brief for batch 56d-1 (the shared parts, the guard, the
+  console's core, the small route changes — "a user count, the admin's name on the session");
+  the 2026-11-12 screen review's fixes for SF-admin-005, 013 and 041.
+
+**Self-review**
+
+- **Consumers checked:** every importer of `AdminShell`, `AdminPromptBar`, `ActionConfirmPanel`,
+  `ExecutionResultsPanel`, `UsersPanel`, `ResultList`, `section-hints` and
+  `users-search-handoff` (the page, the screens of passes 2 and 3 through `ResultList`, their
+  tests); the callers of the three routes; a consuming app's own journeys and live journeys of
+  the console (Playform: its TASK-5017 updates Journey B and Journey C and the test that holds
+  Journey C's section list to the console's).
+- **Hostile re-read:** a refused or unanswered read can no longer be read as an empty list on
+  any section the page reads — but sections that read for themselves (Dual control, the kill
+  switch, the review queue) still say their own loading and failure until their pass, and the
+  guard's known list says so; the guard's patterns are a proxy (they prove a screen does not
+  write these things, not that it uses the shared part well — the screens' tests, the journeys
+  and the walk do that); `ResultList` is kept as a thin wrapper over `OutcomeList` so those
+  screens already show results in the one display; an erasure's free-text note is not asked,
+  because the route takes none (pass 56d-2, with the approver's label); the walk at 1280 px and
+  390 px is recorded with the batch (super admin, admin, moderator; list, empty, failed read,
+  detail, confirmations, held, refused).
+
 ### TASK-219 — A test's own jest run dropped every per-worker database of the live run; a sign-out clicked before the page's session read answered was refused, and the page claimed it anyway
 
 | Field        | Detail                                                                                                                                                    |

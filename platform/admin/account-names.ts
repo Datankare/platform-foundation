@@ -107,3 +107,35 @@ export function accountOf(
 ): NamedAccount | undefined {
   return typeof id === "string" ? accounts.get(id) : undefined;
 }
+
+/**
+ * The signed-in admin's own account, as the console's header names them (TASK-216,
+ * SF-admin-005): its address and display name, each null when it has none. The account is the
+ * caller's own, read in the tenant's transaction; a read that fails names no one — the header
+ * then shows the role alone — and is never a reason to refuse the session.
+ */
+export async function ownAccountName(
+  userId: string
+): Promise<{ readonly email: string | null; readonly displayName: string | null }> {
+  const none = { email: null, displayName: null };
+  if (!UUID.test(userId)) return none;
+  try {
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<{ email: string | null; display_name: string | null }>(
+        `select u.email, u.display_name from users u
+          where u.id = $1::uuid and u.deleted_at is null`,
+        [userId.toLowerCase()]
+      )
+    );
+    const row = rows[0];
+    if (!row) return none;
+    const text = (value: string | null) => (value && value.trim() !== "" ? value : null);
+    return { email: text(row.email), displayName: text(row.display_name) };
+  } catch (err) {
+    logger.warn("The admin's own account name could not be read", {
+      route: "api/admin/session",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return none;
+  }
+}

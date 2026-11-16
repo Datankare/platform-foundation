@@ -750,6 +750,15 @@ const ADMIN_CONSOLE: Readonly<Record<string, () => Promise<RouteFixture>>> = {
     rows(() => []);
     return record(await sessionGET(req("/api/admin/session", "GET", "super_admin")));
   },
+  // TASK-216 (SF-admin-005): who is signed in — the admin's own account, by name and address.
+  "GET /api/admin/session — a super admin with a name and an address": async () => {
+    rows((sql) =>
+      /^select u\.email, u\.display_name from users u/.test(sql)
+        ? [{ email: "root@example.com", display_name: "Root Admin" }]
+        : []
+    );
+    return record(await sessionGET(req("/api/admin/session", "GET", "super_admin")));
+  },
   "GET /api/admin/session — the development bypass": async () =>
     record(await devBypassSession()),
   "GET /api/admin/session — a role made for roles only": async () => {
@@ -998,6 +1007,9 @@ function usersTables(
   }[] = []
 ): (sql: string, values: readonly unknown[]) => unknown[] | undefined {
   return (sql, values) => {
+    // The list's count (TASK-216): what its conditions match, capped by its last parameter.
+    if (/^select count\(\*\)::int as n from \(select 1 from users u /.test(sql))
+      return [{ n: Math.min(users.length, Number(values[values.length - 1])) }];
     if (/from users u /.test(sql)) return users.slice(0, Number(values[1]));
     if (/from user_entitlements ue/.test(sql)) return [...grants];
     if (/^select id, name, display_name from roles order by/.test(sql)) return ROLE_ROWS;
@@ -2521,6 +2533,144 @@ const ONE_LIST: Readonly<Record<string, () => Promise<RouteFixture>>> = {
   },
 };
 
+/**
+ * The console's core (TASK-216: app/admin/page.tsx, components/admin/SectionConsole.tsx, the
+ * command bar): plans as the planner route answers them — the model's tool calls passed
+ * through, with the accounts and the roles it names resolved — and a decision whose record
+ * could not be stored.
+ */
+const RUNTIME_HOLD = "00000000-0000-4000-8000-0000000000ff";
+function modelCalls(
+  text: string,
+  ...calls: { name: string; input: Record<string, unknown> }[]
+): void {
+  model(async () => ({
+    content: [
+      { type: "text", text },
+      ...calls.map((call, i) => ({ type: "tool_use", id: `tu-${i}`, ...call })),
+    ],
+    usage: { inputTokens: 10, outputTokens: 10 },
+  }));
+}
+const planOn = (panel: string, prompt = "do it") =>
+  planPOST(req("/api/admin/ai", "POST", "super_admin", { prompt, panel }));
+/** The users and roles a plan's names are resolved against: Ann, and one role with a display name. */
+function planNames(): void {
+  const users = usersTables([ANN]);
+  rows((sql, values) => {
+    if (/^select name, display_name from roles where name = any/.test(sql))
+      return [{ name: "mod_l2", display_name: "Senior Moderator" }].filter((r) =>
+        (values[0] as string[]).includes(r.name)
+      );
+    if (/^select id, email, role_id from users where id/.test(sql))
+      return values[0] === ANN.id
+        ? [{ id: ANN.id, email: ANN.email, role_id: ANN.role_id }]
+        : [];
+    if (/^select id, email, role_id from users where email/.test(sql))
+      return values[0] === ANN.email
+        ? [{ id: ANN.id, email: ANN.email, role_id: ANN.role_id }]
+        : [];
+    return users(sql, values);
+  });
+}
+
+const CONSOLE_CORE: Readonly<Record<string, () => Promise<RouteFixture>>> = {
+  "POST /api/admin/ai — a plan: three searches on Roles": async () => {
+    rows(() => []);
+    modelCalls(
+      "Three searches.",
+      ...["roles", "permissions", "role_permissions"].map((table) => ({
+        name: "search",
+        input: { table },
+      }))
+    );
+    return record(await planOn("roles"));
+  },
+  "POST /api/admin/ai — a plan: erase Ann, change her role, and search": async () => {
+    planNames();
+    modelCalls(
+      "Three changes.",
+      { name: "purge_user_data", input: { userId: ANN.id } },
+      {
+        name: "change_user_role",
+        input: { user_identifier: ANN.id, new_role: "mod_l2" },
+      },
+      { name: "search", input: { table: "users" } }
+    );
+    return record(await planOn("users"));
+  },
+  "POST /api/admin/ai — a plan: a role change for an account that is not found":
+    async () => {
+      planNames();
+      modelCalls("One change.", {
+        name: "change_user_role",
+        input: { user_identifier: "nobody@example.com", new_role: "admin" },
+      });
+      return record(await planOn("users"));
+    },
+  "POST /api/admin/ai — a plan: change a role's permissions, then delete it":
+    async () => {
+      planNames();
+      modelCalls(
+        "Two changes.",
+        {
+          name: "assign_permissions",
+          input: { role_name: "mod_l2", add: ["admin_view_audit"], remove: ["can_play"] },
+        },
+        { name: "delete_role", input: { role_name: "mod_l2" } }
+      );
+      return record(await planOn("roles"));
+    },
+  "POST /api/admin/ai — a plan: approve the held change": async () => {
+    rows(() => []);
+    modelCalls("One held change.", {
+      name: "approve_hold",
+      input: { proposalId: RUNTIME_HOLD, source: "runtime" },
+    });
+    return record(await planOn("approvals"));
+  },
+  "POST /api/admin/ai — a plan: reject the held change": async () => {
+    rows(() => []);
+    modelCalls("One held change.", {
+      name: "reject_hold",
+      input: { proposalId: RUNTIME_HOLD, source: "runtime" },
+    });
+    return record(await planOn("approvals"));
+  },
+  "POST /api/admin/ai — a plan: approve a held change that is not in the list":
+    async () => {
+      rows(() => []);
+      modelCalls("One held change.", {
+        name: "approve_hold",
+        input: { proposalId: "99999999-9999-4999-8999-999999999999", source: "runtime" },
+      });
+      return record(await planOn("approvals"));
+    },
+  "POST /api/admin/ai — a plan: register an agent": async () => {
+    rows(() => []);
+    modelCalls("Registering.", {
+      name: "register_agent",
+      input: { agent_id: "agent:e2e-helper", scopes: [] },
+    });
+    return record(await planOn("agent-registry"));
+  },
+  "POST /api/admin/ai — an answer with nothing to do": async () => {
+    rows(() => []);
+    modelCalls("There is nothing to change.");
+    return record(await planOn("users"));
+  },
+  // Applied, and its record could not be stored (review 10 M5): the decision route says so.
+  "POST /api/admin/approvals/[id] — approved and applied, its record not stored":
+    async () => {
+      const id = await heldChange();
+      runAnswers({
+        kind: "applied",
+        unrecorded: "Applied, but its record could not be stored.",
+      });
+      return decide(id, "approve");
+    },
+};
+
 // ── The tenancy screens (components/admin/TenancyPanels.tsx) ──
 
 const T = {
@@ -3122,6 +3272,17 @@ const TENANT_SETTINGS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
       });
       return recordStable(await acmeDecide(id, "approve", "runtime"));
     },
+  // TASK-216 (rebase onto 56c): applied, its record not stored — the operator's decision says so
+  // as the console's does (the declared answer lacked `recorded` and `warning`).
+  "POST /api/operator/tenants/[id]/approvals/[approvalId] — approved and applied, its record not stored":
+    async () => {
+      const id = await acmeHeldChange();
+      runAnswers({
+        kind: "applied",
+        unrecorded: "Applied, but its record could not be stored.",
+      });
+      return recordStable(await acmeDecide(id, "approve", "runtime"));
+    },
   "POST /api/operator/tenants/[id]/approvals/[approvalId] — an undecided erasure withdrawn":
     async () => {
       const id = await acmeUndecidedErasure();
@@ -3400,6 +3561,7 @@ const PRODUCERS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
   ...DECISIONS,
   ...REVIEW,
   ...ONE_LIST,
+  ...CONSOLE_CORE,
   ...TENANCY,
   ...TENANT_SETTINGS,
 };

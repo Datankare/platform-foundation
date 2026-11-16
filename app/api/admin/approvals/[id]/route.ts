@@ -70,6 +70,14 @@ const POST_RESPONSE: ResponseSchema = {
         },
       },
     },
+    // Applied, and its record could not be stored (review 10 M5; TASK-216, E-2): said so — the
+    // screen tells the administrator the change took effect without its record.
+    recorded: {
+      type: "boolean",
+    },
+    warning: {
+      type: "string",
+    },
     requestId: {
       type: "string",
     },

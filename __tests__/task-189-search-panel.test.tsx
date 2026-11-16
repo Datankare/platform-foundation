@@ -89,7 +89,7 @@ describe("TASK-189: the panel shows a search as a table", () => {
     expect(screen.queryByRole("table", { name: /Search results/ })).toBeNull();
   });
 
-  it("a column the catalog does not name shows its own name", () => {
+  it("a column the catalog does not name is made readable, never shown as stored (TASK-216)", () => {
     render(
       <ExecutionResultsPanel
         results={[
@@ -107,7 +107,10 @@ describe("TASK-189: the panel shows a search as a table", () => {
         onDismiss={jest.fn()}
       />
     );
-    expect(screen.getByText("unnamed_col")).toBeDefined();
+    expect(screen.getByRole("columnheader", { name: "Unnamed col" })).toBeDefined();
+    expect(screen.queryByText("unnamed_col")).toBeNull();
+    // A table the catalogue does not name is "this table", never its stored name.
+    expect(screen.getByText("1 row of this table.")).toBeDefined();
   });
 });
 
@@ -205,20 +208,20 @@ describe("TASK-189 round 1: the confirm panel says what a search will read", () 
   it("no filter: the table alone; a key the table does not take is named, never its value", () => {
     expect(describeSearch({ table: "roles" })).toBe("Search roles");
     expect(describeSearch({ table: "audit_log", within_days: 1 })).toBe(
-      "Search audit_log where recorded within the last 1 day"
+      "Search the audit log where recorded within the last 1 day"
     );
     expect(describeSearch({ table: "roles", within_days: 1 })).toBe(
-      "Search roles where within_days (an invalid value: the search will be refused)"
+      "Search roles where the days since it was recorded (an invalid value: the search will be refused)"
     );
     expect(describeSearch({ table: "roles", limit: 5 })).toBe(
-      "Search roles where limit (an invalid value: the search will be refused)"
+      "Search roles where Limit (an invalid value: the search will be refused)"
     );
   });
 
   it("round 2: a non-numeric day count is named as invalid, never a raw template", () => {
     const shown = describeSearch({ table: "users", signed_in_within_days: "seven" });
     expect(shown).toBe(
-      "Search users where signed_in_within_days (an invalid value: the search will be refused)"
+      "Search users where the days since the last sign-in (an invalid value: the search will be refused)"
     );
     expect(shown).not.toMatch(/[{}]|plural|seven/);
     expect(describeSearch({ table: "users", created_within_days: 0 })).not.toMatch(

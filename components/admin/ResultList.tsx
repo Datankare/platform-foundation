@@ -14,7 +14,7 @@
  */
 
 import React from "react";
-import { renderMessage } from "@/platform/errors/messages";
+import { OutcomeList } from "@/components/admin/ui/Outcome";
 
 /** One result: applied, held for approval, or not done. */
 export interface ShownResult {
@@ -23,13 +23,7 @@ export interface ShownResult {
   readonly text: string;
 }
 
-const STYLE: Record<ShownResult["kind"], string> = {
-  applied: "border-green-700 bg-green-900/20 text-green-200",
-  held: "border-blue-700 bg-blue-900/20 text-blue-100",
-  refused: "border-amber-700 bg-amber-900/20 text-amber-200",
-};
-
-let nextId = 1;
+let nextId = 1_000_000;
 
 /** A new result, with an id of its own (the list's key). */
 export function result(kind: ShownResult["kind"], text: string): ShownResult {
@@ -37,6 +31,11 @@ export function result(kind: ShownResult["kind"], text: string): ShownResult {
   return { id: nextId, kind, text };
 }
 
+/**
+ * The screens that list their results here are shown by the console's one outcome display
+ * (components/admin/ui/Outcome.tsx, TASK-216): this is its older name and shape, kept for the
+ * screens passes 56d-2 and 56d-3 move onto it directly.
+ */
 export function ResultList({
   results,
   onDismiss,
@@ -48,23 +47,12 @@ export function ResultList({
   readonly label: string;
 }) {
   return (
-    <div role="status" aria-live="polite" aria-label={label} className="mb-3 space-y-2">
-      {results.map((r) => (
-        <div
-          key={r.id}
-          data-result={r.kind}
-          className={`flex items-start justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${STYLE[r.kind]}`}
-        >
-          <span className="min-w-0 break-words">{r.text}</span>
-          <button
-            type="button"
-            onClick={() => onDismiss(r.id)}
-            className="shrink-0 text-xs text-gray-300 underline"
-          >
-            {renderMessage("screens.held.result_dismiss")}
-          </button>
-        </div>
-      ))}
-    </div>
+    <OutcomeList
+      outcomes={results.map((r) => ({ id: r.id, tone: r.kind, text: r.text }))}
+      onDismiss={onDismiss}
+      label={label}
+      // These screens place focus themselves (their confirm steps); the list only announces.
+      focusNewest={false}
+    />
   );
 }

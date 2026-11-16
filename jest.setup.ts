@@ -85,3 +85,10 @@ afterAll(() => {
     delete g.__SENTRY__;
   }
 });
+
+// The admin console keeps its open section in the address (TASK-216, `?section=`): no test
+// inherits the section another test opened.
+beforeEach(() => {
+  if (typeof window !== "undefined" && window.history?.replaceState)
+    window.history.replaceState(null, "", "/");
+});

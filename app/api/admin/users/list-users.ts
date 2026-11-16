@@ -18,6 +18,7 @@ import { apiError, internalError } from "@/platform/errors";
 import { roleOrderSql } from "@/platform/auth/catalog-order";
 import { parseUserListFilters, SEARCH_TEXT_MAX } from "@/app/api/admin/ai/search-filters";
 import {
+  USER_COUNT_CAP,
   USER_SORTS,
   USER_SORT_DIRECTIONS,
   listedStatus,
@@ -64,6 +65,25 @@ const FILTER = `where ($1 = '' or u.email ilike '%' || $1 || '%' or u.display_na
     and ($6::text is null or ${USER_STATUS_SQL} = $6::text)
     and ($7::int is null or u.last_login_at >= now() - make_interval(days => $7::int))
     and ($8::int is null or u.created_at >= now() - make_interval(days => $8::int))`;
+
+/**
+ * The count of what the list's conditions match, capped (TASK-216): FILTER's own text with its
+ * parameters renumbered for a statement that has no limit and offset — $1 the search term, then
+ * $2 text, $3 role, $4 status, $5 signed in within days, $6 created within days — and $7 the
+ * cap + 1. A constant made from a constant: nothing of a request is written into it.
+ */
+const COUNT_PARAM: Readonly<Record<string, string>> = {
+  $1: "$1",
+  $4: "$2",
+  $5: "$3",
+  $6: "$4",
+  $7: "$5",
+  $8: "$6",
+};
+const COUNT_SQL = `select count(*)::int as n from (select 1 from users u ${FILTER.replace(
+  /\$\d/g,
+  (p) => COUNT_PARAM[p] ?? p
+)} limit $7) matched`;
 
 /** One fixed statement per order — chosen by name, never assembled from the request. */
 const PAGE_SQL: Readonly<Record<`${UserSort}:${SortDirection}`, string>> = {
@@ -141,17 +161,27 @@ export async function listUsers(
   let users: UserRow[];
   let roles: RoleRow[];
   let grants: GrantRow[];
+  let matched: number;
   try {
-    ({ users, roles, grants } = await withTenantTx(async (tx) => {
-      const page = await tx.query<UserRow>(PAGE_SQL[`${sort}:${dir}`], [
-        term,
-        limit + 1,
-        offset,
-        typeof f.text === "string" ? likeTerm(f.text, SEARCH_TEXT_MAX) : "",
+    ({ users, roles, grants, matched } = await withTenantTx(async (tx) => {
+      const text = typeof f.text === "string" ? likeTerm(f.text, SEARCH_TEXT_MAX) : "";
+      const conditions = [
+        text,
         f.role ?? null,
         f.status ?? null,
         f.signed_in_within_days ?? null,
         f.created_within_days ?? null,
+      ];
+      const page = await tx.query<UserRow>(PAGE_SQL[`${sort}:${dir}`], [
+        term,
+        limit + 1,
+        offset,
+        ...conditions,
+      ]);
+      const counted = await tx.query<{ n: number }>(COUNT_SQL, [
+        term,
+        ...conditions,
+        USER_COUNT_CAP + 1,
       ]);
       const ids = page.rows.slice(0, limit).map((u) => u.id);
       const granted = ids.length
@@ -159,7 +189,12 @@ export async function listUsers(
         : [];
       // The role picker's order: the catalog's (TASK-192).
       const catalog = await tx.query<RoleRow>(ROLE_CATALOG_SQL);
-      return { users: page.rows, roles: catalog.rows, grants: granted };
+      return {
+        users: page.rows,
+        roles: catalog.rows,
+        grants: granted,
+        matched: Number(counted.rows[0]?.n ?? 0),
+      };
     }));
   } catch (error) {
     logger.error("Admin users list failed", {
@@ -204,7 +239,15 @@ export async function listUsers(
       name: r.name,
       displayName: r.display_name,
     })),
-    page: { limit, offset, hasMore: users.length > limit, sort, dir },
+    page: {
+      limit,
+      offset,
+      hasMore: users.length > limit,
+      sort,
+      dir,
+      total: Math.min(matched, USER_COUNT_CAP),
+      totalCapped: matched > USER_COUNT_CAP,
+    },
   });
   response.headers.set("Cache-Control", "no-store");
   return response;

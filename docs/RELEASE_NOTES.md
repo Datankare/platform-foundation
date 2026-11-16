@@ -28,6 +28,22 @@ Editor ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2 lists each wit
 `REFRESH_COOKIE_KEY` for 30 days more), then the code. Consumer steps: §1b, the twelve "Release
 candidate" rows.
 
+- **The admin console on shared parts, pass 1 of 3 (TASK-216).** The console's core — its
+  shell, the command bar and Users — is rebuilt on one set of shared parts
+  (`components/admin/ui/`: the table, the panel state, the outcome display, the confirmation
+  step and its registry, the permission gate, labels, the call helper, the detail panel, the
+  field, the section registry), and a guard keeps a screen from building one by hand
+  (`__tests__/admin-shared-components-guard.test.ts`; its known list is the screens the next
+  two passes convert). What an admin sees: who is signed in; sections in five groups, the open
+  one in the address (`?section=`); a failed read said as that on every section, with Refresh;
+  every command that cannot be undone marked so, saying what is lost; outcomes that say what
+  changed, for whom and what happens next, kept until dismissed; a role change confirmed "from →
+  to"; "1–25 of 312". No migration, no setting. Three answers grow, compatibly:
+  `GET /api/admin/session` adds `email` and `displayName`; `GET /api/admin/users` adds
+  `page.total` and `page.totalCapped`; `POST /api/admin/ai` adds `plan.roles`. A consumer's own
+  admin screens under `components/admin/` are read by the guard too: build them from the shared
+  parts, or list them in its known list with the pass that converts them.
+
 - **Server-side sessions: the browser holds no token (TASK-214, ADR-057, SEC-016).** A sign-in is
   a server-side record (`auth_sessions`, migration 070) behind one HttpOnly, Secure, SameSite=Lax
   cookie, `__Host-pf_session`; the identity provider's tokens stay on the server, encrypted under

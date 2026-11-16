@@ -55,6 +55,7 @@ import {
   USER_LIST_FILTERS,
 } from "@/app/api/admin/ai/search-filters";
 import { describeSearch, DESCRIBED_FILTERS } from "@/components/admin/search-description";
+import { filterLabel } from "@/components/admin/ui/labels";
 import { AUDIT_ACTIONS as SERVER_ACTIONS } from "@/platform/auth/audit";
 import { AUDIT_ACTIONS } from "@/platform/auth/audit-actions";
 import { SEARCHABLE_TABLES } from "@/app/api/admin/ai/tool-permissions";
@@ -156,7 +157,9 @@ describe("TASK-190: one list of filters and one check, three callers", () => {
       // The confirm panel: a refused value is never shown as given.
       const described = describeSearch({ table: "users", [name]: raw });
       if (ok) expect(described).not.toMatch(/invalid value/);
-      else expect(described).toMatch(new RegExp(`${name} \\(an invalid value`));
+      // The filter by its name in words (TASK-216): "the role (an invalid value…".
+      else
+        expect(described).toMatch(new RegExp(`${filterLabel(name)} \\(an invalid value`));
     }
   );
 
@@ -390,7 +393,9 @@ describe("TASK-190 residual (a): the confirm panel shows a value the server will
     [{ table: "platform_config", category: "bad category!" }, "category"],
   ])("%p → %s named as invalid, its value never shown", (input, name) => {
     const text = describeSearch(input);
-    expect(text).toContain(`${name} (an invalid value: the search will be refused)`);
+    expect(text).toContain(
+      `${filterLabel(name)} (an invalid value: the search will be refused)`
+    );
     const value = Object.values(input)[1] as string;
     expect(text).not.toContain(value);
   });
@@ -398,7 +403,7 @@ describe("TASK-190 residual (a): the confirm panel shows a value the server will
   it("a valid value is shown as the server will use it (trimmed)", () => {
     expect(
       describeSearch({ table: "users", role: "  Moderator ", status: "banned" })
-    ).toBe("Search users where role is Moderator, status is banned");
+    ).toBe("Search users where role is Moderator, status is Banned");
     expect(
       describeSearch({
         table: "audit_log",
@@ -406,7 +411,8 @@ describe("TASK-190 residual (a): the confirm panel shows a value the server will
         action: "role_changed",
       })
     ).toBe(
-      "Search audit_log where actor is 00000000-0000-4000-8000-0000000000aa, action is role_changed"
+      // The table and the action by name, the account's id cut short (TASK-216, SF-admin-023).
+      "Search the audit log where the actor is the account whose id starts 00000000…, action is Role changed"
     );
   });
 

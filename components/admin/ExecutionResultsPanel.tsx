@@ -4,7 +4,16 @@ import React from "react";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { isShownText, renderShown, type ShownText } from "@/platform/errors/shown-text";
 import { isErrorCode, messageKey, type ErrorCode } from "@/platform/errors/registry";
-import { ExpandableText } from "@/components/admin/ExpandableText";
+import { AdminTable, type Column } from "@/components/admin/ui/AdminTable";
+import { OutcomeList, type OutcomeEntry } from "@/components/admin/ui/Outcome";
+import {
+  columnLabel,
+  readableCode,
+  tableLabel,
+  toolLabel,
+} from "@/components/admin/ui/labels";
+import { IdDetail } from "@/components/admin/ui/Ref";
+import type { Tone } from "@/components/admin/ui/tokens";
 import { personText } from "@/components/admin/people";
 import {
   formatDate,
@@ -24,7 +33,7 @@ export interface SearchResultTable {
   filters?: Readonly<Record<string, string | number>>;
 }
 
-interface ExecutionResult {
+export interface ExecutionResult {
   tool: string;
   success: boolean;
   /** Held for an approval: not done, and not failed (review 9 H1). */
@@ -54,6 +63,14 @@ interface ExecutionResult {
   keptFilters?: "previous" | "earlier";
   /** The account the action acted on, by address (TASK-202, N-63): the execute route's. */
   account?: { readonly id: string; readonly email: string | null };
+  /** The outcome's id, stamped by the page when the result arrives (newOutcomeId). */
+  uid?: number;
+  /** What became of it in the page's own words (a decision's outcome), used before the rest. */
+  text?: string;
+  /** What happens next, in the page's words (a decision's: TASK-216, E-2). */
+  next?: string;
+  /** Applied, and its record could not be stored: said as that, never as plain "done". */
+  unrecorded?: boolean;
 }
 
 /**
@@ -62,6 +79,7 @@ interface ExecutionResult {
  * apiError rendered), as read; else the catalog's "Not done" (TASK-206, N-102).
  */
 function failureText(r: ExecutionResult): string {
+  if (r.text) return r.text;
   return r.code && isErrorCode(r.code)
     ? renderMessage(
         messageKey(r.code as ErrorCode),
@@ -72,19 +90,13 @@ function failureText(r: ExecutionResult): string {
 
 /** What a done or held action did, in the catalog's words (TASK-206, N-102). */
 function resultText(r: ExecutionResult): string {
+  if (r.text) return r.text;
   if (isShownText(r.result)) return renderShown(r.result);
   return renderMessage(`screens.admin_console.results.${r.held ? "held" : "done"}`);
 }
 
 const t = (key: string, values?: Record<string, string | number>) =>
   renderMessage(`screens.admin_console.search.${key}`, values);
-
-/** A column's heading from the catalog; a column the catalog does not name shows its name. */
-function heading(column: string): string {
-  const key = `screens.admin_console.search.columns.${column}`;
-  const label = renderMessage(key);
-  return label === key ? column : label;
-}
 
 /** The columns that hold a time: shown as "29 Oct 2026", the whole timestamp on hover. */
 const DATE_COLUMNS: ReadonlySet<string> = new Set([
@@ -94,26 +106,19 @@ const DATE_COLUMNS: ReadonlySet<string> = new Set([
   "updated_at",
 ]);
 
-/** An action's name in words (TASK-202, N-62: the screen named the tool, "update_config"). */
-export function toolLabel(tool: string): string {
-  const key = `screens.admin_console.tools.${tool}`;
-  const text = renderMessage(key);
-  return text === key
-    ? renderMessage("screens.admin_console.tools.unknown", { tool })
-    : text;
-}
+// An action's name in words: the labels' (TASK-216), re-exported where callers found it.
+export { toolLabel };
 
 /**
  * The id column — hidden unless "Show details" is on (TASK-190: the owner's decision; only admins
  * and super-admins are offered the toggle, and only they are sent the column: round 1, S-L1).
- * Only `id` (round 1, item 4): another `*_id` — an audit entry's actor and target — is shown as
- * the Audit log page shows it, its first 8 characters with the whole id on hover.
  */
 export const isIdColumn = (column: string): boolean => column === "id";
 
 /**
- * A reference to another row (actor_id, target_id): a detail, shown only with "Show details" —
- * an audit search names its actor and target by address in their own columns (TASK-202, N-63).
+ * A reference to another row (actor_id, target_id): a detail, shown only with "Show details"
+ * (TASK-216, SF-admin-024: it was shown to everyone whenever the table named no one). An audit
+ * search names its actor and target by address in their own columns (N-63).
  */
 const isReferenceColumn = (column: string): boolean =>
   column !== "id" && column.endsWith("_id");
@@ -154,6 +159,12 @@ export function shownCell(
     // a role with no display name ("qa_lead" → "Qa lead"; round 1, item 3).
     return { text: readableRole(raw, null), title: raw };
   }
+  // An audit entry's action is a stored code: by name (the Audit screen's own labels are pass
+  // 56d-2's; until then the code made readable, never raw).
+  if (table === "audit_log" && column === "action") {
+    const text = readableCode(raw);
+    return { text, title: text };
+  }
   if (table === "users" && column === "status") {
     const text = readableStatus(raw);
     return { text, title: text };
@@ -161,10 +172,12 @@ export function shownCell(
   return { text: raw, title: raw };
 }
 
+type Row = readonly Cell[];
+
 /**
- * A search's rows as a table (TASK-189) — before, one JSON text of every column. Only the
- * columns the server returned (its allowlist); wide or long results scroll inside the panel,
- * and a long value is cut to its column with the whole value on hover.
+ * A search's rows (TASK-189), in the console's one table (TASK-216): only the columns the server
+ * returned (its allowlist), each named from the catalogue — a column it does not name is made
+ * readable, never shown as its stored name; ids and references only with "Show details".
  */
 export function SearchResultGrid({
   table,
@@ -176,196 +189,120 @@ export function SearchResultGrid({
 }) {
   // No rows: the result line says so.
   if (table.rows.length === 0) return null;
-  // The columns shown, by their index in each row: the ids only with "Show details".
-  const shown = table.columns
-    .map((column, index) => ({ column, index }))
-    .filter(
-      ({ column }) =>
-        showIds ||
-        (!isIdColumn(column) &&
-          // A reference id is a detail when the table names it by address (an audit search).
-          !(
-            isReferenceColumn(column) &&
-            table.columns.includes(column.replace(/_id$/, ""))
-          ))
-    );
+  const columns: Column<Row>[] = table.columns.map((column, index) => {
+    const header = columnLabel(column);
+    if (isIdColumn(column) || isReferenceColumn(column))
+      return {
+        id: column,
+        header,
+        kind: "id",
+        value: (row) => {
+          const cell = row[index] ?? null;
+          return cell === null ? null : shownCell(table.table, column, cell).text;
+        },
+      };
+    return {
+      id: column,
+      header,
+      value: (row) => shownCell(table.table, column, row[index] ?? null).text,
+      title: (row) => shownCell(table.table, column, row[index] ?? null).title,
+    };
+  });
   return (
-    <div className="mt-2 max-h-96 max-w-full overflow-auto rounded border border-gray-800">
-      <table
-        className="w-full text-xs text-left border-collapse"
-        aria-label={t("table_label", { table: table.table })}
-      >
-        <thead>
-          <tr>
-            {shown.map(({ column }) => (
-              <th
-                key={column}
-                scope="col"
-                className="sticky top-0 bg-[#0a0f1e] text-gray-400 font-medium py-1 px-2 border-b border-gray-800 whitespace-nowrap"
-              >
-                {heading(column)}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {table.rows.map((row, i) => (
-            <tr key={i}>
-              {shown.map(({ column, index }) => {
-                const cell = shownCell(table.table, column, row[index] ?? null);
-                return (
-                  <td
-                    key={column}
-                    className="py-1 px-2 border-b border-gray-800/50 text-gray-300 align-top"
-                  >
-                    {/* A long value is cut, with a button that shows all of it (TASK-202,
-                        N-64: the cut was "…" with the value only in a tooltip). */}
-                    <div className="max-w-xs min-w-[6rem]">
-                      <ExpandableText
-                        text={cell.text}
-                        title={cell.title}
-                        column={heading(column)}
-                        limit={60}
-                      />
-                    </div>
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <AdminTable
+      dense
+      caption={t("table_label", { table: tableLabel(table.table) })}
+      columns={columns}
+      rows={table.rows}
+      rowKey={(_row, i) => String(i)}
+      showIds={showIds}
+    />
   );
 }
 
 interface ExecutionResultsPanelProps {
   results: ExecutionResult[];
-  onDismiss: () => void;
+  /** One result dismissed (its index); each stays until its own Dismiss. */
+  onDismiss: (index: number) => void;
   /** "Show details" (admins only): a search's id columns are shown. */
   showIds?: boolean;
 }
 
+const r = (key: string) => renderMessage(`screens.admin_console.results.${key}`);
+
+/** What became of one action, as the shared outcome display shows it. */
+export function resultOutcome(
+  result: ExecutionResult,
+  showIds = false
+): Omit<OutcomeEntry, "id"> {
+  const tone: Tone = result.success
+    ? result.unrecorded
+      ? "unrecorded"
+      : "applied"
+    : result.held
+      ? "held"
+      : "refused";
+  const name = toolLabel(result.tool);
+  let said: string;
+  let detail: React.ReactNode;
+  if (result.success && result.listed && result.table) {
+    // One list, not two (TASK-190): the Users screen's list shows the matches, and counts them.
+    said = t("users_in_list");
+  } else if (result.success && result.earlier && result.table) {
+    // An earlier users search of the plan: the last one drives the list (item 6).
+    said = t("users_earlier", {
+      matched: result.table.matched ?? result.table.rows.length,
+    });
+  } else {
+    said = result.success || result.held ? resultText(result) : failureText(result);
+    if (!result.success && result.keptFilters)
+      said += ` ${t(result.keptFilters === "earlier" ? "users_kept_earlier" : "users_kept_filters")}`;
+    if (result.success && result.table)
+      detail = <SearchResultGrid table={result.table} showIds={showIds} />;
+  }
+  const who = result.account ? personText({ email: result.account.email }) : undefined;
+  const next =
+    result.next ??
+    (result.held ? r("next_held") : result.unrecorded ? r("next_unrecorded") : undefined);
+  return {
+    tone,
+    action: name,
+    text: said,
+    ...(who ? { who } : {}),
+    ...(who && showIds && result.account
+      ? {
+          whoDetail: <IdDetail id={result.account.id} show />,
+        }
+      : {}),
+    ...(next ? { next } : {}),
+    ...(detail ? { detail } : {}),
+  };
+}
+
 /**
- * Shows execution results in a clean table format.
- * No raw JSON — structured display with status indicators.
+ * The command bar's results (TASK-216, SF-admin-021 to 024): each action's outcome in the shared
+ * display — what it was, whether it took effect, for whom, what happens next — announced, focused
+ * when it arrives, and kept until its own Dismiss.
  */
 export default function ExecutionResultsPanel({
   results,
   onDismiss,
   showIds = false,
 }: ExecutionResultsPanelProps) {
-  const allSuccess = results.every((r) => r.success);
-
+  // A result the page stamped keeps its outcome's id for as long as it is shown; one rendered
+  // without (a test's) is told apart by its place.
+  const entries = results.map((result, index) => ({
+    id: result.uid ?? -(index + 1),
+    ...resultOutcome(result, showIds),
+  }));
   return (
-    <div
-      className={`rounded-xl border p-5 mb-6 ${
-        allSuccess
-          ? "bg-green-900/10 border-green-800"
-          : "bg-amber-900/10 border-amber-800"
-      }`}
-    >
-      <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">
-        {renderMessage("screens.admin_console.results.title")}
-      </p>
-      <div className="bg-[#0a0f1e] rounded-lg overflow-x-auto">
-        <table className="w-full text-sm text-left border-collapse">
-          <thead>
-            <tr>
-              <th className="text-xs text-gray-400 uppercase py-2 px-3 border-b border-gray-800 w-8">
-                {renderMessage("screens.admin_console.results.col_status")}
-              </th>
-              <th className="text-xs text-gray-400 uppercase py-2 px-3 border-b border-gray-800 w-40">
-                {renderMessage("screens.admin_console.results.col_action")}
-              </th>
-              <th className="text-xs text-gray-400 uppercase py-2 px-3 border-b border-gray-800">
-                {renderMessage("screens.admin_console.results.col_result")}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {results.map((r, i) => (
-              <tr key={i}>
-                <td className="py-2 px-3 border-b border-gray-800/50">
-                  <span
-                    className={
-                      r.success
-                        ? "text-green-400"
-                        : r.held
-                          ? "text-amber-400"
-                          : "text-red-400"
-                    }
-                  >
-                    <span aria-hidden="true">{r.success ? "✓" : r.held ? "…" : "✕"}</span>
-                    <span className="sr-only">
-                      {renderMessage(
-                        `screens.admin_console.results.${
-                          r.success ? "done" : r.held ? "held" : "failed"
-                        }`
-                      )}
-                    </span>
-                  </span>
-                </td>
-                <td className="py-2 px-3 border-b border-gray-800/50">
-                  <span
-                    className={`text-xs px-1.5 py-0.5 rounded ${
-                      r.success
-                        ? "bg-green-900/20 text-green-400"
-                        : r.held
-                          ? "bg-blue-900/20 text-blue-300"
-                          : "bg-red-900/20 text-red-400"
-                    }`}
-                  >
-                    {toolLabel(r.tool)}
-                  </span>
-                </td>
-                <td className="py-2 px-3 border-b border-gray-800/50 text-sm text-gray-300">
-                  {r.success && r.listed && r.table ? (
-                    // One list, not two (TASK-190): the Users screen's list shows the matches —
-                    // and counts them itself (round 1, item 2).
-                    t("users_in_list")
-                  ) : r.success && r.earlier && r.table ? (
-                    // An earlier users search of the plan: the last one drives the list (item 6).
-                    t("users_earlier", {
-                      matched: r.table.matched ?? r.table.rows.length,
-                    })
-                  ) : (
-                    <>
-                      {r.success || r.held ? resultText(r) : failureText(r)}
-                      {r.account ? (
-                        <span className="block text-xs text-gray-300" data-account="true">
-                          {renderMessage("screens.admin_console.results.account", {
-                            account: personText({ email: r.account.email }),
-                          })}
-                          {showIds ? (
-                            <span className="ml-2 text-gray-400">
-                              {renderMessage("screens.admin_console.people.id", {
-                                id: r.account.id,
-                              })}
-                            </span>
-                          ) : null}
-                        </span>
-                      ) : null}
-                      {!r.success && r.keptFilters
-                        ? ` ${t(r.keptFilters === "earlier" ? "users_kept_earlier" : "users_kept_filters")}`
-                        : null}
-                      {r.success && r.table ? (
-                        <SearchResultGrid table={r.table} showIds={showIds} />
-                      ) : null}
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <button
-        onClick={onDismiss}
-        className="mt-3 text-sm text-gray-400 hover:text-gray-300 transition"
-      >
-        {renderMessage("screens.admin_console.results.dismiss")}
-      </button>
-    </div>
+    <OutcomeList
+      outcomes={entries}
+      label={r("title")}
+      onDismiss={(id) => {
+        const index = entries.findIndex((e) => e.id === id);
+        if (index >= 0) onDismiss(index);
+      }}
+    />
   );
 }
