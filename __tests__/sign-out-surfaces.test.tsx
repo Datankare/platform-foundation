@@ -47,7 +47,7 @@ describe("the home screen's Sign out", () => {
     signOut.mockResolvedValue(ended);
     render(<HomeClient />);
     await act(async () => {
-      screen.getByRole("button", { name: "Sign Out" }).click();
+      screen.getByRole("button", { name: "Sign out" }).click();
     });
     await waitFor(() => expect(signOut).toHaveBeenCalledTimes(1));
     expect(replace.mock.calls.map((c) => c[0])).toEqual(to);

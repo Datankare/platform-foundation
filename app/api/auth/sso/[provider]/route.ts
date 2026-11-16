@@ -8,6 +8,10 @@
  *
  * This is a navigation, not a fetch, so a failure redirects to /auth?error=<code> (the sign-in
  * screen renders the catalog message) rather than showing a JSON body.
+ *
+ * `?redirect=<path>`: the page sign-in was asked to return to (TASK-222, E-113) — kept in the
+ * attempt's cookie when it is a page of this site (platform/auth/return-path.ts), answered by the
+ * callback route once the session has started, and kept on a failure's way back to sign-in.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -29,11 +33,23 @@ import {
 } from "@/platform/auth/sso";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { RETURN_PARAM, safeReturnPath } from "@/platform/auth/return-path";
 import { type ResponseSchema, NOT_JSON } from "@/platform/errors/response-schema";
+
+/** The page sign-in was asked to return to, if it is a page of this site (TASK-222, E-113). */
+function askedFor(request: NextRequest): string | null {
+  return safeReturnPath(
+    request.nextUrl.searchParams.get("redirect"),
+    request.nextUrl.origin
+  );
+}
 
 function backToSignIn(request: NextRequest, code: ErrorCode): NextResponse {
   const url = new URL("/auth", request.nextUrl.origin);
   url.searchParams.set("error", code);
+  // Back at sign-in, still asked to return to the same page.
+  const returnTo = askedFor(request);
+  if (returnTo) url.searchParams.set(RETURN_PARAM, returnTo);
   const response = NextResponse.redirect(url, 303);
   response.headers.set("Cache-Control", "no-store");
   return response;
@@ -83,7 +99,9 @@ export const GET = tenantRoute(async function GET(
 
   const response = NextResponse.redirect(result.redirectUrl, 302);
   response.headers.set("Cache-Control", "no-store");
-  response.cookies.set(SSO_COOKIE, encodeSsoAttempt({ provider, state, verifier }), {
+  const returnTo = askedFor(request);
+  const attempt = { provider, state, verifier, ...(returnTo ? { returnTo } : {}) };
+  response.cookies.set(SSO_COOKIE, encodeSsoAttempt(attempt), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",

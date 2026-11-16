@@ -54,6 +54,8 @@ const PLATFORM_PUBLIC: Readonly<Record<string, string>> = {
     "Readiness for load balancers and the deploy smoke test (ADR-056 D4); names and statuses only.",
   "app/api/features/route.ts GET":
     "Which optional features exist; read by the sign-in screen.",
+  "app/api/auth/password-policy/route.ts GET":
+    "The password rules the sign-up, reset and new-password screens state before anyone is signed in (TASK-222): the length and kinds of character only, never whose policy, its history or rotation.",
   "app/api/auth/sign-in/route.ts POST": "Establishes the session.",
   "app/api/auth/sign-up/route.ts POST": "Creates the account.",
   "app/api/auth/sign-out/route.ts POST":

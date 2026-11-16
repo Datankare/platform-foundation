@@ -77,23 +77,37 @@ export interface SsoAttempt {
   readonly provider: SsoProvider;
   readonly state: string;
   readonly verifier: string;
+  /**
+   * The page sign-in was asked to return to (TASK-222, E-113): a path of this site, checked when
+   * the attempt starts and again when it completes (platform/auth/return-path.ts). Kept in the
+   * attempt's own httpOnly cookie, so nothing is put in the browser's storage.
+   */
+  readonly returnTo?: string;
 }
 
 const TOKEN = /^[\w-]{43,128}$/;
 
 export function encodeSsoAttempt(attempt: SsoAttempt): string {
-  return `${attempt.provider}.${attempt.state}.${attempt.verifier}`;
+  const base = `${attempt.provider}.${attempt.state}.${attempt.verifier}`;
+  return attempt.returnTo
+    ? `${base}.${Buffer.from(attempt.returnTo, "utf8").toString("base64url")}`
+    : base;
 }
 
 /** The attempt in a cookie value, or null when absent or malformed. */
 export function decodeSsoAttempt(value: string | undefined): SsoAttempt | null {
   if (!value) return null;
   const parts = value.split(".");
-  if (parts.length !== 3) return null;
-  const [provider, state, verifier] = parts;
+  if (parts.length !== 3 && parts.length !== 4) return null;
+  const [provider, state, verifier, kept] = parts;
   if (!isSsoProvider(provider) || !TOKEN.test(state) || !TOKEN.test(verifier))
     return null;
-  return { provider, state, verifier };
+  if (kept === undefined) return { provider, state, verifier };
+  if (!/^[\w-]{1,4096}$/.test(kept)) return null;
+  const returnTo = Buffer.from(kept, "base64url").toString("utf8");
+  // A path (its caller still checks it is one of this site's: platform/auth/return-path.ts).
+  if (!returnTo.startsWith("/")) return null;
+  return { provider, state, verifier, returnTo };
 }
 
 /** Constant-time comparison of the returned state with the stored one. */

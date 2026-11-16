@@ -24,7 +24,8 @@
  *      in platform/'s .tsx files, other than: a catalog call's argument
  *      (`t`, `msg`, `renderMessage` and a file's helpers over it), a log line, an Error's message,
  *      a comparison or `case` (a value tested, not shown), an import, a type, a technical attribute
- *      or property (className, id, key, data-*, role, type, href, style values…). A string shaped
+ *      or property (className, id, key, data-*, role, type, href, style values, an SVG drawing's
+ *      geometry and colours — d, viewBox, points, fill…, TASK-222). A string shaped
  *      like code — a CSS class list or value, a cookie, a dotted key, a path or URL, an identifier —
  *      is not words. Text reaching a screen through a component's prop or a hook's state is caught
  *      here, where rule A cannot follow it.
@@ -695,7 +696,7 @@ export function indirectSites(src: Sources, root: string): string[] {
 // ── Rule B: screen code ───────────────────────────────────────────────
 
 const TECH_ATTRS =
-  /^(?:className|class|id|key|ref|role|type|name|value|defaultValue|href|src|htmlFor|method|action|target|rel|autoComplete|inputMode|accept|encType|lang|dir|style|data-[\w-]+|aria-(?!label$)[\w-]+|variant|size|mode|testId|pattern|form|sizes|media|as|crossOrigin|referrerPolicy|integrity|nonce|charSet|httpEquiv|content|property)$/;
+  /^(?:className|class|id|key|ref|role|type|name|value|defaultValue|href|src|htmlFor|method|action|target|rel|autoComplete|inputMode|accept|encType|lang|dir|style|data-[\w-]+|aria-(?!label$)[\w-]+|variant|size|mode|testId|pattern|form|sizes|media|as|crossOrigin|referrerPolicy|integrity|nonce|charSet|httpEquiv|content|property|d|viewBox|points|transform|fill|stroke|strokeWidth|fillRule|clipRule)$/;
 const TECH_PROPS =
   /^(?:className|class|id|key|testId|href|url|path|route|method|headers|Content-Type|Authorization|fontFamily|fontSize|fontWeight|padding|margin|width|height|background|backgroundColor|border\w*|cursor|display|gap|lineHeight|textAlign|transition|boxShadow|outline|zIndex|flex\w*|maxWidth|minHeight|whiteSpace|wordBreak|overflow\w*)$/;
 /** Rule C: an alert to the operators or the error reporter, never an answer. */
@@ -2027,6 +2028,8 @@ describe("screen text reached indirectly comes from the catalog (TASK-205)", () 
           'export const T = () => (<DataTable headers={["Code", "Name"]} emptyMessage="No groups yet."',
           '  className="flex mt-2 text-gray-400" style={{ padding: "0.5rem 1.5rem", fontFamily: "system-ui, sans-serif" }}',
           '  data-testid="x" aria-live="polite">{t("ok")}<span className={`break-words ${a ? "font-mono text-xs" : ""}`} /></DataTable>);',
+          // An SVG drawing's geometry and colours are not words (TASK-222: the sign-on marks).
+          'export const M = () => (<svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0" /></svg>);',
         ].join("\n"),
       }),
       "/v"

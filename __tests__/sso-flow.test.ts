@@ -320,3 +320,95 @@ describe("POST /api/auth/sso/callback", () => {
     expect(cleared(res)).toBe(true);
   });
 });
+
+// ── TASK-222 (E-113): the page asked for travels with the attempt, never through the browser ──
+describe("single sign-on returns to the page asked for (TASK-222, E-113)", () => {
+  const startAsked = (redirect: string) =>
+    start(
+      new NextRequest(
+        `${ORIGIN}/api/auth/sso/google?redirect=${encodeURIComponent(redirect)}`
+      ),
+      { params: Promise.resolve({ provider: "google" }) }
+    );
+  const signedOn = () =>
+    mockProvider.handleSsoCallback.mockResolvedValue({
+      success: true,
+      userId: "u-1",
+      accessToken: "access",
+      refreshToken: "refresh",
+      idToken: `h.${b64url({ email: "r@x.com", email_verified: true })}.s`,
+      expiresIn: 3600,
+    });
+
+  it("the start keeps a page of this site in the attempt's httpOnly cookie, and the callback answers it", async () => {
+    mockProvider.initiateSso.mockResolvedValue({
+      success: true,
+      redirectUrl: "https://pfx.auth.us-east-1.amazoncognito.com/oauth2/authorize?x=1",
+    });
+    const res = await startAsked("/admin?section=users");
+    const attempt = decodeSsoAttempt(res.cookies.get(SSO_COOKIE)?.value);
+    expect(attempt?.returnTo).toBe("/admin?section=users");
+    // Not in the provider's address: the path stays here.
+    expect(res.headers.get("location")).not.toContain("section");
+    signedOn();
+    const done = await callbackReq(
+      { code: "the-code", state: attempt!.state },
+      res.cookies.get(SSO_COOKIE)!.value
+    );
+    expect(await done.json()).toMatchObject({
+      success: true,
+      returnTo: "/admin?section=users",
+    });
+  });
+
+  it.each([
+    "//evil.example/",
+    "https://evil.example/",
+    "/\\evil.example",
+    "/auth?view=two-step",
+  ])(
+    "hostile:open-redirect — the start keeps no page that is not this site's: %s",
+    async (redirect) => {
+      mockProvider.initiateSso.mockResolvedValue({
+        success: true,
+        redirectUrl: "https://pfx.auth.us-east-1.amazoncognito.com/oauth2/authorize?x=1",
+      });
+      const res = await startAsked(redirect);
+      expect(
+        decodeSsoAttempt(res.cookies.get(SSO_COOKIE)?.value)?.returnTo
+      ).toBeUndefined();
+    }
+  );
+
+  it("hostile:forged-cookie — an attempt cookie naming another site is never answered", async () => {
+    const state = randomToken();
+    const forged = `google.${state}.${randomToken()}.${Buffer.from("//evil.example/").toString("base64url")}`;
+    signedOn();
+    const res = await callbackReq({ code: "the-code", state }, forged);
+    expect(res.status).toBe(200);
+    expect((await res.json()).returnTo).toBeUndefined();
+  });
+
+  it("a failed start returns to sign-in still asking for the page", async () => {
+    mockProvider.initiateSso.mockResolvedValue({ success: false, error: "x" });
+    const res = await startAsked("/account");
+    expect(res.headers.get("location")).toBe(
+      `${ORIGIN}/auth?error=auth.sso_failed&redirect=%2Faccount`
+    );
+  });
+
+  it("an attempt's kept path round-trips; one that is not a path is malformed", () => {
+    const attempt = {
+      provider: "google" as const,
+      state: randomToken(),
+      verifier: randomToken(),
+      returnTo: "/a?b=c#d",
+    };
+    expect(decodeSsoAttempt(encodeSsoAttempt(attempt))).toEqual(attempt);
+    expect(
+      decodeSsoAttempt(
+        `google.${randomToken()}.${randomToken()}.${Buffer.from("evil").toString("base64url")}`
+      )
+    ).toBeNull();
+  });
+});

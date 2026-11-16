@@ -174,14 +174,14 @@ describe("sign out everywhere, from the account page (ADR-057 D6)", () => {
 });
 
 describe("the home bar's way to the account page (TASK-210)", () => {
-  it("a signed-in user: Your account, beside Sign Out", () => {
+  it("a signed-in user: Your account, beside Sign out", () => {
     signedIn();
     render(<HomeClient />);
     expect(screen.getByRole("link", { name: "Your account" })).toHaveAttribute(
       "href",
       "/account"
     );
-    expect(screen.getByRole("button", { name: "Sign Out" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
   });
 
   it("a guest: no account, so no link", () => {

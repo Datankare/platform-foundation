@@ -6,6 +6,7 @@ import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import SsoButtons from "@/components/auth/SsoButtons";
 import AuthLayout from "@/components/auth/AuthLayout";
+import { say } from "@/__tests__/helpers/auth-screen";
 
 describe("SsoButtons", () => {
   const mockOnSsoClick = jest.fn().mockResolvedValue(undefined);
@@ -23,25 +24,48 @@ describe("SsoButtons", () => {
 
   it("renders every provider it is given", () => {
     render(<SsoButtons onSsoClick={mockOnSsoClick} enabledProviders={[...ALL]} />);
-    expect(screen.getByText("Continue with Google")).toBeDefined();
-    expect(screen.getByText("Continue with Apple")).toBeDefined();
-    expect(screen.getByText("Continue with Microsoft")).toBeDefined();
+    for (const p of ALL)
+      expect(screen.getByText(say(`sso.continue_with_${p}`))).toBeDefined();
+  });
+
+  it("SF-app-047: each provider's mark is drawn, never a private-use character a font may not have", () => {
+    const { container } = render(
+      <SsoButtons onSsoClick={mockOnSsoClick} enabledProviders={[...ALL]} />
+    );
+    for (const p of ALL) {
+      const mark = container.querySelector(`svg[data-provider-mark="${p}"]`);
+      expect(mark).not.toBeNull();
+      expect(mark?.getAttribute("aria-hidden")).toBe("true");
+    }
+    // No character from the Unicode private-use area (U+E000–U+F8FF) anywhere in the buttons.
+    const privateUse = [...(container.textContent ?? "")].filter((c) => {
+      const cp = c.codePointAt(0)!;
+      return cp >= 0xe000 && cp <= 0xf8ff;
+    });
+    expect(privateUse).toEqual([]);
+    // Each button is named by its words alone.
+    expect(
+      screen.getByRole("button", { name: say("sso.continue_with_apple") })
+    ).toBeDefined();
   });
 
   it("renders only enabled providers", () => {
     render(<SsoButtons onSsoClick={mockOnSsoClick} enabledProviders={["google"]} />);
-    expect(screen.getByText("Continue with Google")).toBeDefined();
-    expect(screen.queryByText("Continue with Apple")).toBeNull();
-    expect(screen.queryByText("Continue with Microsoft")).toBeNull();
+    expect(screen.getByText(say("sso.continue_with_google"))).toBeDefined();
+    expect(screen.queryByText(say("sso.continue_with_apple"))).toBeNull();
+    expect(screen.queryByText(say("sso.continue_with_microsoft"))).toBeNull();
   });
 
-  it("calls onSsoClick with provider id", async () => {
-    render(<SsoButtons onSsoClick={mockOnSsoClick} enabledProviders={["google"]} />);
-    fireEvent.click(screen.getByText("Continue with Google"));
-
-    await waitFor(() => {
-      expect(mockOnSsoClick).toHaveBeenCalledWith("google");
-    });
+  it("calls onSsoClick with provider id, and never submits a form it sits in", async () => {
+    const onSubmit = jest.fn((e: React.FormEvent) => e.preventDefault());
+    render(
+      <form onSubmit={onSubmit}>
+        <SsoButtons onSsoClick={mockOnSsoClick} enabledProviders={["google"]} />
+      </form>
+    );
+    fireEvent.click(screen.getByText(say("sso.continue_with_google")));
+    await waitFor(() => expect(mockOnSsoClick).toHaveBeenCalledWith("google"));
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("shows connecting state while loading", async () => {
@@ -53,16 +77,12 @@ describe("SsoButtons", () => {
         })
     );
     render(<SsoButtons onSsoClick={slowClick} enabledProviders={["google"]} />);
-    fireEvent.click(screen.getByText("Continue with Google"));
-
-    await waitFor(() => {
-      expect(screen.getByText("Connecting...")).toBeDefined();
-    });
-
+    fireEvent.click(screen.getByText(say("sso.continue_with_google")));
+    await waitFor(() => expect(screen.getByText(say("sso.connecting"))).toBeDefined());
     resolveClick!();
-    await waitFor(() => {
-      expect(screen.getByText("Continue with Google")).toBeDefined();
-    });
+    await waitFor(() =>
+      expect(screen.getByText(say("sso.continue_with_google"))).toBeDefined()
+    );
   });
 
   it("disables all buttons when disabled prop is true", () => {
@@ -75,58 +95,41 @@ describe("SsoButtons", () => {
     );
     const buttons = screen.getAllByRole("button");
     expect(buttons).toHaveLength(3);
-    buttons.forEach((button) => {
-      expect(button.getAttribute("disabled")).not.toBeNull();
-    });
+    buttons.forEach((button) => expect(button.getAttribute("disabled")).not.toBeNull());
   });
 });
 
 describe("AuthLayout", () => {
-  it("renders children inside the layout", () => {
+  it("renders children inside the page's main landmark (SF-app-051)", () => {
     render(
       <AuthLayout>
         <div>Test content</div>
       </AuthLayout>
     );
-    expect(screen.getByText("Test content")).toBeDefined();
+    expect(screen.getByRole("main").textContent).toContain("Test content");
   });
 
-  it("renders PLAYFORM title by default", () => {
+  it("SF-app-051: the brand is two catalogue parts, read as one word", () => {
     render(
       <AuthLayout>
         <div>Content</div>
       </AuthLayout>
     );
-    expect(screen.getByText("PLAY")).toBeDefined();
-    expect(screen.getByText("FORM")).toBeDefined();
-  });
-
-  it("renders custom title", () => {
-    render(
-      <AuthLayout title="MY APP">
-        <div>Content</div>
-      </AuthLayout>
+    const h1 = screen.getByRole("heading", { level: 1 });
+    expect(h1.textContent).toBe(say("layout.brand_first") + say("layout.brand_second"));
+    expect(screen.getByText(say("layout.brand_second")).className).toMatch(
+      /text-blue-400/
     );
-    expect(screen.getByText("MY APP")).toBeDefined();
   });
 
-  it("renders subtitle", () => {
-    render(
-      <AuthLayout subtitle="Custom Subtitle">
-        <div>Content</div>
-      </AuthLayout>
-    );
-    expect(screen.getByText("Custom Subtitle")).toBeDefined();
-  });
-
-  it("renders footer tagline", () => {
-    render(
+  it("E-110: no internal tagline — the code base's names are not shown to a person signing in", () => {
+    const { container } = render(
       <AuthLayout>
         <div>Content</div>
       </AuthLayout>
     );
-    expect(
-      screen.getByText("Foundation as Fabric · Continuous Confidence")
-    ).toBeDefined();
+    expect(container.textContent).not.toMatch(
+      /Platform Foundation|Foundation as Fabric|Continuous Confidence/
+    );
   });
 });

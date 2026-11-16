@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 /**
- * app/admin — the console's own "Sign Out" ends the session (TASK-184; pre-existing). It left for
+ * app/admin — the console's own "Sign out" ends the session (TASK-184; pre-existing). It left for
  * "/" with a full load and nothing else: the access token and the user stayed in storage, the
  * refresh cookie stayed live, and the next page was still signed in. Now it calls the auth
  * context's signOut — the server's sign-out with the access token, then the stored session
@@ -94,7 +94,7 @@ beforeEach(() => {
   legacyStorage();
 });
 
-describe("the console's Sign Out ends the session (TASK-184)", () => {
+describe("the console's Sign out ends the session (TASK-184)", () => {
   it("calls the server's sign-out with the session's forgery token and no credential of its own, then leaves for /auth", async () => {
     serve(async () => json("POST /api/auth/sign-out — signed out"));
     fireEvent.click(await openConsole());

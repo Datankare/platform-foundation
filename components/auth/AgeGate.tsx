@@ -7,6 +7,9 @@ import {
   type AgeVerificationResult,
 } from "@/platform/auth/age";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+import { AuthField, AuthInput } from "@/components/auth/ui/AuthField";
+import { AuthHeading } from "@/components/auth/ui/AuthHeading";
+import { AUTH_LEAD, AUTH_LINK, AUTH_PRIMARY } from "@/components/auth/ui/styles";
 
 /** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
 const t = (key: string, values?: MessageValues) =>
@@ -15,6 +18,32 @@ const t = (key: string, values?: MessageValues) =>
 interface AgeGateProps {
   onVerified: (result: AgeVerificationResult, dateOfBirth: string) => void;
   onCancel: () => void;
+}
+
+/** The oldest date of birth taken (120 years before today), and today, as YYYY-MM-DD. */
+export function dateBounds(now: Date = new Date()): { min: string; max: string } {
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const min = new Date(now);
+  min.setUTCFullYear(now.getUTCFullYear() - 120);
+  return { min: iso(min), max: iso(now) };
+}
+
+/**
+ * Why a date of birth is not taken, or null when it is: the date as the field gives it
+ * (YYYY-MM-DD from a date field; whatever was typed where the browser has none).
+ */
+export function dateProblem(value: string, now: Date = new Date()): string | null {
+  if (value.trim() === "") return t("enter_your_date_of_birth");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return t("please_enter_a_valid_date");
+  try {
+    evaluateAge(value, now);
+  } catch (err) {
+    return err instanceof RangeError && /future/.test(err.message)
+      ? t("date_of_birth_cannot_be")
+      : t("please_enter_a_valid_date");
+  }
+  if (value < dateBounds(now).min) return t("please_enter_a_valid_date");
+  return null;
 }
 
 /**
@@ -27,156 +56,67 @@ interface AgeGateProps {
  * 3. Child (<13) → requires parental consent before proceeding — until that flow ships (Batch 4)
  *    the gate refuses the date with `account.child_accounts_unavailable` and nothing is created
  *    (TASK-181, platform/auth/age.ts UNDER_13_ACCOUNTS_AVAILABLE).
+ *
+ * One date field, in a form (TASK-222, SF-app-046): Enter continues, and the browser's own date
+ * control puts day, month and year in the reader's order — three boxes fixed month-first did
+ * not. The date it gives is always YYYY-MM-DD, whatever it shows. A refusal is the field's
+ * error: announced, and the field marked.
  */
 export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
-  const [month, setMonth] = useState("");
-  const [day, setDay] = useState("");
-  const [year, setYear] = useState("");
+  const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const bounds = dateBounds();
 
-  const currentYear = new Date().getFullYear();
-  const minYear = currentYear - 120;
-  const maxYear = currentYear;
-
-  const isComplete = month !== "" && day !== "" && year !== "" && year.length === 4;
-
-  const handleSubmit = () => {
-    setError(null);
-
-    const m = parseInt(month, 10);
-    const d = parseInt(day, 10);
-    const y = parseInt(year, 10);
-
-    if (isNaN(m) || isNaN(d) || isNaN(y)) {
-      setError(t("please_enter_a_valid_date"));
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const problem = dateProblem(value);
+    if (problem) {
+      setError(problem);
       return;
     }
-
-    if (m < 1 || m > 12) {
-      setError(t("month_must_be_between_1"));
-      return;
-    }
-
-    if (d < 1 || d > 31) {
-      setError(t("day_must_be_between_1"));
-      return;
-    }
-
-    if (y < minYear || y > maxYear) {
-      setError(t("please_enter_a_valid_year"));
-      return;
-    }
-
-    const dateOfBirth = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-
     // The one age calculation the server also uses (platform/auth/age.ts, TASK-144).
-    let result: AgeVerificationResult;
-    try {
-      result = evaluateAge(dateOfBirth);
-    } catch (err) {
-      setError(
-        err instanceof RangeError && /future/.test(err.message)
-          ? t("date_of_birth_cannot_be")
-          : t("please_enter_a_valid_date")
-      );
-      return;
-    }
-
+    const result = evaluateAge(value);
     if (isUnder13Unavailable(result)) {
       setError(renderMessage("errors.account.child_accounts_unavailable"));
       return;
     }
-
-    onVerified(result, dateOfBirth);
+    setError(null);
+    onVerified(result, value);
   };
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xl font-bold text-white text-center">{t("verify_your_age")}</h2>
-      <p className="text-sm text-gray-400 text-center">
-        {t("please_enter_your_date_of")}
-      </p>
+      <AuthHeading>{t("verify_your_age")}</AuthHeading>
+      <p className={AUTH_LEAD}>{t("please_enter_your_date_of")}</p>
 
-      <div className="flex gap-3">
-        <div className="flex-1">
-          <label htmlFor="age-month" className="block text-sm text-gray-400 mb-1.5">
-            {t("month")}
-          </label>
-          <input
-            id="age-month"
-            type="text"
-            inputMode="numeric"
-            maxLength={2}
-            placeholder={t("mm")}
-            value={month}
-            onChange={(e) => {
-              const v = e.target.value.replace(/\D/g, "").slice(0, 2);
-              setMonth(v);
-            }}
-            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white text-center text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-          />
-        </div>
-        <div className="flex-1">
-          <label htmlFor="age-day" className="block text-sm text-gray-400 mb-1.5">
-            {t("day")}
-          </label>
-          <input
-            id="age-day"
-            type="text"
-            inputMode="numeric"
-            maxLength={2}
-            placeholder={t("dd")}
-            value={day}
-            onChange={(e) => {
-              const v = e.target.value.replace(/\D/g, "").slice(0, 2);
-              setDay(v);
-            }}
-            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white text-center text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-          />
-        </div>
-        <div className="flex-1">
-          <label htmlFor="age-year" className="block text-sm text-gray-400 mb-1.5">
-            {t("year")}
-          </label>
-          <input
-            id="age-year"
-            type="text"
-            inputMode="numeric"
-            maxLength={4}
-            placeholder={t("yyyy")}
-            value={year}
-            onChange={(e) => {
-              const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-              setYear(v);
-            }}
-            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white text-center text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-          />
-        </div>
-      </div>
+      <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
+        <AuthField id="age-dob" label={t("date_of_birth")} error={error}>
+          {(control) => (
+            <AuthInput
+              {...control}
+              type="date"
+              autoComplete="bday"
+              min={bounds.min}
+              max={bounds.max}
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value);
+                setError(null);
+              }}
+              required
+              // The browser's own calendar control, drawn for a dark page.
+              className="[color-scheme:dark]"
+            />
+          )}
+        </AuthField>
 
-      {error && (
-        <div
-          role="alert"
-          aria-live="assertive"
-          className="bg-red-900/30 border border-red-700 text-red-300 rounded-xl px-4 py-3 text-sm"
-        >
-          {error}
-        </div>
-      )}
+        <button type="submit" className={AUTH_PRIMARY}>
+          {t("continue")}
+        </button>
+      </form>
 
-      <button
-        onClick={handleSubmit}
-        disabled={!isComplete}
-        className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        {t("continue")}
-      </button>
-
-      <p className="text-center text-sm text-gray-400">
-        <button
-          onClick={onCancel}
-          className="text-blue-400 hover:text-blue-300 transition"
-        >
+      <p className="text-center text-sm text-gray-300">
+        <button type="button" onClick={onCancel} className={AUTH_LINK}>
           {t("back_to_sign_in")}
         </button>
       </p>

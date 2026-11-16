@@ -7,6 +7,11 @@
  * the copy). The names go to the workers in TEST_DATABASE_WORKERS (they inherit this process's
  * environment); helpers/db-workers.ts says why, how a copy keeps the database's own privileges, and
  * why a run started inside another makes its own (TASK-219). Without a database configured: nothing.
+ *
+ * TASK-223: first, the copies a killed run on this host left of the same database are dropped
+ * (`reclaimKilledCopies`: marked, their owner no longer running, nobody connected — a live run's
+ * are never touched), and each copy made here is marked with this run and this process
+ * (`markCopy`), so the teardown can check they are gone and a later run can tell whose they are.
  */
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
@@ -14,7 +19,9 @@ import {
   copyDatabase,
   databaseOf,
   leaveEnclosingRun,
+  markCopy,
   quoteIdent,
+  reclaimKilledCopies,
   withDatabase,
   workerDatabaseName,
   WORKERS_ENV,
@@ -41,10 +48,16 @@ export default async function globalSetup(globalConfig: {
   const c = new Client({ connectionString: withDatabase(owner, "postgres") });
   await c.connect();
   try {
+    const reclaimed = await reclaimKilledCopies(c, base);
+    if (reclaimed.length > 0)
+      console.warn(
+        `[db-global-setup] dropped ${reclaimed.length} database(s) a killed test run left of ${base}: ${reclaimed.join(", ")}`
+      );
     for (let w = 1; w <= count; w++) {
       const name = workerDatabaseName(base, w, run);
       await copyDatabase(c, base, name);
       names[String(w)] = name;
+      await markCopy(c, name, run);
     }
   } catch (e) {
     for (const name of Object.values(names))

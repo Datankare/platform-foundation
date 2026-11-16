@@ -309,8 +309,15 @@ import { POST as signOutEverywherePOST } from "@/app/api/auth/sign-out-everywher
 import { sessionHeadersFor, startTestSession } from "@/__tests__/helpers/session";
 import { mintGuestToken } from "@/platform/auth/guest-token";
 import { GET as featuresGET } from "@/app/api/features/route";
+import { GET as signInPasswordPolicyGET } from "@/app/api/auth/password-policy/route";
 import { POST as guestPOST } from "@/app/api/auth/guest/route";
 import { POST as signInPOST } from "@/app/api/auth/sign-in/route";
+import { POST as signUpPOST } from "@/app/api/auth/sign-up/route";
+import { POST as verifyEmailPOST } from "@/app/api/auth/verify-email/route";
+import { POST as forgotPasswordPOST } from "@/app/api/auth/forgot-password/route";
+import { POST as confirmForgotPOST } from "@/app/api/auth/confirm-forgot-password/route";
+import { POST as ssoCallbackPOST } from "@/app/api/auth/sso/callback/route";
+import { SSO_COOKIE, encodeSsoAttempt } from "@/platform/auth/sso";
 import { POST as mfaSetupPOST } from "@/app/api/auth/mfa/setup/route";
 import { POST as mfaVerifyPOST } from "@/app/api/auth/mfa/verify/route";
 import { POST as runNowPOST } from "@/app/api/operator/jobs/schedules/[kind]/run/route";
@@ -1622,6 +1629,77 @@ const SESSION: Readonly<Record<string, () => Promise<RouteFixture>>> = {
       },
       async () => recordFeatures(await featuresGET(rawReq("/api/features", "GET")))
     ),
+  // TASK-222 (E-112): the rules the sign-in screens state, as the route answers them.
+  "GET /api/auth/password-policy — the built-in policy (none stored)": async () => {
+    rows(() => []);
+    return record(
+      await signInPasswordPolicyGET(rawReq("/api/auth/password-policy", "GET"))
+    );
+  },
+  "GET /api/auth/password-policy — an administrator's policy": async () => {
+    rows((sql) =>
+      /from password_policy/.test(sql)
+        ? [
+            {
+              rotation_days: 0,
+              min_length: 10,
+              require_uppercase: false,
+              require_lowercase: true,
+              require_number: true,
+              require_special: false,
+              password_history_count: 0,
+            },
+          ]
+        : undefined
+    );
+    return record(
+      await signInPasswordPolicyGET(rawReq("/api/auth/password-policy", "GET"))
+    );
+  },
+  // TASK-222 (E-113): a completed single sign-on answers the page its attempt was asked for.
+  "POST /api/auth/sso/callback — signed on, the page asked for answered": async () =>
+    withEnv(
+      {
+        AUTH_PROVIDER: "cognito",
+        NEXT_PUBLIC_COGNITO_USER_POOL_ID: "us-east-1_fixture",
+        NEXT_PUBLIC_COGNITO_CLIENT_ID: "fixture-client",
+        NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN: "auth.example.test",
+        SSO_PROVIDERS: "google",
+      },
+      async () => {
+        const createdUser = await createMockAuthProvider().signIn(
+          "member@example.test",
+          "x"
+        );
+        provider({
+          handleSsoCallback: async () => ({
+            success: true,
+            userId: createdUser.userId,
+            accessToken: createdUser.accessToken,
+            refreshToken: createdUser.refreshToken,
+            idToken: `h.${Buffer.from(JSON.stringify({ email: "member@example.test", email_verified: true })).toString("base64url")}.s`,
+            expiresIn: 3600,
+          }),
+        } as Partial<AuthProvider>);
+        const state = "s".repeat(43);
+        const cookie = encodeSsoAttempt({
+          provider: "google",
+          state,
+          verifier: "v".repeat(43),
+          returnTo: "/admin?section=users",
+        });
+        return record(
+          await ssoCallbackPOST(
+            rawReq(
+              "/api/auth/sso/callback",
+              "POST",
+              { cookie: `${SSO_COOKIE}=${cookie}` },
+              { code: "the-code", state }
+            )
+          )
+        );
+      }
+    ),
   "POST /api/auth/guest — started": async () => {
     const f = await record(await guestPOST(rawReq("/api/auth/guest", "POST")));
     // The guest's id is random per mint: fixed here, as a request id is. No token is answered
@@ -1644,6 +1722,79 @@ const SESSION: Readonly<Record<string, () => Promise<RouteFixture>>> = {
     return record(await signIn());
   },
   "POST /api/auth/sign-in — signed in": async () => record(await signIn()),
+  // TASK-222: the sign-in steps' answers the walk and the 390 px journey reach the steps with
+  // (e2e/sign-in-screens.spec.ts), each made by the route on the test double.
+  "POST /api/auth/sign-in — two-step verification asked": async () =>
+    record(
+      await signInPOST(
+        rawReq(
+          "/api/auth/sign-in",
+          "POST",
+          {},
+          { email: "a@b.c", password: "mfa-required" }
+        )
+      )
+    ),
+  "POST /api/auth/sign-in — a new password asked": async () =>
+    record(
+      await signInPOST(
+        rawReq(
+          "/api/auth/sign-in",
+          "POST",
+          {},
+          { email: "a@b.c", password: "new-password-required" }
+        )
+      )
+    ),
+  "POST /api/auth/sign-up — the address to verify": async () => {
+    return record(
+      await signUpPOST(
+        rawReq(
+          "/api/auth/sign-up",
+          "POST",
+          {},
+          {
+            email: "new@example.test",
+            password: "Correct-Horse-Battery-9",
+            dateOfBirth: "1990-01-15",
+          }
+        )
+      )
+    );
+  },
+  "POST /api/auth/verify-email — verified": async () =>
+    record(
+      await verifyEmailPOST(
+        rawReq(
+          "/api/auth/verify-email",
+          "POST",
+          {},
+          { email: "new@example.test", code: "123456" }
+        )
+      )
+    ),
+  "POST /api/auth/forgot-password — sent, or not: the same answer either way": async () =>
+    record(
+      await forgotPasswordPOST(
+        rawReq("/api/auth/forgot-password", "POST", {}, { email: "someone@example.test" })
+      )
+    ),
+  "POST /api/auth/confirm-forgot-password — reset": async () => {
+    return record(
+      await confirmForgotPOST(
+        rawReq(
+          "/api/auth/confirm-forgot-password",
+          "POST",
+          {},
+          {
+            email: "someone@example.test",
+            code: "123456",
+            newPassword: "Correct-Horse-Battery-9",
+          }
+        )
+      )
+    );
+  },
   "GET /api/auth/session — signed out": async () =>
     record(await authSessionGET(rawReq("/api/auth/session", "GET"))),
   "GET /api/auth/session — signed in": async () => record(await sessionAs("user")),

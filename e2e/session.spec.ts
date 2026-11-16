@@ -115,7 +115,7 @@ test("signing in through the form leaves no token in the page; signing out ends 
   const answered = page.waitForResponse(
     (r) => r.url().endsWith("/api/auth/sign-in") && r.request().method() === "POST"
   );
-  await page.getByRole("button", { name: "Sign In", exact: true }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   const res = await answered;
   expect(res.status()).toBe(200);
   const body = (await res.json()) as Record<string, unknown>;
@@ -123,7 +123,7 @@ test("signing in through the form leaves no token in the page; signing out ends 
   expect(tokenKeys(body)).toEqual([]);
 
   // Signed in: the home page, with the way out.
-  await expect(page.getByRole("button", { name: "Sign Out" })).toBeVisible({
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible({
     timeout: 30_000,
   });
   await expect(page).toHaveURL(/\/$/);
@@ -137,7 +137,7 @@ test("signing in through the form leaves no token in the page; signing out ends 
   const signedOut = page.waitForResponse(
     (r) => r.url().endsWith("/api/auth/sign-out") && r.request().method() === "POST"
   );
-  await page.getByRole("button", { name: "Sign Out" }).click();
+  await page.getByRole("button", { name: "Sign out" }).click();
   expect((await signedOut).status()).toBe(200);
   await expect(page).toHaveURL(/\/auth/);
   expect(await sessionCookie(page.context())).toBeUndefined();
@@ -175,7 +175,7 @@ test("continuing as a guest: a guest session, and still no token in the page", a
   const answered = page.waitForResponse(
     (r) => r.url().endsWith("/api/auth/guest") && r.request().method() === "POST"
   );
-  await page.getByRole("button", { name: "Continue as Guest" }).click();
+  await page.getByRole("button", { name: "Continue as a guest" }).click();
   const res = await answered;
   expect(res.status()).toBe(200);
   const body = (await res.json()) as Record<string, unknown>;
@@ -195,7 +195,7 @@ test("a change needs the session's own token, from this origin — the page's ow
 }) => {
   const signedIn = await signInPage(page);
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Sign Out" })).toBeVisible({
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible({
     timeout: 30_000,
   });
 
@@ -346,7 +346,7 @@ test("a staff session idle past its 30 minutes is ended at its next request, and
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page).toHaveURL(/\/auth/);
     await expect(
-      page.getByRole("button", { name: "Sign In", exact: true })
+      page.getByRole("button", { name: "Sign in", exact: true })
     ).toBeVisible();
     // Ended in its record, with why — not merely ignored.
     const { rows } = await db.query<{ revoked_reason: string | null }>(
@@ -410,7 +410,7 @@ test("a browser signed in before server-side sessions is moved over without sign
   expect((await moved).status()).toBe(200);
 
   // Signed in, on the home page, with no sign-in form in between.
-  await expect(page.getByRole("button", { name: "Sign Out" })).toBeVisible({
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible({
     timeout: 30_000,
   });
   await expectNoCredentialInThePage(page);

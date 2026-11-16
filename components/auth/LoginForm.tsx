@@ -4,6 +4,14 @@ import React, { useState } from "react";
 import SsoButtons from "@/components/auth/SsoButtons";
 import type { SsoProvider } from "@/platform/auth/types";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+import {
+  AuthField,
+  AuthInput,
+  FormError,
+  FormNotice,
+} from "@/components/auth/ui/AuthField";
+import { AuthHeading } from "@/components/auth/ui/AuthHeading";
+import { AUTH_LINK, AUTH_PRIMARY, AUTH_SECONDARY } from "@/components/auth/ui/styles";
 
 /** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
 const t = (key: string, values?: MessageValues) =>
@@ -16,6 +24,10 @@ interface LoginFormProps {
   onForgotPassword: () => void;
   onCreateAccount: () => void;
   error?: string | null;
+  /** What happened before this step (an address verified, a password reset). */
+  notice?: string | null;
+  /** The address to start with (the one just verified or reset). */
+  initialEmail?: string;
   isLoading?: boolean;
   enabledSsoProviders?: SsoProvider[];
   showGuestOption?: boolean;
@@ -25,6 +37,10 @@ interface LoginFormProps {
  * Login form with email/password, SSO buttons, guest option.
  * Provider-agnostic — all actions are callbacks.
  * Password manager compatible (autocomplete attributes set correctly).
+ *
+ * A refusal is said for the whole form (`auth.invalid_credentials` never says which field was
+ * wrong: that would tell whether the address has an account); it is announced and the form is
+ * described by it (TASK-222, SF-app-042).
  */
 export default function LoginForm({
   onSubmit,
@@ -33,11 +49,13 @@ export default function LoginForm({
   onForgotPassword,
   onCreateAccount,
   error = null,
+  notice = null,
+  initialEmail = "",
   isLoading = false,
   enabledSsoProviders = [],
   showGuestOption = true,
 }: LoginFormProps) {
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
 
   const canSubmit = email.trim().length > 0 && password.length > 0 && !isLoading;
@@ -50,7 +68,9 @@ export default function LoginForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xl font-bold text-white text-center">{t("sign_in")}</h2>
+      <AuthHeading>{t("sign_in")}</AuthHeading>
+
+      <FormNotice message={error ? null : notice} />
 
       {/* SSO Buttons — only configured providers (ADR-050 D3); none, no divider */}
       {enabledSsoProviders.length > 0 && (
@@ -60,83 +80,61 @@ export default function LoginForm({
             disabled={isLoading}
             enabledProviders={enabledSsoProviders}
           />
-
-          {/* Divider */}
-          <div className="flex items-center gap-4" role="separator" aria-label={t("or")}>
-            <div className="flex-1 h-px bg-gray-700" />
-            <span
-              className="text-xs text-gray-400 uppercase tracking-wider"
-              aria-hidden="true"
-            >
-              {t("or")}
-            </span>
-            <div className="flex-1 h-px bg-gray-700" />
-          </div>
+          <Divider />
         </>
       )}
 
       {/* Email/Password Form */}
-      <form onSubmit={handleSubmit} aria-busy={isLoading} className="flex flex-col gap-4">
-        <div>
-          <label htmlFor="login-email" className="block text-sm text-gray-400 mb-1.5">
-            {t("email")}
-          </label>
-          <input
-            id="login-email"
-            type="email"
-            autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder={t("you_example_com")}
-            disabled={isLoading}
-            required
-            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
-          />
-        </div>
+      <form
+        onSubmit={handleSubmit}
+        aria-busy={isLoading}
+        aria-describedby={error ? "login-error" : undefined}
+        className="flex flex-col gap-4"
+      >
+        <AuthField id="login-email" label={t("email")}>
+          {(control) => (
+            <AuthInput
+              {...control}
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder={t("you_example_com")}
+              disabled={isLoading}
+              required
+            />
+          )}
+        </AuthField>
 
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <label htmlFor="login-password" className="text-sm text-gray-400">
-              {t("password")}
-            </label>
+        <AuthField
+          id="login-password"
+          label={t("password")}
+          aside={
             <button
               type="button"
               onClick={onForgotPassword}
-              className="text-xs text-blue-400 hover:text-blue-300 transition"
+              className={`text-xs ${AUTH_LINK}`}
             >
               {t("forgot_password")}
             </button>
-          </div>
-          <input
-            id="login-password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={t("enter_your_password")}
-            disabled={isLoading}
-            required
-            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
-          />
-        </div>
-
-        {/* Error message */}
-        {error && (
-          <div
-            role="alert"
-            aria-live="assertive"
-            className="bg-red-900/30 border border-red-700 text-red-300 rounded-xl px-4 py-3 text-sm"
-          >
-            {error}
-          </div>
-        )}
-
-        {/* Submit button */}
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
+          }
         >
+          {(control) => (
+            <AuthInput
+              {...control}
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={isLoading}
+              required
+            />
+          )}
+        </AuthField>
+
+        <FormError id="login-error" message={error} />
+
+        <button type="submit" disabled={!canSubmit} className={AUTH_PRIMARY}>
           {isLoading ? t("signing_in") : t("sign_in")}
         </button>
       </form>
@@ -144,17 +142,12 @@ export default function LoginForm({
       {/* Guest option */}
       {showGuestOption && (
         <>
-          <div className="flex items-center gap-4">
-            <div className="flex-1 h-px bg-gray-700" />
-            <span className="text-xs text-gray-400 uppercase tracking-wider">
-              {t("or")}
-            </span>
-            <div className="flex-1 h-px bg-gray-700" />
-          </div>
+          <Divider />
           <button
+            type="button"
             onClick={onGuestClick}
             disabled={isLoading}
-            className="w-full border border-gray-700 text-gray-400 hover:text-gray-300 hover:border-gray-600 py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
+            className={AUTH_SECONDARY}
           >
             {t("continue_as_guest")}
           </button>
@@ -162,15 +155,25 @@ export default function LoginForm({
       )}
 
       {/* Create account link */}
-      <p className="text-center text-sm text-gray-400">
-        {t("dont_have_an_account")}
-        <button
-          onClick={onCreateAccount}
-          className="text-blue-400 hover:text-blue-300 transition"
-        >
+      <p className="text-center text-sm text-gray-300">
+        {t("dont_have_an_account")}{" "}
+        <button type="button" onClick={onCreateAccount} className={AUTH_LINK}>
           {t("create_one")}
         </button>
       </p>
+    </div>
+  );
+}
+
+/** "or" between two ways in. */
+function Divider() {
+  return (
+    <div className="flex items-center gap-4" role="separator" aria-label={t("or")}>
+      <div className="flex-1 h-px bg-gray-700" />
+      <span className="text-xs text-gray-400 uppercase tracking-wider" aria-hidden="true">
+        {t("or")}
+      </span>
+      <div className="flex-1 h-px bg-gray-700" />
     </div>
   );
 }

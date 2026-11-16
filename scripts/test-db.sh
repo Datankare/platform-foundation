@@ -68,3 +68,6 @@ else
 fi
 # The suites that act on a seeded key run alone, after the parallel ones (TASK-204, N-19).
 npm run test:db-serial -- --silent
+# Every run dropped its per-worker copies (TASK-223): one left fails here, named, before the exit
+# cleanup removes it.
+node scripts/check-test-database-copies.mjs

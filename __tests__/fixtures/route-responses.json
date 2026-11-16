@@ -2912,6 +2912,40 @@
       }
     }
   },
+  "GET /api/auth/password-policy — the built-in policy (none stored)": {
+    "status": 200,
+    "body": {
+      "policy": {
+        "minLength": 12,
+        "requireUppercase": true,
+        "requireLowercase": true,
+        "requireNumber": true,
+        "requireSpecial": true
+      }
+    }
+  },
+  "GET /api/auth/password-policy — an administrator's policy": {
+    "status": 200,
+    "body": {
+      "policy": {
+        "minLength": 10,
+        "requireUppercase": false,
+        "requireLowercase": true,
+        "requireNumber": true,
+        "requireSpecial": false
+      }
+    }
+  },
+  "POST /api/auth/sso/callback — signed on, the page asked for answered": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "email": "member@example.test",
+      "emailVerified": true,
+      "returnTo": "/admin?section=users"
+    }
+  },
   "POST /api/auth/guest — started": {
     "status": 200,
     "body": {
@@ -2947,6 +2981,49 @@
     "body": {
       "success": true,
       "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    }
+  },
+  "POST /api/auth/sign-in — two-step verification asked": {
+    "status": 200,
+    "body": {
+      "success": false,
+      "mfaRequired": true,
+      "mfaSession": "mock-mfa-session"
+    }
+  },
+  "POST /api/auth/sign-in — a new password asked": {
+    "status": 200,
+    "body": {
+      "success": false,
+      "newPasswordRequired": true,
+      "challengeSession": "mock-new-password-session"
+    }
+  },
+  "POST /api/auth/sign-up — the address to verify": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "userId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "emailVerificationRequired": true
+    }
+  },
+  "POST /api/auth/verify-email — verified": {
+    "status": 200,
+    "body": {
+      "success": true
+    }
+  },
+  "POST /api/auth/forgot-password — sent, or not: the same answer either way": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "deliveryMedium": "EMAIL"
+    }
+  },
+  "POST /api/auth/confirm-forgot-password — reset": {
+    "status": 200,
+    "body": {
+      "success": true
     }
   },
   "GET /api/auth/session — signed out": {

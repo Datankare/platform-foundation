@@ -275,6 +275,12 @@ jobs:
           REQUIRE_DB_TESTS: "1"
           REQUIRE_VALKEY_TESTS: "1"
 
+      # TASK-223: each pass's workers ran on copies of the replayed database, which the pass that
+      # made them drops in its teardown (and fails if one is left). A pass killed before its
+      # teardown cannot drop them: none may outlive Layer 1 unseen.
+      - name: Layer 1 — No per-worker database left behind (TASK-223)
+        run: node scripts/check-test-database-copies.mjs
+
       - name: Layer 1 — Test results (on failure)
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

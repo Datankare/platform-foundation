@@ -67,6 +67,31 @@ candidate" rows.
   the app's catalogue, `screens.app.jobs`. `ReviewQueueStore` gains `page()` (throws when it cannot read);
   `components/admin/PanelUnavailable` is removed (use `PanelState` / `ReadFailed`).
 
+- **The sign-in screens (TASK-222).** Every step of the sign-in page — sign-in, account
+  creation with its date of birth and verification, the password reset, two-step verification,
+  a new password — is built from shared parts (`components/auth/ui/`), and a guard keeps a
+  sign-in screen from building a field, an error or a heading of its own
+  (`__tests__/auth-shared-components-guard.test.ts`). What a person sees: each step in the
+  address, with Back and Forward between steps and the step's heading focused; every error tied
+  to its field and announced; the password rules of the tenant's own policy, each said met or not
+  met in words; after verifying or resetting, sign-in says so with the address filled in; the
+  reset's code step names the address ("If … belongs to an account"), offers a new code after a
+  minute and another address; one date field for the date of birth; drawn provider marks, in the
+  first paint; a cancelled single sign-on said as a cancellation; sentence case throughout; no
+  internal tagline; and sign-in goes back to the page that sent the person there. New route:
+  `GET /api/auth/password-policy` (public, the policy's rules only). Answers that grow,
+  compatibly: `GET /api/auth/sso/[provider]` reads `?redirect=` (a path of this site, else
+  ignored); `POST /api/auth/sso/callback` adds `returnTo`. `platform/auth/password-rules.ts`
+  holds the policy's pure rules (re-exported from `password-policy.ts`). No migration, no
+  setting. Consumer steps: the "Sign-in screens (TASK-222)" row of
+  [MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md).
+
+- **A test run's per-worker databases (TASK-223).** A run stopped before its teardown left its
+  per-worker database copies, which a later run counted as its own. Each copy is now marked with
+  its run and owner process; the next run's setup drops a killed run's (its owner gone, nobody
+  connected); a teardown that leaves one fails the run; CI's Layer 1 and `npm run test:db` end
+  with `node scripts/check-test-database-copies.mjs`. A consumer with its own CI keeps the step.
+
 - **Server-side sessions: the browser holds no token (TASK-214, ADR-057, SEC-016).** A sign-in is
   a server-side record (`auth_sessions`, migration 070) behind one HttpOnly, Secure, SameSite=Lax
   cookie, `__Host-pf_session`; the identity provider's tokens stay on the server, encrypted under

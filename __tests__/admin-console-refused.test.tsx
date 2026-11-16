@@ -37,7 +37,11 @@ beforeEach(() => {
   replace.mockReset();
   signOut.mockClear();
   global.fetch = fetchMock as unknown as typeof fetch;
+  window.history.replaceState(null, "", "/admin");
 });
+
+/** Sign-in, asked to come back to the console (TASK-222, E-113). */
+const SIGN_IN_HERE = "/auth?redirect=%2Fadmin";
 
 describe("admin console when the session is refused (B-14)", () => {
   it.each([
@@ -56,7 +60,7 @@ describe("admin console when the session is refused (B-14)", () => {
       );
       expect(screen.queryByText("Administrator")).not.toBeInTheDocument();
       fireEvent.click(screen.getByText("Sign in"));
-      expect(push).toHaveBeenCalledWith("/auth");
+      expect(push).toHaveBeenCalledWith(SIGN_IN_HERE);
     }
   );
 
@@ -73,7 +77,7 @@ describe("admin console when the session is refused (B-14)", () => {
     expect(screen.getByText(/This page is for administrators/)).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Admin sections" })).toBeNull();
     fireEvent.click(screen.getByText("Sign in"));
-    expect(push).toHaveBeenCalledWith("/auth");
+    expect(push).toHaveBeenCalledWith(SIGN_IN_HERE);
     mockPageSession.current = undefined;
   });
 

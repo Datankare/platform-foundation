@@ -9,49 +9,30 @@ const t = (key: string, values?: MessageValues) =>
 
 interface AuthLayoutProps {
   children: React.ReactNode;
-  title?: string;
-  subtitle?: string;
 }
 
 /**
  * Shared layout for all auth pages (login, register, forgot password, MFA).
  * Provides consistent branding and centered card layout.
- * Override title/subtitle for each page.
+ *
+ * The brand is two catalogue parts, the second in the accent colour (it was cut out of one
+ * string by searching it for "PLAY" and "FORM" — SF-app-051), read as one word. The page's
+ * content is its `main` landmark. No internal tagline: "Platform Foundation" and "Foundation as
+ * Fabric · Continuous Confidence" named the code base, not anything a person signs in to (E-110).
  */
-export default function AuthLayout({
-  children,
-  title = t("brand_title"),
-  subtitle = t("brand_subtitle"),
-}: AuthLayoutProps) {
+export default function AuthLayout({ children }: AuthLayoutProps) {
   return (
-    <div className="min-h-screen bg-[#0a0f1e] flex flex-col items-center justify-center px-4">
+    <main className="min-h-screen bg-[#0a0f1e] flex flex-col items-center justify-center px-4 py-10">
       <div className="mb-8 text-center">
         <h1 className="text-4xl font-black tracking-tight text-white">
-          {title.includes("PLAY") ? (
-            <>
-              <span className="text-white">
-                {title.substring(0, title.indexOf("FORM"))}
-              </span>
-              <span className="text-blue-400">{t("form")}</span>
-            </>
-          ) : (
-            <span className="text-white">{title}</span>
-          )}
+          <span className="text-white">{t("brand_first")}</span>
+          <span className="text-blue-400">{t("brand_second")}</span>
         </h1>
-        {subtitle && (
-          <p className="text-xs tracking-[0.2em] text-gray-400 mt-2 uppercase">
-            {subtitle}
-          </p>
-        )}
       </div>
 
-      <div className="w-full max-w-md bg-[#111827] rounded-2xl p-8 border border-gray-800 shadow-xl">
+      <div className="w-full max-w-md bg-[#111827] rounded-2xl p-6 sm:p-8 border border-gray-800 shadow-xl">
         {children}
       </div>
-
-      <p className="text-xs text-gray-400 mt-8">
-        {t("foundation_as_fabric_continuous_confidence")}
-      </p>
-    </div>
+    </main>
   );
 }

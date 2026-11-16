@@ -1,7 +1,10 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState } from "react";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+import { AuthField, CodeInput, FormError } from "@/components/auth/ui/AuthField";
+import { AuthHeading } from "@/components/auth/ui/AuthHeading";
+import { AUTH_LEAD, AUTH_LINK, AUTH_PRIMARY } from "@/components/auth/ui/styles";
 
 /** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
 const t = (key: string, values?: MessageValues) =>
@@ -15,9 +18,13 @@ interface MfaChallengeFormProps {
 }
 
 /**
- * MFA TOTP challenge form.
+ * Two-step verification at sign-in: the 6-digit code from the person's authenticator app.
  * Shown after signIn returns mfaRequired: true.
- * 6-digit code input with auto-focus.
+ *
+ * The code field has a label (it had only a "000000" placeholder: a screen reader read an
+ * unnamed field — S8 accessibility) and is tied to the step's refusal; the step's heading takes
+ * focus when it opens (AuthHeading). The name is the one the console's enrolment uses:
+ * "two-step verification" (SF-admin-152, SF-app-050).
  */
 export default function MfaChallengeForm({
   onSubmit,
@@ -26,13 +33,8 @@ export default function MfaChallengeForm({
   isLoading = false,
 }: MfaChallengeFormProps) {
   const [code, setCode] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  const canSubmit = code.length === 6 && /^\d{6}$/.test(code) && !isLoading;
+  const canSubmit = /^\d{6}$/.test(code) && !isLoading;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,59 +42,39 @@ export default function MfaChallengeForm({
     await onSubmit(code);
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/\D/g, "").slice(0, 6);
-    setCode(value);
-  };
-
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xl font-bold text-white text-center">
-        {t("two_factor_authentication")}
-      </h2>
-      <p className="text-sm text-gray-400 text-center">{t("enter_the_6_digit_code")}</p>
+      <AuthHeading>{t("two_factor_authentication")}</AuthHeading>
+      <p className={AUTH_LEAD}>{t("enter_the_6_digit_code")}</p>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <div>
-          <input
-            ref={inputRef}
-            id="mfa-code"
-            type="text"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            value={code}
-            onChange={handleChange}
-            placeholder="000000"
-            disabled={isLoading}
-            maxLength={6}
-            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-4 text-white text-2xl text-center tracking-[0.5em] font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
-          />
-        </div>
+      <form
+        onSubmit={handleSubmit}
+        aria-busy={isLoading}
+        aria-describedby={error ? "mfa-error" : undefined}
+        className="flex flex-col gap-4"
+      >
+        <AuthField id="mfa-code" label={t("code_label")}>
+          {(control) => (
+            <CodeInput
+              {...control}
+              value={code}
+              onDigits={setCode}
+              placeholder="000000"
+              disabled={isLoading}
+              required
+            />
+          )}
+        </AuthField>
 
-        {error && (
-          <div
-            role="alert"
-            aria-live="assertive"
-            className="bg-red-900/30 border border-red-700 text-red-300 rounded-xl px-4 py-3 text-sm"
-          >
-            {error}
-          </div>
-        )}
+        <FormError id="mfa-error" message={error} />
 
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
-        >
+        <button type="submit" disabled={!canSubmit} className={AUTH_PRIMARY}>
           {isLoading ? t("verifying") : t("verify")}
         </button>
       </form>
 
-      <p className="text-center text-sm text-gray-400">
-        <button
-          onClick={onCancel}
-          className="text-blue-400 hover:text-blue-300 transition"
-        >
+      <p className="text-center text-sm text-gray-300">
+        <button type="button" onClick={onCancel} className={AUTH_LINK}>
           {t("cancel_sign_in")}
         </button>
       </p>

@@ -68,7 +68,7 @@ describe("ErrorBoundary", () => {
     expect(
       screen.getByText("An unexpected error occurred. Please refresh the page.")
     ).toBeDefined();
-    expect(screen.getByText("Refresh Page")).toBeDefined();
+    expect(screen.getByText("Refresh page")).toBeDefined();
   });
 
   it("renders custom fallback when provided", () => {

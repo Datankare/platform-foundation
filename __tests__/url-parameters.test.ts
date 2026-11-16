@@ -11,7 +11,8 @@
  * a search text goes in a POST body (POST /api/admin/users/search), and every query parameter a
  * route reads (`searchParams.get|getAll|has("…")`, by name or through a loop over a list of names)
  * and every one a screen puts in an `/api/` URL is classified here: an id, a code, a number, a
- * date, a host name or a single-use handle. `body-only` names a text a route reads from parameters
+ * date, a host name, a single-use handle, or a path of this site (the page sign-in returns to —
+ * the address the person was already on; TASK-222). `body-only` names a text a route reads from parameters
  * built from a body, which its GET refuses in a URL. A new parameter fails here
  * until it is classified; a free-text one cannot be. A screen building a query with
  * URLSearchParams is refused outright (it is how the search text got there).
@@ -24,7 +25,7 @@ import { productionSources } from "./helpers/route-policy";
 
 const ROOT = join(__dirname, "..");
 
-type Kind = "id" | "code" | "number" | "date" | "host" | "handle" | "body-only";
+type Kind = "id" | "code" | "number" | "date" | "host" | "handle" | "path" | "body-only";
 
 /** Every query parameter name, what it carries, and why that may be in a URL. */
 export const URL_PARAMETERS: Readonly<Record<string, { kind: Kind; why: string }>> = {
@@ -58,6 +59,10 @@ export const URL_PARAMETERS: Readonly<Record<string, { kind: Kind; why: string }
   text: {
     kind: "body-only",
     why: "a search text: read from a POST body only (GET /api/admin/users refuses it in a URL)",
+  },
+  redirect: {
+    kind: "path",
+    why: "the page sign-in returns to: a path of this site only, checked as one (platform/auth/return-path.ts) — the address the person was already on, never what they typed (TASK-222, E-113)",
   },
   request: {
     kind: "handle",
@@ -228,7 +233,9 @@ describe("URLs carry ids, codes and numbers, never what a person typed (TASK-215
     for (const [name, { kind }] of Object.entries(URL_PARAMETERS))
       expect([
         name,
-        ["id", "code", "number", "date", "host", "handle", "body-only"].includes(kind),
+        ["id", "code", "number", "date", "host", "handle", "path", "body-only"].includes(
+          kind
+        ),
       ]).toEqual([name, true]);
   });
 

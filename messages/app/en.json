@@ -28,13 +28,13 @@
         "play_language_audio": "Play {language} audio"
       },
       "auth_page": {
-        "loading": "Loading..."
+        "loading": "Loading…"
       },
       "meta": {
         "site_title": "Platform Foundation",
         "site_description": "Production-grade application platform — GenAI-native",
         "home_description": "Platform Foundation — GenAI-native application platform",
-        "auth_title": "Sign In — Platform Foundation",
+        "auth_title": "Sign in — Platform Foundation",
         "auth_description": "Sign in or create an account"
       },
       "languages": {

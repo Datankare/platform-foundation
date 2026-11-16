@@ -29,6 +29,12 @@
  *      by a test makes copies of its own instead of taking, and then dropping, the live run's —
  *      CI run 43722156950 lost every copy that way, to __tests__/env-isolation.test.ts's run).
  *
+ *   5. (TASK-223) no copy outlives its run unseen: the global setup marks each copy it makes with
+ *      its run and process (markCopy) and first drops the copies a killed run on this host left
+ *      (reclaimKilledCopies); the teardown, after dropping, checks the run's copies are gone
+ *      (remainingCopies) and fails the run if not; CI's Layer 1 ends with
+ *      scripts/check-test-database-copies.mjs, whose names are this file's (copyPrefixes).
+ *
  * At run time, helpers/db-workers.ts refuses a configured database with no copies made, and a
  * process outside the run that made them, and
  * __tests__/db/worker-database.db.test.ts checks that a suite is on its copy and that what it
@@ -47,8 +53,12 @@ import { tmpdir } from "os";
 import { join, relative, sep } from "path";
 import { walkFiles } from "./helpers/repo-files";
 import {
+  copyMark,
+  copyPrefixes,
   databaseOf,
   leaveEnclosingRun,
+  readCopyMark,
+  reclaimable,
   roleInRun,
   selectWorkerDatabase,
   withDatabase,
@@ -168,9 +178,9 @@ const DROPS: Readonly<Record<string, string>> = {
   "__tests__/helpers/db-global-setup.ts":
     "copies it has just made, when making the rest failed",
   "__tests__/helpers/db-workers.ts":
-    "a copy copyDatabase has just made whose own entry differs",
+    "a copy copyDatabase has just made whose own entry differs; and the marked copies of a killed run on this host, their owner no longer running and nobody connected (reclaimKilledCopies, TASK-223)",
   "__tests__/db/worker-database.db.test.ts":
-    "its own scratch databases (<its copy>_src, _dst)",
+    "its own scratch databases (<its copy>_src, _dst, _left) and the copies it plants to prove a killed run's are reclaimed (TASK-223)",
   "scripts/test-db.sh": "its own database and that database's copies, after its run",
 };
 
@@ -211,6 +221,59 @@ export function ownershipProblems(teardown: string, setup: string): string[] {
   return out;
 }
 
+/**
+ * TASK-223: the setup reclaims a killed run's copies before making its own and marks each it
+ * makes; the teardown checks, after dropping, that none of the run's is left, and fails if one is.
+ */
+export function leftoverProblems(teardown: string, setup: string): string[] {
+  const out: string[] = [];
+  const drop = teardown.search(/\bdrop\s+database\b/i);
+  const check = teardown.search(/remainingCopies\(/);
+  if (check < 0 || check < drop || !/throw new Error\(/.test(teardown.slice(check)))
+    out.push(
+      "__tests__/helpers/db-global-teardown.ts: does not check, after dropping, that the run's copies are gone (remainingCopies) and fail if one is left"
+    );
+  const reclaim = setup.search(/reclaimKilledCopies\(/);
+  const copy = setup.search(/copyDatabase\(/);
+  const mark = setup.search(/markCopy\(/);
+  if (reclaim < 0 || copy < 0 || reclaim > copy)
+    out.push(
+      "__tests__/helpers/db-global-setup.ts: does not drop a killed run's copies (reclaimKilledCopies) before making its own"
+    );
+  if (mark < 0 || mark < copy)
+    out.push(
+      "__tests__/helpers/db-global-setup.ts: does not mark each copy it makes (markCopy)"
+    );
+  return out;
+}
+
+/**
+ * TASK-223: CI's Layer 1 and scripts/test-db.sh each end with the leftover check
+ * (scripts/check-test-database-copies.mjs) after their last database pass.
+ */
+export function leftoverCheckProblems(ci: string, testDb: string): string[] {
+  const out: string[] = [];
+  const CHECK = "node scripts/check-test-database-copies.mjs";
+  const lastPass = (text: string) =>
+    Math.max(
+      ...[
+        "npm run test:coverage",
+        "npm run test:core",
+        "npm run test:db-serial",
+        "npx jest",
+      ].map((cmd) => text.lastIndexOf(cmd))
+    );
+  if (!ci.includes(CHECK) || ci.lastIndexOf(CHECK) < lastPass(ci))
+    out.push(
+      ".github/workflows/ci.yml: Layer 1 does not end with the leftover check (node scripts/check-test-database-copies.mjs after its last pass)"
+    );
+  if (!testDb.includes(CHECK) || testDb.lastIndexOf(CHECK) < lastPass(testDb))
+    out.push(
+      "scripts/test-db.sh: does not run the leftover check (node scripts/check-test-database-copies.mjs) after its passes"
+    );
+  return out;
+}
+
 /** Every problem in a repository. */
 export function isolationProblems(
   root: string,
@@ -247,7 +310,12 @@ export function isolationProblems(
     ...ownershipProblems(
       read("__tests__/helpers/db-global-teardown.ts"),
       read("__tests__/helpers/db-global-setup.ts")
-    )
+    ),
+    ...leftoverProblems(
+      read("__tests__/helpers/db-global-teardown.ts"),
+      read("__tests__/helpers/db-global-setup.ts")
+    ),
+    ...leftoverCheckProblems(read(".github/workflows/ci.yml"), read("scripts/test-db.sh"))
   );
   return out;
 }
@@ -313,12 +381,21 @@ describe("the database isolation's self-tests (TASK-218)", () => {
       // The scratch repository's teardown and setup are the run-owning ones (TASK-219).
       writeFileSync(
         join(dir, "__tests__", "helpers", "db-global-teardown.ts"),
-        'if (w === null || roleInRun(w) !== "owner") return;\n'
+        'if (w === null || roleInRun(w) !== "owner") return;\nconst left = await remainingCopies(c, n);\nif (left.length) throw new Error("left");\n'
       );
       writeFileSync(
         join(dir, "__tests__", "helpers", "db-global-setup.ts"),
-        "leaveEnclosingRun();\n"
+        "leaveEnclosingRun();\nawait reclaimKilledCopies(c, base);\nawait copyDatabase(c, base, n);\nawait markCopy(c, n, run);\n"
       );
+      // … and CI and test:db end with the leftover check (TASK-223).
+      mkdirSync(join(dir, ".github", "workflows"), { recursive: true });
+      mkdirSync(join(dir, "scripts"), { recursive: true });
+      const check = "node scripts/check-test-database-copies.mjs";
+      writeFileSync(
+        join(dir, ".github", "workflows", "ci.yml"),
+        `npm run test:db-serial\n${check}\n`
+      );
+      writeFileSync(join(dir, "scripts", "test-db.sh"), `npx jest\n${check}\n`);
       expect(isolationProblems(dir, {})).toEqual([
         expect.stringMatching(/^jest\.other\.config\.cjs: globalSetup must be/),
         "__tests__/helpers/db.ts: reads TEST_DATABASE_URL before selectWorkerDatabase()",
@@ -480,5 +557,112 @@ describe("the database isolation's self-tests (TASK-218)", () => {
         "const url = process.env.TEST_DATABASE_URL;\nleaveEnclosingRun();"
       )
     ).toEqual([expect.stringMatching(/db-global-setup\.ts: reads the settings before/)]);
+  });
+});
+
+describe("no copy outlives its run unseen (TASK-223)", () => {
+  it("[self-test] a teardown that does not check its copies are gone, a setup that does not reclaim or mark, are found", () => {
+    const teardown =
+      'c.query("drop database x");\nconst left = await remainingCopies(c, names);\nif (left.length) throw new Error("left");';
+    const setup =
+      "await reclaimKilledCopies(c, base);\nawait copyDatabase(c, base, n);\nawait markCopy(c, n, run);";
+    expect(leftoverProblems(teardown, setup)).toEqual([]);
+    expect(leftoverProblems('c.query("drop database x");', setup)).toEqual([
+      expect.stringMatching(/does not check, after dropping/),
+    ]);
+    expect(
+      leftoverProblems(
+        'const left = await remainingCopies(c, names);\nc.query("drop database x");\nthrow new Error("x");',
+        setup
+      )
+    ).toEqual([expect.stringMatching(/does not check, after dropping/)]);
+    expect(
+      leftoverProblems(
+        teardown,
+        "await copyDatabase(c, base, n);\nawait markCopy(c, n, run);"
+      )
+    ).toEqual([expect.stringMatching(/does not drop a killed run's copies/)]);
+    expect(
+      leftoverProblems(
+        teardown,
+        "await reclaimKilledCopies(c, base);\nawait copyDatabase(c, base, n);"
+      )
+    ).toEqual([expect.stringMatching(/does not mark each copy/)]);
+  });
+
+  it("[self-test] CI or test:db without the leftover check after its last pass is found", () => {
+    const check = "node scripts/check-test-database-copies.mjs";
+    expect(
+      leftoverCheckProblems(`npm run test:db-serial\n${check}`, `npx jest\n${check}`)
+    ).toEqual([]);
+    expect(leftoverCheckProblems("npm run test:db-serial", `npx jest\n${check}`)).toEqual(
+      [expect.stringMatching(/ci\.yml: Layer 1 does not end with the leftover check/)]
+    );
+    expect(leftoverCheckProblems(`${check}\nnpm run test:db-serial`, `npx jest`)).toEqual(
+      [expect.stringMatching(/ci\.yml/), expect.stringMatching(/test-db\.sh/)]
+    );
+  });
+
+  it("[self-test] a copy's mark names its run, its process and its host, and reads back", () => {
+    const mark = copyMark("mwjcq74j002ae0", 4242, "ci-runner-7");
+    expect(mark).toBe("pf test copy run=mwjcq74j002ae0 owner=4242@ci-runner-7");
+    expect(readCopyMark(mark)).toEqual({
+      run: "mwjcq74j002ae0",
+      pid: 4242,
+      host: "ci-runner-7",
+    });
+    for (const other of [
+      null,
+      "",
+      "a comment",
+      "pf test copy run=X owner=1@h",
+      "pf test copy run=r owner=x@h",
+    ])
+      expect(readCopyMark(other)).toBeNull();
+  });
+
+  it("[self-test] a reclaim takes only a killed run's copies on this host that nobody is connected to, and their scratch databases", () => {
+    const alive = (pid: number) => pid !== 4242; // 4242 has ended
+    const mark = (pid: number, host = "here") => copyMark("r1", pid, host);
+    const rows = [
+      { name: "replay_w1_r1", comment: mark(4242), sessions: 0 },
+      { name: "replay_w1_r1_src", comment: null, sessions: 0 },
+      { name: "replay_w2_r1", comment: mark(4242), sessions: 1 },
+      { name: "replay_w2_r1_dst", comment: null, sessions: 0 },
+      { name: "replay_w3_r2", comment: mark(77), sessions: 0 },
+      { name: "replay_w4_r1", comment: mark(4242, "elsewhere"), sessions: 0 },
+      { name: "replay_w5_r9", comment: null, sessions: 0 },
+      { name: "replay_w1_r1_left", comment: null, sessions: 2 },
+    ];
+    expect(reclaimable(rows, alive, "here")).toEqual([
+      "replay_w1_r1_src",
+      "replay_w1_r1",
+    ]);
+  });
+
+  it("[self-test] every copy's name, and a scratch database beside one, begins with a copy prefix", () => {
+    for (const base of ["replay", "b56e1_pa_r1", "x".repeat(70), "Mixed-Case"]) {
+      const name = workerDatabaseName(base, 3, "r1");
+      expect(copyPrefixes(base).some((p) => name.startsWith(p))).toBe(true);
+      expect(copyPrefixes(base).some((p) => `${name}_src`.startsWith(p))).toBe(true);
+    }
+    // The database itself is never taken for one of its copies.
+    expect(copyPrefixes("replay").some((p) => "replay".startsWith(p))).toBe(false);
+  });
+
+  it("CI's check names exactly the copies this file names (scripts/check-test-database-copies.mjs)", () => {
+    const bases = ["replay", "b56e1_pa_r1", "x".repeat(70), "Mixed-Case", "pf_test_1_2"];
+    const r = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { copyPrefixes } from ${JSON.stringify(join(ROOT, "scripts", "check-test-database-copies.mjs"))};
+         process.stdout.write(JSON.stringify(${JSON.stringify(bases)}.map(copyPrefixes)));`,
+      ],
+      { encoding: "utf8" }
+    );
+    expect(r.stderr).toBe("");
+    expect(JSON.parse(r.stdout)).toEqual(bases.map(copyPrefixes));
   });
 });

@@ -4,7 +4,8 @@
 
 import React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
-import AgeGate from "@/components/auth/AgeGate";
+import AgeGate, { dateBounds, dateProblem } from "@/components/auth/AgeGate";
+import { say } from "@/__tests__/helpers/auth-screen";
 
 const mockProps = {
   onVerified: jest.fn(),
@@ -13,10 +14,11 @@ const mockProps = {
 
 // A fixed date, mid-year at noon UTC, so "25 years old" holds whatever day the suite runs and
 // in any time zone (TASK-159). Only Date is faked: React's scheduling keeps the real timers.
+const NOW = new Date("2026-06-15T12:00:00Z");
 beforeEach(() => {
   jest.clearAllMocks();
   jest.useFakeTimers({
-    now: new Date("2026-06-15T12:00:00Z"),
+    now: NOW,
     doNotFake: [
       "hrtime",
       "nextTick",
@@ -40,122 +42,76 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
+const field = () =>
+  screen.getByLabelText(say("age_gate.date_of_birth")) as HTMLInputElement;
+const enter = (iso: string) => {
+  fireEvent.change(field(), { target: { value: iso } });
+  fireEvent.click(screen.getByRole("button", { name: say("age_gate.continue") }));
+};
+
 describe("AgeGate", () => {
-  it("renders month, day, year inputs", () => {
+  it("SF-app-046: one date field, which the browser draws in the reader's own order", () => {
     render(<AgeGate {...mockProps} />);
-    expect(screen.getByLabelText("Month")).toBeDefined();
-    expect(screen.getByLabelText("Day")).toBeDefined();
-    expect(screen.getByLabelText("Year")).toBeDefined();
+    expect(field().type).toBe("date");
+    expect(field().getAttribute("autocomplete")).toBe("bday");
+    expect(field().min).toBe("1906-06-15");
+    expect(field().max).toBe("2026-06-15");
+  });
+
+  it("SF-app-046: it is a form — Enter in the field continues", () => {
+    render(<AgeGate {...mockProps} />);
+    fireEvent.change(field(), { target: { value: "2000-03-15" } });
+    fireEvent.submit(field().closest("form")!);
+    expect(mockProps.onVerified).toHaveBeenCalledWith(
+      expect.objectContaining({ isMinor: false }),
+      "2000-03-15"
+    );
   });
 
   it("renders title and description", () => {
     render(<AgeGate {...mockProps} />);
-    expect(screen.getByText("Verify Your Age")).toBeDefined();
     expect(
-      screen.getByText("Please enter your date of birth to continue.")
+      screen.getByRole("heading", { name: say("age_gate.verify_your_age") })
     ).toBeDefined();
+    expect(screen.getByText(say("age_gate.please_enter_your_date_of"))).toBeDefined();
   });
 
-  it("continue button disabled until all fields filled", () => {
+  it("an empty date is the field's error: announced, the field marked", () => {
     render(<AgeGate {...mockProps} />);
-    const button = screen.getByText("Continue");
-    expect(button.getAttribute("disabled")).not.toBeNull();
-
-    fireEvent.change(screen.getByLabelText("Month"), {
-      target: { value: "03" },
-    });
-    fireEvent.change(screen.getByLabelText("Day"), {
-      target: { value: "15" },
-    });
-    expect(button.getAttribute("disabled")).not.toBeNull();
-
-    fireEvent.change(screen.getByLabelText("Year"), {
-      target: { value: "2000" },
-    });
-    expect(button.getAttribute("disabled")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: say("age_gate.continue") }));
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toBe(say("age_gate.enter_your_date_of_birth"));
+    expect(field().getAttribute("aria-invalid")).toBe("true");
+    expect(field().getAttribute("aria-describedby")).toBe(alert.id);
+    expect(mockProps.onVerified).not.toHaveBeenCalled();
   });
 
-  it("only accepts numeric input", () => {
+  it("the error clears as the date is changed", () => {
     render(<AgeGate {...mockProps} />);
-    const monthInput = screen.getByLabelText("Month") as HTMLInputElement;
-    fireEvent.change(monthInput, { target: { value: "ab" } });
-    expect(monthInput.value).toBe("");
-
-    fireEvent.change(monthInput, { target: { value: "12" } });
-    expect(monthInput.value).toBe("12");
+    fireEvent.click(screen.getByRole("button", { name: say("age_gate.continue") }));
+    fireEvent.change(field(), { target: { value: "2000-03-15" } });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("limits month to 2 digits, day to 2 digits, year to 4 digits", () => {
-    render(<AgeGate {...mockProps} />);
-    const monthInput = screen.getByLabelText("Month") as HTMLInputElement;
-    fireEvent.change(monthInput, { target: { value: "123" } });
-    expect(monthInput.value).toBe("12");
-
-    const yearInput = screen.getByLabelText("Year") as HTMLInputElement;
-    fireEvent.change(yearInput, { target: { value: "20001" } });
-    expect(yearInput.value).toBe("2000");
-  });
-
-  it("shows error for invalid month", () => {
-    render(<AgeGate {...mockProps} />);
-    fireEvent.change(screen.getByLabelText("Month"), {
-      target: { value: "13" },
-    });
-    fireEvent.change(screen.getByLabelText("Day"), {
-      target: { value: "15" },
-    });
-    fireEvent.change(screen.getByLabelText("Year"), {
-      target: { value: "2000" },
-    });
-    fireEvent.click(screen.getByText("Continue"));
-    expect(screen.getByRole("alert").textContent).toBe("Month must be between 1 and 12");
-  });
-
-  it("shows error for invalid day", () => {
-    render(<AgeGate {...mockProps} />);
-    fireEvent.change(screen.getByLabelText("Month"), {
-      target: { value: "02" },
-    });
-    fireEvent.change(screen.getByLabelText("Day"), {
-      target: { value: "32" },
-    });
-    fireEvent.change(screen.getByLabelText("Year"), {
-      target: { value: "2000" },
-    });
-    fireEvent.click(screen.getByText("Continue"));
-    expect(screen.getByRole("alert").textContent).toBe("Day must be between 1 and 31");
-  });
-
-  it("shows error for future date", () => {
-    render(<AgeGate {...mockProps} />);
-    const futureYear = new Date().getFullYear() + 1;
-    fireEvent.change(screen.getByLabelText("Month"), {
-      target: { value: "01" },
-    });
-    fireEvent.change(screen.getByLabelText("Day"), {
-      target: { value: "01" },
-    });
-    fireEvent.change(screen.getByLabelText("Year"), {
-      target: { value: String(futureYear) },
-    });
-    fireEvent.click(screen.getByText("Continue"));
-    expect(screen.getByRole("alert").textContent).toBe("Please enter a valid year");
+  it("refuses what is not a real date, a date in the future, and one more than 120 years ago", () => {
+    expect(dateProblem("2000-02-30", NOW)).toBe(
+      say("age_gate.please_enter_a_valid_date")
+    );
+    expect(dateProblem("15/03/2000", NOW)).toBe(
+      say("age_gate.please_enter_a_valid_date")
+    );
+    expect(dateProblem("2027-01-01", NOW)).toBe(say("age_gate.date_of_birth_cannot_be"));
+    expect(dateProblem("1900-01-01", NOW)).toBe(
+      say("age_gate.please_enter_a_valid_date")
+    );
+    expect(dateProblem("  ", NOW)).toBe(say("age_gate.enter_your_date_of_birth"));
+    expect(dateProblem("2000-03-15", NOW)).toBeNull();
+    expect(dateBounds(NOW)).toEqual({ min: "1906-06-15", max: "2026-06-15" });
   });
 
   it("calls onVerified with adult result for 25-year-old", () => {
-    const year = new Date().getFullYear() - 25;
     render(<AgeGate {...mockProps} />);
-    fireEvent.change(screen.getByLabelText("Month"), {
-      target: { value: "01" },
-    });
-    fireEvent.change(screen.getByLabelText("Day"), {
-      target: { value: "15" },
-    });
-    fireEvent.change(screen.getByLabelText("Year"), {
-      target: { value: String(year) },
-    });
-    fireEvent.click(screen.getByText("Continue"));
-
+    enter("2001-01-15");
     expect(mockProps.onVerified).toHaveBeenCalledWith(
       expect.objectContaining({
         isMinor: false,
@@ -163,25 +119,14 @@ describe("AgeGate", () => {
         requiresParentalConsent: false,
         contentRatingLevel: 3,
       }),
-      `${year}-01-15`
+      "2001-01-15"
     );
   });
 
   // TASK-181: until parental consent ships (Batch 4) an under-13 date is refused here.
   it("refuses a 10-year-old's date with the not-available-yet message", () => {
-    const year = new Date().getFullYear() - 10;
     render(<AgeGate {...mockProps} />);
-    fireEvent.change(screen.getByLabelText("Month"), {
-      target: { value: "01" },
-    });
-    fireEvent.change(screen.getByLabelText("Day"), {
-      target: { value: "15" },
-    });
-    fireEvent.change(screen.getByLabelText("Year"), {
-      target: { value: String(year) },
-    });
-    fireEvent.click(screen.getByText("Continue"));
-
+    enter("2016-01-15");
     expect(mockProps.onVerified).not.toHaveBeenCalled();
     expect(screen.getByRole("alert").textContent).toMatch(
       /children under 13 are not available yet/
@@ -189,54 +134,21 @@ describe("AgeGate", () => {
   });
 
   it("calls onVerified with teen result for 15-year-old", () => {
-    const year = new Date().getFullYear() - 15;
     render(<AgeGate {...mockProps} />);
-    fireEvent.change(screen.getByLabelText("Month"), {
-      target: { value: "01" },
-    });
-    fireEvent.change(screen.getByLabelText("Day"), {
-      target: { value: "15" },
-    });
-    fireEvent.change(screen.getByLabelText("Year"), {
-      target: { value: String(year) },
-    });
-    fireEvent.click(screen.getByText("Continue"));
-
+    enter("2011-01-15");
     expect(mockProps.onVerified).toHaveBeenCalledWith(
       expect.objectContaining({
         isMinor: true,
         requiresParentalConsent: false,
         contentRatingLevel: 2,
       }),
-      `${year}-01-15`
+      "2011-01-15"
     );
   });
 
   it("calls onCancel when back link clicked", () => {
     render(<AgeGate {...mockProps} />);
-    fireEvent.click(screen.getByText("Back to Sign In"));
+    fireEvent.click(screen.getByText(say("age_gate.back_to_sign_in")));
     expect(mockProps.onCancel).toHaveBeenCalled();
-  });
-
-  it("has numeric inputMode on all inputs", () => {
-    render(<AgeGate {...mockProps} />);
-    expect(screen.getByLabelText("Month").getAttribute("inputmode")).toBe("numeric");
-    expect(screen.getByLabelText("Day").getAttribute("inputmode")).toBe("numeric");
-    expect(screen.getByLabelText("Year").getAttribute("inputmode")).toBe("numeric");
-  });
-
-  it("shows error for invalid date like Feb 30", () => {
-    render(<AgeGate {...mockProps} />);
-    fireEvent.change(screen.getByLabelText("Month"), {
-      target: { value: "02" },
-    });
-    fireEvent.change(screen.getByLabelText("Day"), {
-      target: { value: "30" },
-    });
-    fireEvent.change(screen.getByLabelText("Year"), {
-      target: { value: "2000" },
-    });
-    fireEvent.click(screen.getByText("Continue"));
-    expect(screen.getByRole("alert").textContent).toBe("Please enter a valid date");
   });
 });

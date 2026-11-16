@@ -1,12 +1,5 @@
 {
-  "_comment": "TASK-181 refusal coverage: the (caller -> route : code) pairs not yet handled by the shared refusal handler (platform/errors/refusal.ts) or a caller's HANDLED_CODES. May only shrink (__tests__/refusal-coverage.test.ts). Per repository \u2014 not synced. What remains: the staff consoles' panels (components/admin/*: they show the server's message, not yet by kind) and useSsoProviders (a failed read only hides the single sign-on buttons).",
-  "count": 6,
-  "gaps": [
-    "components/auth/useSsoProviders.ts -> /api/features : rate.limited",
-    "components/auth/useSsoProviders.ts -> /api/features : service.unavailable",
-    "components/auth/useSsoProviders.ts -> /api/features : tenant.mismatch",
-    "components/auth/useSsoProviders.ts -> /api/features : tenant.missing",
-    "components/auth/useSsoProviders.ts -> /api/features : tenant.suspended",
-    "components/auth/useSsoProviders.ts -> /api/features : tenant.unknown_host"
-  ]
+  "_comment": "TASK-181 refusal coverage: the (caller -> route : code) pairs not yet handled by the shared refusal handler (platform/errors/refusal.ts) or a caller's HANDLED_CODES. May only shrink (__tests__/refusal-coverage.test.ts). Per repository — not synced. Nothing remains (TASK-222 took out the last: the sign-in screen's feature read, replaced by the page's server render).",
+  "count": 0,
+  "gaps": []
 }

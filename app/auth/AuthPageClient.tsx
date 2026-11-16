@@ -5,6 +5,10 @@
  * used to start every server provider in the browser (initAuth → initProviders), which in a
  * production build refused to boot on the browser's absent store settings and left the page on
  * "Loading..." (PF v5.1.1).
+ *
+ * Once someone is signed in, the page goes on to the page they asked for — `?redirect=`, a page
+ * of this site only (platform/auth/return-path.ts) — or to / (TASK-222, E-113: it always went
+ * to /).
  */
 
 "use client";
@@ -14,7 +18,10 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/platform/auth/context";
 import { hasAuthProvider, registerAuthProvider } from "@/platform/auth/config";
 import { createBrowserAuthProvider } from "@/platform/auth/browser-auth-provider";
+import { returnPathFromLocation } from "@/platform/auth/return-path";
+import type { SsoProvider } from "@/platform/auth/types";
 import AuthPage from "@/components/auth/AuthPage";
+import { AuthLoading } from "@/components/auth/ui/AuthLoading";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 
 /** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
@@ -29,26 +36,26 @@ function registerBrowserAuthProvider(): true {
   return true;
 }
 
-export default function AuthPageClient() {
+export default function AuthPageClient({
+  ssoProviders = [],
+}: {
+  readonly ssoProviders?: SsoProvider[];
+}) {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
   useState(registerBrowserAuthProvider);
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
-      router.replace("/");
+      router.replace(returnPathFromLocation(window.location) ?? "/");
     }
   }, [isAuthenticated, isLoading, router]);
 
   if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="text-gray-500">{t("loading")}</div>
-      </div>
-    );
+    return <AuthLoading text={t("loading")} />;
   }
 
   if (isAuthenticated) return null;
 
-  return <AuthPage />;
+  return <AuthPage ssoProviders={ssoProviders} />;
 }

@@ -13,10 +13,13 @@
 import React from "react";
 import { renderMessage } from "@/platform/errors/messages";
 import type { Refusal } from "@/platform/errors/refusal";
+import { useSignInHref } from "@/components/auth/useSignInHref";
 import { BUTTON } from "./tokens";
 
 export function RefusalExtras({ refusal }: { readonly refusal: Refusal }) {
   const { kind } = refusal;
+  // Signed in again, back to this console page (E-113); an erased account starts afresh.
+  const signInHere = useSignInHref();
   if (kind === "retry-after" && refusal.retryAfterSeconds !== undefined)
     return (
       <p data-refusal-kind={kind}>
@@ -36,7 +39,7 @@ export function RefusalExtras({ refusal }: { readonly refusal: Refusal }) {
   if (kind === "sign-in" || kind === "signed-out-erased")
     return (
       <p data-refusal-kind={kind}>
-        <a href="/auth" className={BUTTON.link}>
+        <a href={kind === "sign-in" ? signInHere : "/auth"} className={BUTTON.link}>
           {renderMessage("screens.refusal.sign_in")}
         </a>
       </p>

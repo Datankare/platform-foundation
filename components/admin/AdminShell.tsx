@@ -26,7 +26,7 @@ interface AdminShellProps {
   adminRole?: string;
   /** Callback to verify admin has required permission */
   hasPermission: (code: string) => boolean;
-  /** "Sign Out": must end the session, not only leave the console (the page signs out first). */
+  /** "Sign out": must end the session, not only leave the console (the page signs out first). */
   onSignOut: () => void;
   /** Render the active section's content */
   children: (activeSection: AdminSection) => React.ReactNode;

@@ -116,7 +116,7 @@ async function failedSignOuts(
 
   // The home screen's Sign out, the same.
   await page.goto("/");
-  const homeSignOut = page.getByRole("button", { name: "Sign Out", exact: true });
+  const homeSignOut = page.getByRole("button", { name: "Sign out", exact: true });
   await expect(homeSignOut).toBeVisible({ timeout: 15_000 });
   await homeSignOut.click();
   await expect(page.getByTestId("sign-out-failed")).toBeVisible({ timeout: 15_000 });

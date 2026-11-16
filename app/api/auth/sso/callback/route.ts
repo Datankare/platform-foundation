@@ -5,7 +5,9 @@
  * GET /api/auth/sso/[provider] (constant time), exchanges the code with the PKCE verifier, and
  * starts the session like sign-in: { success, userId, email, emailVerified } with the session
  * cookie — the provider's tokens stay on the server (sessionResponse, ADR-057). The attempt
- * cookie is cleared on every outcome — an attempt is used once.
+ * cookie is cleared on every outcome — an attempt is used once. A completed sign-on also answers
+ * `returnTo`: the page the attempt was asked to return to, checked again here as a page of this
+ * site (TASK-222, E-113).
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -27,6 +29,7 @@ import {
 } from "@/platform/auth/sso";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { safeReturnPath } from "@/platform/auth/return-path";
 import { sessionTenantRefusal } from "@/platform/tenancy/identity";
 import type { ResponseSchema } from "@/platform/errors/response-schema";
 import { authResultSchema } from "@/platform/auth/auth-response-schema";
@@ -55,6 +58,7 @@ function endAttempt(response: NextResponse): NextResponse {
 const POST_RESPONSE: ResponseSchema = authResultSchema({
   email: { type: "string" },
   emailVerified: { type: "boolean" },
+  returnTo: { type: "string" },
 });
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
@@ -126,6 +130,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   if (refused) return endAttempt(refused);
 
   const identity = idTokenIdentity(result.idToken);
+  const returnTo = safeReturnPath(attempt.returnTo, request.nextUrl.origin);
   const response = await sessionResponse(
     {
       success: true,
@@ -138,7 +143,11 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
       request,
       context: "SSO callback failed",
       method: "sso",
-      extra: { email: identity.email, emailVerified: identity.emailVerified },
+      extra: {
+        email: identity.email,
+        emailVerified: identity.emailVerified,
+        ...(returnTo ? { returnTo } : {}),
+      },
     }
   );
   return endAttempt(response);

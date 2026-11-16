@@ -8,6 +8,7 @@ import { renderMessage } from "@/platform/errors/messages";
 import { useAuth } from "@/platform/auth/context";
 import MfaEnrollment from "@/components/admin/MfaEnrollment";
 import { leaveConsole } from "@/components/admin/leave-console";
+import { signInPath } from "@/platform/auth/return-path";
 import { readableRole } from "@/components/admin/admin-format";
 import { adminCall } from "@/components/admin/ui/admin-call";
 import { Reading } from "@/components/admin/ui/PanelState";
@@ -123,7 +124,10 @@ export default function AdminPage() {
         <button
           type="button"
           className={BUTTON.primary}
-          onClick={() => router.push("/auth")}
+          // Back to this console, the section the address names, once signed in (E-113).
+          onClick={() =>
+            router.push(signInPath(window.location.pathname + window.location.search))
+          }
         >
           {renderMessage("screens.admin_console.sign_in")}
         </button>

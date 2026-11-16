@@ -40,6 +40,19 @@
  *   - a jest run started inside another is a run of its own: its globalSetup puts the settings
  *     back on the copied database and makes copies of its own, which its teardown drops.
  *
+ * A run's copies are marked, and none outlives its run unseen (TASK-223). Each copy carries a
+ * comment naming the run and the process that made it (`markCopy`: `pf test copy run=<run>
+ * owner=<pid>@<host>`). The owner's teardown drops them and then checks they are gone — any left
+ * fails the run (db-global-teardown.ts). A run killed before its teardown (Ctrl-C, a stopped gate,
+ * a cancelled CI job) cannot drop its own: the next run on the same database finds them — a
+ * marked copy whose owner was a process on this host that is no longer running, with nobody
+ * connected — and drops them before making its own (`reclaimKilledCopies`, in the global setup);
+ * a copy of a live run, or of another host's, is never touched. And CI's Layer 1 ends with
+ * scripts/check-test-database-copies.mjs: any database named as a copy of the run's database (or
+ * as a test's scratch database beside one) still there fails the job. Batch 56d-3 counted three
+ * copies after a clean run: they were the copies of an earlier run with the same database name,
+ * stopped right after its global setup — kept, then counted as the clean run's (TASK-223).
+ *
  * What a template copy does not carry is the database's own entry: its owner, its privileges
  * (migration 049 revokes TEMPORARY on the database from app_tenant and PUBLIC) and its per-database
  * settings. `copyDatabase` gives the copy the same three and checks them (`databaseLevel`), so a
@@ -49,6 +62,7 @@
  * template's contents; no other session may be connected to the template while it is copied).
  */
 import { createHash } from "node:crypto";
+import { hostname } from "node:os";
 import type { Client } from "pg";
 
 /** The settings the per-worker selection reads and writes. */
@@ -137,6 +151,141 @@ export function workerDatabaseName(base: string, worker: number, run: string): s
     return plain;
   const h = createHash("sha256").update(base).digest("hex").slice(0, 12);
   return `t_${h}_w${worker}_${run}`;
+}
+
+/**
+ * What every copy of `base` (and a test's scratch database named after one) begins with:
+ * `<base>_w` for a short plain name, `t_<hash>_w` for one workerDatabaseName shortens.
+ * scripts/check-test-database-copies.mjs computes the same (db-isolation.test.ts compares them).
+ */
+export function copyPrefixes(base: string): string[] {
+  const h = createHash("sha256").update(base).digest("hex").slice(0, 12);
+  const plain = `${base}_w`;
+  return /^[a-z_][a-z0-9_]*$/.test(base) ? [plain, `t_${h}_w`] : [`t_${h}_w`];
+}
+
+/** The comment a copy carries: whose run made it, which process, on which host. */
+export function copyMark(run: string, pid: number, host: string): string {
+  return `pf test copy run=${run} owner=${pid}@${host}`;
+}
+
+/** A copy's mark, read back; null for a database without one. */
+export function readCopyMark(
+  comment: string | null
+): { run: string; pid: number; host: string } | null {
+  const m = /^pf test copy run=([a-z0-9_]+) owner=(\d+)@(\S+)$/.exec(comment ?? "");
+  return m ? { run: m[1], pid: Number(m[2]), host: m[3] } : null;
+}
+
+/** Mark `name` as a copy of the run `run`, made by this process on this host. */
+export async function markCopy(
+  c: Client,
+  name: string,
+  run: string,
+  pid: number = process.pid,
+  host: string = hostname()
+): Promise<void> {
+  await c.query(
+    `comment on database ${quoteIdent(name)} is ${quoteLiteral(copyMark(run, pid, host))}`
+  );
+}
+
+/** Whether process `pid` on this host is still running (one that exists, even if not ours). */
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Drop the copies of `base` a killed run on this host left behind — marked copies whose owning
+ * process is no longer running and to which nobody is connected — with any scratch database a
+ * test named after one (`<copy>_…`). Never a copy of a live run, one marked by another host, or
+ * an unmarked database. Returns the names dropped.
+ */
+/** One database a reclaim considers: its name, its mark (comment) and how many are connected. */
+export interface CopyRow {
+  readonly name: string;
+  readonly comment: string | null;
+  readonly sessions: number;
+}
+
+/**
+ * Of `rows`, the ones a reclaim drops, scratch databases first: the marked copies whose owner ran
+ * on `host` and is no longer running and to which nobody is connected, and the unmarked databases
+ * named after one of them (`<copy>_…`) to which nobody is connected. Everything else — a live
+ * run's copy, another host's, one in use, an unmarked one of its own — is kept. (The drop itself
+ * is also without FORCE, so one connected to after this read is refused by Postgres too.)
+ */
+export function reclaimable(
+  rows: readonly CopyRow[],
+  alive: (pid: number) => boolean,
+  host: string
+): string[] {
+  const names = rows
+    .filter((r) => {
+      const mark = readCopyMark(r.comment);
+      return mark !== null && mark.host === host && !alive(mark.pid) && r.sessions === 0;
+    })
+    .map((r) => r.name);
+  const scratch = rows
+    .filter((r) => readCopyMark(r.comment) === null && r.sessions === 0)
+    .filter((r) => names.some((n) => r.name.startsWith(`${n}_`)))
+    .map((r) => r.name);
+  return [...scratch, ...names];
+}
+
+export async function reclaimKilledCopies(
+  c: Client,
+  base: string,
+  alive: (pid: number) => boolean = processAlive,
+  host: string = hostname()
+): Promise<string[]> {
+  const { rows } = await c.query<{
+    name: string;
+    comment: string | null;
+    sessions: number;
+  }>(
+    `select d.datname as name, shobj_description(d.oid, 'pg_database') as comment,
+            (select count(*)::int from pg_stat_activity a where a.datname = d.datname) as sessions
+       from pg_database d
+      where exists (select 1 from unnest($1::text[]) p where starts_with(d.datname::text, p))`,
+    [copyPrefixes(base)]
+  );
+  const dropped: string[] = [];
+  for (const name of reclaimable(rows, alive, host)) {
+    // No force: one someone connected to since it was read is left alone (it is in use).
+    const done = await c
+      .query(`drop database if exists ${quoteIdent(name)}`)
+      .then(() => true)
+      .catch(() => false);
+    if (done) dropped.push(name);
+  }
+  return dropped;
+}
+
+/** Of `names` (a run's copies), those still there, with any scratch database named after one. */
+export async function remainingCopies(
+  c: Client,
+  names: readonly string[]
+): Promise<string[]> {
+  if (names.length === 0) return [];
+  const { rows } = await c.query<{ name: string }>(
+    `select datname as name from pg_database
+      where datname = any($1::text[])
+         or exists (select 1 from unnest($1::text[]) n where starts_with(datname::text, n || '_'))
+      order by datname`,
+    [names]
+  );
+  return rows.map((r) => r.name);
+}
+
+/** A string as a quoted literal. */
+export function quoteLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 /** A name as a quoted identifier (the names here are ours, but a base may be anything). */

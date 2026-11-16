@@ -7,6 +7,266 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-223 — A test run's per-worker databases: a killed run's copies reclaimed, a copy left fails the run (56d-3's "copies left 3")
+
+| Field        | Detail                                                                                           |
+| ------------ | ------------------------------------------------------------------------------------------------ |
+| **ID**       | TASK-223                                                                                         |
+| **Type**     | Test infrastructure — correctness of the per-worker test databases (TASK-218/219)                |
+| **Severity** | Medium (a leftover copy was counted against the wrong run, and nothing failed on one)            |
+| **Phase**    | Phase 5                                                                                          |
+| **Target**   | v6.0.0 (RC)                                                                                      |
+| **Status**   | Fixed on develop (batch 56e-1)                                                                   |
+| **Logged**   | 2026-11-16 (batch 56d-3's final gates: the second Layer 1 coverage run reported "copies left 3") |
+
+Batch 56e-1, part A, in both repositories (Playform: its TASK-5025).
+
+**What was seen.** In 56d-3's final gates, Platform Foundation's second Layer 1 coverage run
+(label `f2`, tree `ee552cfa`) passed every test but the batch tool counted three per-worker
+databases still there after it (`copies left 3`); the runs before and after it counted none.
+
+**Root cause (reproduced, not guessed).** The copies were not that run's. The final gates had run
+once before (tree `6b5774b4`): its ratchet failed at 05:09:29, the gate script went on to its next
+unit, `l1-coverage-2` (the same label, `f2`), and that attempt was stopped at about 05:10:06 — just
+after its global setup had made its three copies and before its teardown. A run stopped before its
+teardown keeps its copies (the design said so: "a run killed before its teardown leaves its
+copies"). The second attempt, an hour later, made and dropped its own three, and the tool, which
+counted copies by the label's name pattern, counted the first attempt's three as its own. Nothing in
+either repository noticed: the next run's setup did not look for them, and no check failed on one.
+
+| Run (batch 56e-1; `ee552cfa` is the 56d-3 code)                             | Exit | Copies made / dropped                    | Copies left after |
+| --------------------------------------------------------------------------- | ---- | ---------------------------------------- | ----------------- |
+| r1, r2, r3 (`ee552cfa`): uninterrupted, 3 workers, 1200 MB restart limit    | 0    | 7 / 7 each                               | 0                 |
+| r4 (`ee552cfa`): 2 workers, 600 MB (43 worker starts, 39 killed)            | 0    | 6 / 6                                    | 0                 |
+| r5 (`ee552cfa`): 4 workers, 800 MB (31 worker starts, 23 killed)            | 0    | 8 / 8                                    | 0                 |
+| k1, k2 (`ee552cfa`): stopped right after the global setup                   | —    | 3 / 0                                    | 3                 |
+| k2 again (`ee552cfa`), the same label, uninterrupted: 625/625 suites passed | 0    | 3 / 3                                    | 3 (k2's, counted) |
+| k3 (this change): stopped right after the global setup                      | —    | 3 / 0                                    | 3                 |
+| k3 again (this change), the same label: 635/635 suites passed               | 0    | 3 / 3, and k3's 3 reclaimed by its setup | 0                 |
+
+k2's rerun is 56d-3's line exactly: every test passed, "copies left 3".
+
+The trace (every jest process's pid and parent in the database's `application_name`, Postgres
+logging every CREATE and DROP DATABASE with it) showed in r1–r5 that jest's idle-memory restarts
+(14 to 43 worker starts and 7 to 39 workers killed per run) neither make nor leave a copy: the copies are
+made and dropped by the parent alone, and a nested run's by its own parent. The one way a copy
+outlives its run is the run being stopped before its teardown.
+
+**What it is now.**
+
+| Was                                            | Now                                                                                                                                                                                                  |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A copy carried nothing saying whose it was     | Each copy is marked (`COMMENT ON DATABASE`): the run and its owner process on this host (`markCopy`)                                                                                                 |
+| A killed run's copies stayed for good          | The next run's setup drops copies of the same database whose owner process on this host is gone and to which nobody is connected, and their scratch databases; it says which (`reclaimKilledCopies`) |
+| A teardown passed whatever it left             | The teardown checks that none of its copies, nor a scratch database beside one, is left, and fails the run naming them (`remainingCopies`)                                                           |
+| CI and `npm run test:db` ended without looking | Each ends with `node scripts/check-test-database-copies.mjs`: a per-worker copy of the database left fails, named                                                                                    |
+| The batch tool counted by name pattern         | The batch tool drops a stale copy of its label first and reports the repository's own check                                                                                                          |
+
+The isolation is not weakened: a copy is reclaimed only when it carries this repository's mark,
+its owner ran on this host and is no longer running, and nobody is connected — a live run's, a
+copy in use, another host's and an unmarked database are never touched (each a database test).
+Nothing is dropped with `FORCE`.
+
+**Found while fixing.** `worker-database.db.test.ts` made scratch databases (`<copy>_src`,
+`_dst`) without first removing ones a stopped attempt of the same file left; jest's idle-memory
+restart can stop a worker just after it has started its next file, and runs that file again — the
+second attempt then failed on "already exists". It now removes them first.
+
+**Design check**
+
+- **Reach:** the jest global setup and teardown, `__tests__/helpers/db-workers.ts`, one new script,
+  `scripts/test-db.sh`, one CI step per Layer 1 pass. No product code.
+- **Races:** two runs on one database at once (not done, and refused by nothing new): a live run's
+  copies have a live owner and sessions — never reclaimed. A pid reused by another process: its
+  copy is kept (alive), the safe side. A copy whose run is starting (made, mark not yet written):
+  unmarked, never reclaimed.
+- **Dependencies down:** Postgres down → the setup fails as before; the check exits 2 (not
+  configured or unreachable) and the CI step fails.
+- **Erasure leftovers:** none — these are throwaway test databases; the change removes leftovers.
+- **Screens × responses:** none — no screen and no route changes; test infrastructure only.
+- **Journeys touched:** none; each CI Layer 1 pass gains its last step, the leftover check.
+- **Weakens a tenant's protection?** No — a guard is added; nothing is skipped or relaxed.
+
+**Threat model**
+
+- **Boundary:** a developer's or CI's test run ↔ the Postgres cluster it makes its copies in. No
+  production boundary.
+- **Bypasses:** none — the reclaim drops only a database with this repository's mark, an owner on
+  this host that is no longer running, and nobody connected (each a test); never with FORCE.
+- **Forgeries:** a database carrying a forged mark is dropped only if its named owner on this host
+  is gone and nobody uses it — a throwaway test cluster, the same reach as the run itself.
+- **Legitimate flows:** a run's own copies, made, used and dropped; a killed run's reclaimed by the
+  next; a nested run's (`worker-database.db.test.ts`) left alone while it runs.
+- **Agreed before code:** the owner's brief for batch 56e-1, part A (root-cause 56d-3's "copies
+  left 3", add a check that fails, never weaken the isolation).
+
+**Self-review**
+
+- **Consumers checked:** every jest configuration (`db-isolation`'s scratch-repository self-test
+  covers the setup, the teardown, CI and `test:db`); the nested runs of `worker-database.db.test.ts`
+  (a killed nested run reclaimed by the next; a nested run leaving a scratch database fails).
+- **Hostile re-read:** the check script and the helper agree on which names are copies (a parity
+  test runs both).
+
+### TASK-222 — The sign-in screens: sign-in, account, reset, two-step and verification steps on shared parts; the server's password rules; back to the page asked for
+
+| Field        | Detail                                                                                                |
+| ------------ | ----------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-222                                                                                              |
+| **Type**     | Usability, accessibility and correctness — the sign-in screens                                        |
+| **Severity** | High (E-112, E-113), Important (SF-app-040), with 11 Low and 2 Nit screen findings, E-110 and S8 a11y |
+| **Phase**    | Phase 5                                                                                               |
+| **Target**   | v6.0.0 (RC)                                                                                           |
+| **Status**   | Fixed on develop (batch 56e-1)                                                                        |
+| **Logged**   | 2026-11-13 (the 2026-11-12 screen review, group B1: `SF-app-040` to `051`; second-wave status S8)     |
+
+Batch 56e-1, in both repositories (Playform: its TASK-5024). Group B1 of the screen review: every
+step of the sign-in page, its shared parts, the sign-in wording, and axe on `/auth`. The rest of
+the user app (group B2) is not part of this batch.
+
+**What was wrong.** After verifying an email the page dropped the person on an empty sign-in form;
+moving between steps left focus on a vanished button, and Back left the page; no field was tied
+to its error, and "Passwords do not match" was grey text nobody heard; the password checklist said
+met or not met by colour only; three screens stated three password rules (12 and four kinds, 12, 8) and none was the server's; the reset's code step named no address, offered no new code and no
+other address, and called the code two names; the new-password step had placeholders for labels;
+the date of birth was three month-first boxes, not a form; the Apple mark was a private-use
+character, and the SSO buttons appeared after a read and pushed the form down; a cancelled SSO read
+as a failure, and its `?error=` came back on reload; the wording mixed Title Case and sentence case,
+"..." and "…"; the brand was cut out of one string; the page had no `main`; "Platform Foundation" and
+"Foundation as Fabric · Continuous Confidence" were shown to everyone signing in; the two code
+fields had no label; and sign-in always went to `/`, whatever page sent the person there.
+
+**What it is now.** The steps are built from shared parts (`components/auth/ui/`: `AuthField` with
+`AuthInput` and `CodeInput`, `FormError` and `FormNotice`, `AuthHeading`, `PasswordRules` and
+`NewPasswordFields` with `usePasswordPolicy`, `AuthLoading`, and the step history
+`components/auth/useAuthSteps.ts`), and a guard keeps a sign-in screen from building one by hand
+(`__tests__/auth-shared-components-guard.test.ts`, like the console's). The password rules every
+screen states are the server's: a new public route, `GET /api/auth/password-policy`, answers the
+tenant's policy (its rules only), and the screens judge a password with the very function the
+routes refuse one by (`platform/auth/password-rules.ts`, split out of `password-policy.ts` so the
+browser can import it; parity proved for any policy and any password). Sign-in returns to the
+page asked for (`?redirect=`): a page of this site only (`platform/auth/return-path.ts`), through
+password sign-in, two-step verification, a new password and single sign-on (the path travels in
+the SSO attempt's own httpOnly cookie — nothing is put in browser storage); the console's "Sign in"
+and a section's sign-in link ask for the console page.
+
+**Findings fixed** (the test is the screen's own unless named):
+
+| Finding        | Was                                                                                                | Now                                                                                                                                                                                                  |
+| -------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SF-app-040     | Verified, the person landed on an empty sign-in form                                               | Sign-in says "Your email address is verified. Sign in to continue." with the address filled in; the password is typed again (owner question 1) — `auth-page`                                         |
+| SF-app-041     | Focus stayed on a vanished button; the step was not in the address; Back left the page             | Each step in the address (`?view=create-account`, `reset-password`, `two-step`, …); Back and Forward move between steps; the step's heading takes focus — `auth-page`                                |
+| SF-app-042     | No field tied to its error; "Passwords do not match" not announced                                 | `AuthField`: `aria-invalid`, `aria-describedby` for help and error, the error announced; a form's refusal describes the form, naming no field — `login-form`, `register-form`                        |
+| SF-app-043     | Met or not met by colour and glyph only                                                            | Each rule says "met" or "not met" in words; the glyph is hidden from a screen reader — `auth-ui-parts`                                                                                               |
+| SF-app-044     | The code step named no address, no new code, no other address; "verification code" vs "reset code" | "If {email} belongs to an account, we have sent a reset code to it" (never says it exists); "Send a new code" after 60 s; "Use another email address"; one name: reset code — `forgot-password-form` |
+| SF-app-045     | Labels for a screen reader only; placeholders vanished on typing                                   | Visible labels — `new-password-form`                                                                                                                                                                 |
+| SF-app-046     | Not a form; month first for every reader                                                           | One date field in a form (Enter continues); the browser draws it in the reader's order; its refusal is the field's error — `age-gate`                                                                |
+| SF-app-047     | The Apple mark a private-use glyph (a box off Apple devices); buttons appeared after a read        | Drawn marks (SVG); the providers read on the server while the page renders (`platform/auth/sso-offered.ts`), in the first paint — `auth-ui`, `sso-offered`, `auth-page`                              |
+| SF-app-048     | A cancellation at the provider read as "sign-in failed"                                            | `error=access_denied` returns as `?sso=cancelled`: "Single sign-on was cancelled. You can try again, or sign in another way." (a notice, not an error) — `sso-callback-client`                       |
+| SF-app-049     | `?error=` stayed in the address after dismissal                                                    | Dismissed (any action), it leaves the address (`history.replaceState`) — `auth-page`                                                                                                                 |
+| SF-app-050     | Title Case beside sentence case; "..." beside "…"; "Two-Factor Authentication" beside "two-step"   | Sentence case and "…" on every sign-in text and every sign-in or sign-out label; "two-step verification" on every screen (an admin setting said "MFA") — `sign-in-wording` (a guard)                 |
+| SF-app-051     | The brand cut out by `includes("PLAY")`; no `main`                                                 | Two catalogue parts, read as one word; the page is `main` — `auth-ui`                                                                                                                                |
+| E-110          | "Platform Foundation" and "Foundation as Fabric · Continuous Confidence" on every sign-in page     | Removed — `auth-ui`, the e2e journey                                                                                                                                                                 |
+| E-112          | Three screens, three rules (12 + four kinds; 12; 8), none the server's                             | `GET /api/auth/password-policy`; `PasswordRules` on all three; parity with the routes' refusal — `password-rules-parity`, `auth-password-policy-route`                                               |
+| E-113          | Sign-in always went to `/`; the console sent people to plain `/auth`                               | `?redirect=` honoured by the page, two-step, new password and SSO; the console's Sign in and refusal link ask for the console — `auth-page-client-return`, `sso-flow`, `admin-sign-in-return`        |
+| S8 a11y        | The two-step and verification code fields had no label                                             | Labelled ("6-digit code", "Verification code") — `mfa-challenge-form`, `email-verification-form`                                                                                                     |
+| axe on `/auth` | No scan                                                                                            | Every step at 1280 and 390 px (`e2e/sign-in-screens.spec.ts`), no sideways scroll, headings focused, refusals tied                                                                                   |
+
+**Found while fixing** (each tested, each failing without its fix):
+
+- The sign-in page's and the SSO callback's waits were a grey line on the default white page, not
+  a status (SF-app-003, group B2's, for these two pages): `AuthLoading`, the dark page and a status.
+- The admin setting `auth.token_cache_seconds` said "MFA": now "two-step verification" (SF-app-050).
+- Found by the new browser journey: the reset's code step (a step inside the reset step) did not
+  take focus when the page had opened on the reset (SF-app-041) — it does now; and cancelling
+  two-step verification or a new password returned to an empty sign-in form — the address the
+  person typed is now kept (it is theirs; nothing is said about an account) (`auth-page`,
+  `forgot-password-form`).
+- Found in the walk: the code fields' placeholder ("6-digit code") was spaced letter by letter
+  like the digits; it now reads as words (`auth-ui-parts`).
+
+**Route changes** (each declared in its route's response schema, fixtures from the real handlers):
+`GET /api/auth/password-policy` — new, public, rate limited (`API_GLOBAL`), `no-store`, the rules
+only; `GET /api/auth/sso/[provider]` — reads `?redirect=` (a path of this site, else ignored) into
+the attempt cookie, and keeps it on a failure's way back to sign-in; `POST /api/auth/sso/callback`
+— answers `returnTo` once the session has started. Nothing is removed.
+
+**Owner's questions** (built on the most conservative reading):
+
+1. _After verification, sign in by itself?_ Built: no — the person types the password again (this
+   page keeps no password longer than the form it was typed in; a second sign-in also spends the
+   sign-in limit). Signing in by itself would mean holding the password across the verification.
+2. _The reset's wording._ Built: "If {email} belongs to an account, we have sent a reset code to
+   it" — the friendlier "We sent a code to {email}" would say the address has an account (audit
+   A-15). The same "if" for a new code.
+3. _A cancelled or failed single sign-on and the page asked for._ The path travels in the attempt's
+   httpOnly cookie, which only the callback route reads: a sign-on cancelled or refused at the
+   provider returns to plain sign-in (the page asked for is not kept; a start refused before the
+   provider keeps it); a completed one goes to it. Keeping it after a
+   cancellation would need the page to keep it in browser storage, which the retention register
+   says nothing is (platform/jobs/retention.ts).
+4. _The date of birth control._ Built: the browser's own date field (its order is the reader's).
+   A browser without one shows a text field that takes `YYYY-MM-DD`, and says when a date is not
+   one.
+5. _The provider marks_ are drawn here (simplified shapes in the providers' colours); the owner may
+   want each provider's official artwork from its brand guidelines.
+
+**Design check**
+
+- **Reach:** the sign-in page and its steps, the SSO callback page, the console's sign-in button
+  and refusal link, three routes (one new), the auth catalogue, the password-rule module (split),
+  shared parts and their guard. No migration, no setting.
+- **Races:** a policy read that answers after a password is typed re-judges it (the rules shown
+  and the submit follow the latest policy); the policy changing between the screen's read and the
+  route's check is refused by the route with its own message (the route is the judge).
+- **Dependencies down:** the policy read failing or refused → the strict built-in policy (the one
+  the routes fall back to); the feature list unreadable → no SSO buttons (as before, now on the
+  server); storage is not used.
+- **Erasure leftovers:** none — the return path is a page address in a 10-minute httpOnly cookie
+  that every SSO outcome clears.
+- **Screens × responses:** every call of the steps through the auth provider as before;
+  `usePasswordPolicy` lists the codes it handles (any refusal: the built-in policy); the refusal
+  baseline shrinks (the old feature read is gone).
+- **Journeys touched:** `e2e/sign-in-screens.spec.ts` (new: each step at 1280 and 390 px, axe; no
+  sign-in spent — the two-step and new-password steps are reached with the sign-in route's own
+  recorded answers; three account calls at 1280, AUTH_ACCOUNT); `e2e/session.spec.ts`,
+  `e2e/sign-out.spec.ts` (labels). Playform's live journeys follow (its TASK-5024).
+- **Weakens a tenant's protection?** No. No rate limit changed; no wording says whether an address has an
+  account; no timing differs by account (the steps' calls are the same); CSRF and session rules
+  untouched; the redirect is a path of this site only, checked where it is read, kept and
+  answered (open redirect: OWASP's "Unvalidated Redirects and Forwards Cheat Sheet").
+- _Credits._ **WAI-ARIA Authoring Practices Guide** (W3C WAI) and **WCAG 2.2** (W3C; 1.3.1, 1.4.1,
+  2.4.3, 3.3.1, 3.3.2, 4.1.3); **OWASP Cheat Sheet Series**, "Unvalidated Redirects and Forwards"
+  (OWASP Foundation); **RFC 6749** §4.1.2.1 (IETF; the `access_denied` error); **NIST SP 800-63B**
+  (NIST; the password policy's floor, as before).
+
+**Threat model**
+
+- **Boundary:** the sign-in page ↔ the auth routes; the SSO start and callback ↔ the identity
+  provider; the browser's address.
+- **Actors that exist today:** (1) anyone on the internet — the sign-in page is public; (2) a
+  phisher sending a link to `/auth?redirect=…` to send a person to another site after signing in
+  (an open redirect); (3) someone probing whether an address has an account.
+- **Bypasses:** none. (2) is refused at every hop: the page, the SSO start, the callback route and
+  the callback page each accept only a path of this site (`//`, `/\`, schemes, control characters,
+  `/auth` and `/api/` refused; tested against every spelling and a property test). (3): the reset
+  says "if"; the new route answers the same policy to everyone; nothing new answers by account.
+- **Forgeries:** a forged SSO attempt cookie naming another site is not answered (`sso-flow`).
+- **Legitimate flows:** sign-in, guest, account (date of birth, account form, verification), reset
+  (address, code, new code, other address), two-step, new password, SSO and its cancellation,
+  return to the page asked for. Each is a screen test and a step of the e2e journey.
+- **Agreed before code:** the owner's brief for batch 56e-1 (group B1 of the screen review).
+
+**Self-review**
+
+- **Consumers checked:** every importer of the auth forms (AuthPage; Playform's main screen uses
+  `AgeGate`), of `password-policy.ts` (re-exports kept), of `SsoButtons`, of `useReturnError`, of
+  `decodeSsoAttempt` (3- and 4-part cookies), of the removed `useSsoProviders`; every spec and live
+  journey naming a sign-in label.
+- **Hostile re-read:** the new route is public — it answers what any person sees when choosing a
+  password; the redirect is judged where it is read, again where it is kept, again where it is
+  answered and again where it is followed.
+
 ### TASK-221 — The admin console rebuilt on shared parts, pass 3 of 3: the operator and moderation screens (Tenant, Tenants, Jobs, Erasures, the kill switch, the review queue, staff two-step enrolment) and axe on /admin
 
 | Field        | Detail                                                                                                            |

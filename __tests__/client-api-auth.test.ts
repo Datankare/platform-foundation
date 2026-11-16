@@ -17,7 +17,6 @@ import { APP_ROUTE_POLICY } from "@/platform/route-policy/app-route-policy";
 
 /** The platform's direct fetch calls, and why. A new one is a reviewed change. */
 const PLATFORM_DIRECT: Readonly<Record<string, string>> = {
-  "components/auth/useSsoProviders.ts": "/api/features — public, read before sign-in",
   "platform/auth/context.tsx":
     "/api/auth/session (the page's own read of its session — what apiFetch takes the forgery token from), /api/auth/session/migrate (before there is a session), and the two sign-outs (they send the token the context holds)",
 };
