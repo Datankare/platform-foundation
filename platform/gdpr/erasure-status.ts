@@ -73,6 +73,8 @@ export interface ErasureStepView {
 export interface ErasureView {
   readonly tenantId: string;
   readonly tenantSlug: string | null;
+  /** The tenant's name, as an operator reads it (TASK-221, SF-admin-090); null when unknown. */
+  readonly tenantName: string | null;
   /** The erased account's id: the only name it still has. */
   readonly userId: string;
   readonly requestedBy: ActorView;
@@ -102,6 +104,7 @@ export interface ErasureOverview {
 interface ErasureRow extends Record<string, unknown> {
   tenant_id: string;
   slug: string | null;
+  tenant_name: string | null;
   user_id: string;
   requested_by: string;
   soft_deleted_at: Date;
@@ -140,7 +143,7 @@ const OPERATORS_SQL = `
                               and (e.expires_at is null or e.expires_at > now()))))`;
 
 const ERASURES_SQL = `
-  select d.tenant_id::text as tenant_id, t.slug, d.user_id::text as user_id, d.requested_by,
+  select d.tenant_id::text as tenant_id, t.slug, t.name as tenant_name, d.user_id::text as user_id, d.requested_by,
          d.soft_deleted_at, d.purge_after, d.purged_at, d.purge_attempts, d.purge_retry_at,
          (d.last_purge_error is not null) as failing, d.external_erasures
     from user_deletions d
@@ -236,6 +239,7 @@ export async function listOpenErasures(viewer: string): Promise<ErasureOverview>
         return {
           tenantId: e.tenant_id,
           tenantSlug: e.slug ?? null,
+          tenantName: e.tenant_name ?? null,
           userId: e.user_id,
           requestedBy: actor(e.requested_by),
           softDeletedAt: iso(e.soft_deleted_at) ?? "",

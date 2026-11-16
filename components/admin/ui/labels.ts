@@ -87,6 +87,31 @@ export const auditActionLabel = kind("audit_actions");
 export const detailKeyLabel = kind("detail_keys");
 /** A setting's category ("moderation"). */
 export const settingCategoryLabel = kind("setting_categories");
+/** A store an erasure reaches ("identity-provider" → "The sign-in service"; TASK-221). */
+export const storeLabel = kind("stores");
+/** A content category a classifier flagged ("self_harm" → "Self-harm"). */
+export const categoryLabel = kind("categories");
+/** A classifier's severity ("high" → "High"). */
+export const severityLabel = kind("severities");
+/** A step of a decision's explanation ("input-screening" → "Input screening"). */
+export const phaseLabel = kind("phases");
+/** A kind of external call whose outcome may be unknown ("song-identification"). */
+export const effectTypeLabel = kind("effect_types");
+/** A readiness check of the deployment, by the catalogue's name (screens.readiness.names). */
+export function readinessCheckLabel(name: string): string {
+  return fromCatalogue(["screens.readiness.names", name].join("."), name);
+}
+
+/**
+ * A tenant's state (TASK-221, SF-admin-118: "active", in lower case, where Users writes "Active"):
+ * the known states by name, any other said to be unknown — never shown as stored.
+ */
+export function tenantStateLabel(state: unknown): string {
+  return state === "active" || state === "suspended" || state === "deleted"
+    ? renderMessage(`screens.admin_console.labels.tenant_state.${state}`)
+    : renderMessage("screens.admin_console.labels.tenant_state.unknown");
+}
+
 /** A capability's goal ("translate-and-speak"). */
 export const goalLabel = kind("goals");
 /** A goal step's intent. */
@@ -135,9 +160,18 @@ export function usdText(amount: number): string {
   }).format(amount);
 }
 
-/** A job by its catalogue name (screens.jobs.kinds: the kind's dots as underscores). */
+/**
+ * A job by its catalogue name — a short name; what it does is screens.jobs.kinds, its description
+ * (TASK-221: the description was shown as the job's name). The platform's jobs are named in
+ * labels.jobs, a consuming app's own in its catalogue (screens.app.jobs, the namespace an app may
+ * use — ADR-051 D1); each key is the kind with its dots and hyphens as underscores.
+ */
 export function jobKindLabel(jobKind: string): string {
-  return fromCatalogue(`screens.jobs.kinds.${jobKind.replace(/[.-]/g, "_")}`, jobKind);
+  const id = jobKind.replace(/[.-]/g, "_");
+  const platform = `screens.admin_console.labels.jobs.${id}`;
+  const own = renderMessage(platform);
+  if (own !== platform) return own;
+  return fromCatalogue(`screens.app.jobs.${id}`, jobKind);
 }
 
 /**

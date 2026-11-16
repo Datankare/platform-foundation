@@ -7,6 +7,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
+import { namedAccounts } from "@/platform/admin/account-names";
+import { sameId } from "@/platform/auth/same-id";
 import { internalError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
 import { listTenantOverviews, provisionTenant } from "@/platform/tenancy/admin";
 import { operatorOf, operatorResponse } from "@/platform/tenancy/operator-http";
@@ -56,6 +58,17 @@ const GET_RESPONSE: ResponseSchema = {
               requestedBy: {
                 type: "string",
               },
+              // Who asked, by address (TASK-221, SF-admin-114): null once erased or unknown.
+              requester: {
+                type: ["null", "object"],
+                properties: {
+                  email: { type: ["null", "string"] },
+                  role: { type: ["null", "string"] },
+                  erased: { type: "boolean" },
+                },
+              },
+              // The viewer asked it: they may not approve it (another operator does).
+              byViewer: { type: "boolean" },
             },
           },
           purgeAfter: {
@@ -95,7 +108,27 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   const guard = await requireAdmin(request, "platform_operate");
   if (guard.error) return guard.error;
   try {
-    return NextResponse.json({ tenants: await listTenantOverviews() });
+    const tenants = await listTenantOverviews();
+    // Who asked each pending deletion, by address — one read for the list (N-63, SF-admin-114).
+    const accounts = await namedAccounts(
+      tenants.map((t) => t.pendingDeletion?.requestedBy)
+    );
+    return NextResponse.json({
+      tenants: tenants.map((t) => {
+        if (!t.pendingDeletion) return t;
+        const found = accounts.get(t.pendingDeletion.requestedBy);
+        return {
+          ...t,
+          pendingDeletion: {
+            ...t.pendingDeletion,
+            requester: found
+              ? { email: found.email, role: found.role, erased: found.erased }
+              : null,
+            byViewer: sameId(t.pendingDeletion.requestedBy, guard.admin.userId),
+          },
+        };
+      }),
+    });
   } catch (error) {
     return internalError(error, { request, context: "Tenant list failed" });
   }

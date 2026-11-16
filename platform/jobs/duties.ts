@@ -147,6 +147,8 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
       "Completes the erasure (hard purge) of accounts whose GDPR retention period has passed.",
     runsForSuspended: true,
     schedule: {
+      // Removes records for good: a run now is confirmed as one that cannot be undone.
+      deletesData: true,
       scope: "each-tenant",
       defaultIntervalMinutes: 1440,
       minIntervalMinutes: 60,
@@ -201,6 +203,8 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
       "Ends open agent trajectories with no activity for agent.trajectory.abandon_after_hours and no open hold, then deletes completed and failed ones older than agent.trajectory.retention_days.",
     runsForSuspended: true,
     schedule: {
+      // Removes records for good: a run now is confirmed as one that cannot be undone.
+      deletesData: true,
       scope: "each-tenant",
       defaultIntervalMinutes: 1440,
       minIntervalMinutes: 60,
@@ -225,6 +229,8 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
       "Applies every table's retention rule that no other duty applies: audit and consent records lose their IP address and user agent, and interactions, AI metrics, content-safety decisions, resolved effects, idle guests and sessions (with their sessions' agent runs), past budget counters and rate-limit counters are deleted after their governed age (retention.*). External calls left pending past effects.pending_timeout_minutes are settled as of unknown outcome, and those waiting for an operator are alerted on.",
     runsForSuspended: true,
     schedule: {
+      // Removes records for good: a run now is confirmed as one that cannot be undone.
+      deletesData: true,
       scope: "each-tenant",
       defaultIntervalMinutes: 1440,
       minIntervalMinutes: 60,
@@ -268,6 +274,8 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
     kind: "tenancy.purge-due",
     description: "Purges the data of deleted tenants whose purge time has passed.",
     schedule: {
+      // Removes records for good: a run now is confirmed as one that cannot be undone.
+      deletesData: true,
       scope: "platform",
       defaultIntervalMinutes: 60,
       minIntervalMinutes: 15,
@@ -290,6 +298,8 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
     description:
       "Deletes succeeded jobs older than jobs.retention_days; dead jobs stay until an operator acts.",
     schedule: {
+      // Removes records for good: a run now is confirmed as one that cannot be undone.
+      deletesData: true,
       scope: "platform",
       defaultIntervalMinutes: 1440,
       minIntervalMinutes: 60,

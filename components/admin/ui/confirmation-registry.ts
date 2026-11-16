@@ -6,7 +6,7 @@
  * account, rejecting a held change and removing a capability mapping got the same blue "Confirm"
  * as a search. Each screen that confirmed at all wrote its own step, with its own rule for a
  * reason (a minimum of 1, of 3, none, a fixed code). Here every action a screen or the command
- * bar can ask for has one entry:
+ * bar can ask for has one entry (pass 56d-3, TASK-221, added the operator and moderation screens'):
  *
  *   risk         ordinary       nothing is changed that the same screen cannot change back, or
  *                               nothing is changed at all (a search);
@@ -22,8 +22,7 @@
  * Every command-bar tool has an entry — the type refuses a new tool without one — and
  * __tests__/admin-console-registries.test.ts holds the list to the server's: every action the
  * server always holds for a second administrator (ALWAYS_HELD_ACTIONS: an erasure) is
- * irreversible here. A screen's own actions are named "<screen>.<action>"; the screens that
- * passes 56d-2 and 56d-3 convert add theirs.
+ * irreversible here. A screen's own actions are named "<screen>.<action>".
  *
  * Display only: the server decides what is held and what is refused.
  *
@@ -96,9 +95,59 @@ const SCREEN_ACTIONS = {
   // The kind of reason is chosen in the step (PURGE_REASONS); an erasure's hold keeps no free
   // text (TASK-194 round 9, I-3), so no note is asked — the approver reads the kind by its label.
   "users.erase": irreversible("purge_user_data"),
-  // A dead job discarded (the Jobs screen asks for a reason today, with its own form and an
-  // unstated minimum — SF-admin-105, 108): the entry pass 56d-3 moves that screen onto.
+  // The operators' Jobs screen (TASK-221, SF-admin-100 to 108). Each change asks why — the route
+  // records it (changeComment, or the reason kept with a run, a replay or a discard).
   "jobs.discard": irreversible("discard_job", "required"),
+  "jobs.replay": { ...consequential("replay_job"), reason: "required" },
+  "jobs.turn_on": { ...consequential("job_turn_on"), reason: "required" },
+  "jobs.turn_off": { ...consequential("job_turn_off"), reason: "required" },
+  "jobs.set_interval": { ...consequential("job_set_interval"), reason: "required" },
+  // Run now: a job that removes records for good cannot be undone (its schedule says so,
+  // `deletesData`); any other run still acts on every tenant it runs for.
+  "jobs.run_now": { ...consequential("job_run_now"), reason: "optional" },
+  "jobs.run_now_deletes": irreversible("job_run_now_deletes", "required"),
+  // An external call whose outcome was unknown, marked by a person: it decides whether the
+  // workflow waiting on it goes on or ends, and the mark cannot be changed afterwards.
+  "jobs.effect_took_effect": irreversible("effect_took_effect"),
+  "jobs.effect_no_effect": irreversible("effect_no_effect"),
+  // The operators' tenants (TASK-221, E-87 to E-89, SF-admin-117): each state change states what
+  // happens to the tenant's people, and asks why (the route records the reason).
+  "tenancy.provision": consequential("provision_tenant"),
+  "tenancy.add_address": consequential("add_tenant_address"),
+  "tenancy.remove_address": consequential("remove_tenant_address"),
+  "tenancy.suspend": { ...consequential("suspend_tenant"), reason: "required" },
+  "tenancy.resume": { ...consequential("resume_tenant"), reason: "required" },
+  "tenancy.restore": { ...consequential("restore_tenant"), reason: "required" },
+  "tenancy.request_deletion": {
+    ...consequential("request_tenant_deletion"),
+    reason: "required",
+  },
+  // Approved, the deletion takes effect: the tenant's people are locked out and, after its grace
+  // period, every row it owns is purged (restoring it is possible only until then).
+  "tenancy.approve_deletion": consequential("approve_tenant_deletion"),
+  "tenancy.reject_deletion": consequential("reject_tenant_deletion"),
+  "tenancy.make_admin": consequential("make_tenant_admin"),
+  // Purging the due tenants removes every row they own, for good.
+  "tenancy.purge_due": irreversible("purge_due_tenants"),
+  // A tenant's own value of a setting (its administrators', or an operator's for it): the comment
+  // the record keeps is asked, as on Platform config; going back to the default is a change too.
+  "tenant_settings.update": {
+    risk: "consequential",
+    reason: "required",
+    consequence: "update_tenant_setting",
+  },
+  "tenant_settings.reset": consequential("reset_tenant_setting"),
+  // The agent kill switch (TASK-221, SF-admin-127): it only takes power away, and reactivating an
+  // agent is a held change — so not "cannot be undone"; the reason is recorded and required.
+  "kill_switch.suspend": { ...consequential("suspend_all_agents"), reason: "required" },
+  // Erasures' two-operator attestation (TASK-221, SF-admin-091): approved, the step is closed for
+  // good on the attesters' word; asking states why (a kind, and a note the record keeps).
+  "erasures.ask": { ...consequential("ask_attestation"), reason: "required" },
+  "erasures.approve": irreversible("approve_attestation"),
+  "erasures.reject": consequential("reject_attestation"),
+  // A moderator's decision on a review item (TASK-221, SF-admin-143, 148): it changes an account's
+  // standing (overturning restores it); the notes the record keeps are required.
+  "review.resolve": { ...consequential("resolve_review"), reason: "required" },
   // Approvals (TASK-220, SF-admin-030): every decision on a held change confirms, as Approve did.
   // Approving is as grave as the change it lets through (confirmationFor, `heldTool`).
   // A decision may carry a note for the record (the route's `note`); only approving asks none.

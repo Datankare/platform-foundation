@@ -159,6 +159,8 @@ export interface ReviewQueryOptions {
   readonly before?: string;
   /** Maximum number of results */
   readonly limit?: number;
+  /** Results to skip first (a page's start; `page` only). */
+  readonly offset?: number;
 }
 
 /** Summary statistics for the review queue */
@@ -244,6 +246,14 @@ export interface ReviewQueueStore {
 
   /** Query review items with filters. */
   query(options?: ReviewQueryOptions): Promise<readonly ReviewQueueItem[]>;
+
+  /**
+   * One page of the queue for a person reading it (the review screen, TASK-221): as `query`, from
+   * `offset`. Unlike `query` — which answers an empty list when the store cannot be read (P11:
+   * the pipeline never waits on it) — this throws when it cannot read, so a failed read is never
+   * shown to a moderator as an empty queue.
+   */
+  page(options: ReviewQueryOptions): Promise<readonly ReviewQueueItem[]>;
 
   /** Get queue statistics. */
   getStats(): Promise<ReviewQueueStats>;

@@ -63,6 +63,7 @@ export function ConfirmStep({
   busy = false,
   choices,
   choiceLabel,
+  reasonLabel,
   returnFocus,
   onConfirm,
   onCancel,
@@ -82,6 +83,8 @@ export function ConfirmStep({
   /** Kinds of reason to choose from (an erasure's), by label. */
   readonly choices?: readonly { readonly value: string; readonly label: string }[];
   readonly choiceLabel?: string;
+  /** The reason field's own label, where the record names it (a moderator's "Reviewer notes"). */
+  readonly reasonLabel?: string;
   /**
    * What opened the step: focus goes back to it when the step closes. Without it, focus goes
    * back to what held it when the step opened (a browser that does not focus a clicked button
@@ -178,9 +181,10 @@ export function ConfirmStep({
       )}
       {confirmation.reason !== "none" && (
         <Field
-          label={t(
-            confirmation.reason === "required" ? "reason_label" : "reason_optional"
-          )}
+          label={
+            reasonLabel ??
+            t(confirmation.reason === "required" ? "reason_label" : "reason_optional")
+          }
           help={t("reason_help", { min: REASON_MIN })}
           error={problem}
         >

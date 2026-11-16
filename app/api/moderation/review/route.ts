@@ -11,6 +11,13 @@
  * Appeals are NOT submitted here — they have their own endpoint
  * (/api/moderation/appeals) which enforces appeal eligibility + identity.
  *
+ * GET pages the queue for the review screen (TASK-221): `offset` and `limit` (at most 200, 25 by
+ * default), and `hasMore`. A queue that cannot be read is refused as unavailable — never an empty
+ * list. Each item names its people by address (`target`, `claimer`, `resolver`: null once
+ * erased or unknown; SF-admin-140, 141), says whether the viewer holds its claim
+ * (`claimedByViewer`), and an escalation still open says when the escalation reaper acts on it
+ * (`dueAt`: its creation plus the SLA, ADR-041; SF-admin-146).
+ *
  * A submission names its submitter (TASK-194, audit C-9): POST verifies the moderator with
  * requireAdmin — adminGuard threw the identity away — and records the submission (who, which
  * account, which source) before it is filed; with no record it is not filed.
@@ -19,14 +26,17 @@
 import { isShownText } from "@/platform/errors/shown-text";
 import { CATALOGS, DEFAULT_LOCALE, lookup } from "@/platform/errors/messages";
 import { NextRequest, NextResponse } from "next/server";
-import { adminGuard, requireAdmin } from "@/platform/auth/admin-guard";
+import { requireAdmin } from "@/platform/auth/admin-guard";
 import { auditedResponse } from "@/platform/auth/audit";
 import { logger, generateRequestId } from "@/lib/logger";
 import {
-  getQueue,
+  getQueuePage,
   getQueueStats,
   submitForReview,
 } from "@/platform/moderation/review-service";
+import { loadEscalationSlaHours } from "@/platform/moderation/config";
+import { namedAccounts, type NamedAccount } from "@/platform/admin/account-names";
+import { sameId } from "@/platform/auth/same-id";
 import type {
   ReviewItemSource,
   ReviewQueryOptions,
@@ -45,6 +55,13 @@ import { type ResponseSchema, SHOWN, stored } from "@/platform/errors/response-s
 const MODERATE_PERMISSION = "can_moderate";
 /** Most queue items one list request returns. */
 const MAX_LIST = 200;
+/** Items one page holds when the request names no limit. */
+const PAGE_DEFAULT = 25;
+
+/** A person a queue item names, by address — never an id (N-63). */
+function shownAccount(found: NamedAccount | undefined) {
+  return found ? { email: found.email, role: found.role, erased: found.erased } : null;
+}
 
 /** Sources an admin may submit manually here. Appeals use the appeals route. */
 const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -222,6 +239,7 @@ function buildQueryOptions(params: URLSearchParams): ReviewQueryOptions {
     since?: string;
     before?: string;
     limit?: number;
+    offset?: number;
   } = {};
 
   const status = params.get("status");
@@ -243,9 +261,24 @@ function buildQueryOptions(params: URLSearchParams): ReviewQueryOptions {
     const n = Number.parseInt(limit, 10);
     if (Number.isFinite(n) && n > 0) options.limit = Math.min(n, MAX_LIST);
   }
+  const offset = params.get("offset");
+  if (offset) {
+    const n = Number.parseInt(offset, 10);
+    if (Number.isFinite(n) && n > 0) options.offset = n;
+  }
 
   return options;
 }
+
+/** A person an item names (shownAccount): their address, role, and whether erased. */
+const PERSON: ResponseSchema = {
+  type: ["null", "object"],
+  properties: {
+    email: { type: ["null", "string"] },
+    role: { type: ["null", "string"] },
+    erased: { type: "boolean" },
+  },
+};
 
 const GET_RESPONSE: ResponseSchema = {
   type: "object",
@@ -255,6 +288,11 @@ const GET_RESPONSE: ResponseSchema = {
       items: {
         type: "object",
         properties: {
+          target: PERSON,
+          claimer: PERSON,
+          resolver: PERSON,
+          claimedByViewer: { type: "boolean" },
+          dueAt: { type: "string" },
           appealReason: {
             type: "string",
           },
@@ -322,6 +360,7 @@ const GET_RESPONSE: ResponseSchema = {
         },
       },
     },
+    hasMore: { type: "boolean" },
     stats: {
       type: "object",
       properties: {
@@ -355,8 +394,8 @@ const GET_RESPONSE: ResponseSchema = {
 };
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
-  const denied = await adminGuard(request, MODERATE_PERMISSION);
-  if (denied) return denied;
+  const guard = await requireAdmin(request, MODERATE_PERMISSION);
+  if (guard.error) return guard.error;
 
   const requestId = generateRequestId();
 
@@ -378,15 +417,39 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
       }
     }
     const options = buildQueryOptions(request.nextUrl.searchParams);
-    const items = await getQueue(options);
-    return NextResponse.json({ items });
+    const page = await getQueuePage({ ...options, limit: options.limit ?? PAGE_DEFAULT });
+    // Every person the page names, in one read (N-63).
+    const accounts = await namedAccounts(
+      page.items.flatMap((i) => [i.targetUserId, i.claimedBy, i.resolvedBy])
+    );
+    const open = page.items.some(
+      (i) => i.source === "escalation" && i.status !== "resolved"
+    );
+    const slaHours = open ? await loadEscalationSlaHours() : null;
+    const items = page.items.map((i) => ({
+      ...i,
+      target: shownAccount(accounts.get(i.targetUserId)),
+      claimer: i.claimedBy ? shownAccount(accounts.get(i.claimedBy)) : null,
+      resolver: i.resolvedBy ? shownAccount(accounts.get(i.resolvedBy)) : null,
+      claimedByViewer: sameId(i.claimedBy, guard.admin.userId),
+      ...(slaHours !== null && i.source === "escalation" && i.status !== "resolved"
+        ? {
+            dueAt: new Date(Date.parse(i.createdAt) + slaHours * 3_600_000).toISOString(),
+          }
+        : {}),
+    }));
+    return NextResponse.json({ items, hasMore: page.hasMore });
   } catch (err) {
     logger.error("Review queue list error", {
       error: err instanceof Error ? err.message : "Unknown",
       requestId,
       route: "api/moderation/review",
     });
-    return apiError("internal.error", { request });
+    // The queue could not be read: said so — never an empty list (TASK-221).
+    return apiError("service.unavailable", {
+      params: { service: "review_queue" },
+      request,
+    });
   }
 }, GET_RESPONSE);
 

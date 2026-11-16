@@ -167,6 +167,24 @@ export function runReviewQueueStoreContract(fx: ReviewQueueStoreContractFixtures
     expect(await store.query({ status: "resolved" })).toHaveLength(0);
   });
 
+  it("reads a page of the queue: its filter, its offset and its limit, in a stable order (TASK-221)", async () => {
+    for (let i = 0; i < 5; i++) await store.submit(item(A));
+    await store.submit(item(B, { source: "appeal", priority: "normal" }));
+    const all = await store.page({ source: "escalation" });
+    expect(all).toHaveLength(5);
+    const first = await store.page({ source: "escalation", limit: 2 });
+    const second = await store.page({ source: "escalation", limit: 2, offset: 2 });
+    const third = await store.page({ source: "escalation", limit: 2, offset: 4 });
+    expect(first).toHaveLength(2);
+    expect(second).toHaveLength(2);
+    expect(third).toHaveLength(1);
+    // The pages together are the whole list, each item once, in the list's own order.
+    expect([...first, ...second, ...third].map((i) => i.id)).toEqual(
+      all.map((i) => i.id)
+    );
+    expect(await store.page({ source: "escalation", offset: 10 })).toEqual([]);
+  });
+
   it("finds an open appeal by its decision, and not once resolved", async () => {
     const { item: appeal } = await store.submit(
       item(A, { source: "appeal", priority: "normal", originalDecisionId: "decision-1" })

@@ -559,6 +559,18 @@ export async function getQueue(
   return getReviewQueueStore().query(options);
 }
 
+/**
+ * One page of the queue for the review screen (TASK-221, SF-admin-149): `limit` items from
+ * `offset`, and whether more follow. Throws when the queue cannot be read — the screen says so,
+ * never "no items" (a failed read is not an empty queue).
+ */
+export async function getQueuePage(
+  options: ReviewQueryOptions & { readonly limit: number }
+): Promise<{ readonly items: readonly ReviewQueueItem[]; readonly hasMore: boolean }> {
+  const rows = await getReviewQueueStore().page({ ...options, limit: options.limit + 1 });
+  return { items: rows.slice(0, options.limit), hasMore: rows.length > options.limit };
+}
+
 /** How many of a user's own decisions their account page lists, newest first. */
 export const OWN_DECISIONS_LIMIT = 50;
 

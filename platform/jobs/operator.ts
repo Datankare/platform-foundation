@@ -81,6 +81,8 @@ export interface ScheduleView {
   readonly tenantOptOutKey: string | null;
   /** Cannot be turned off (TASK-194 round 18): the screen offers no "Turn off". */
   readonly required: boolean;
+  /** Running it removes records for good (JobSchedule.deletesData, TASK-221). */
+  readonly deletesData: boolean;
   readonly settings: { readonly enabled: string; readonly interval: string };
   /**
    * Never run yet: null. nextRunAt is when the scheduler will take the next slot under the
@@ -112,6 +114,7 @@ export async function describeSchedules(): Promise<ScheduleView[]> {
         maxIntervalMinutes: def.schedule.maxIntervalMinutes,
         tenantOptOutKey: def.schedule.tenantOptOutKey ?? null,
         required: def.schedule.required === true,
+        deletesData: def.schedule.deletesData === true,
         settings: scheduleKeys(def.kind),
         state: state && { ...state, nextRunAt: effectiveNextRun(state, intervalMinutes) },
       });
@@ -194,7 +197,9 @@ export interface RunNowResult {
  */
 export async function runNow(
   admin: VerifiedAdmin,
-  kind: string
+  kind: string,
+  /** Why it is run now, as the operator wrote it (TASK-221): recorded with the run. */
+  reason?: string
 ): Promise<JobsResult<RunNowResult>> {
   const def = getJobDefinition(kind);
   if (!def?.schedule) return fail("jobs.not_found");
@@ -202,7 +207,7 @@ export async function runNow(
   const entry = {
     action: "admin_action" as const,
     actorId: admin.userId,
-    details: { type: "job_run_now", kind },
+    details: { type: "job_run_now", kind, ...(reason ? { reason } : {}) },
   };
   try {
     return await audited(
@@ -260,6 +265,8 @@ async function onDeadJob(
   type: "job_replayed" | "job_discarded",
   id: string,
   act: () => Promise<DeadJobOutcome>,
+  /** Why, as the operator wrote it (TASK-221): recorded with the action. */
+  reason: string | undefined,
   /** As audited()'s: `external` when the act reaches outside the database (review 14 L-6). */
   options: { readonly external?: boolean } = {}
 ): Promise<JobsResult<{ readonly id: string; readonly kind: string }>> {
@@ -271,7 +278,14 @@ async function onDeadJob(
       {
         action: "admin_action",
         actorId: admin.userId,
-        details: { type, jobId: id, kind: job.kind, tenantId: job.tenantId },
+        details: {
+          type,
+          jobId: id,
+          kind: job.kind,
+          tenantId: job.tenantId,
+          // Why, as the operator wrote it (TASK-221).
+          ...(reason ? { reason } : {}),
+        },
       },
       async () => {
         const r = await act();
@@ -293,23 +307,39 @@ async function onDeadJob(
 /** Queue a dead job again from its first attempt. A second replay finds it not dead. */
 export function replayDeadJob(
   admin: VerifiedAdmin,
-  id: string
+  id: string,
+  /** Why, as the operator wrote it (TASK-221): recorded. */
+  reason?: string
 ): Promise<JobsResult<{ readonly id: string; readonly kind: string }>> {
-  return onDeadJob(admin, "job_replayed", id, async () => {
-    const r = await getJobStore().replay(id);
-    return r === "replayed" ? "done" : r;
-  });
+  return onDeadJob(
+    admin,
+    "job_replayed",
+    id,
+    async () => {
+      const r = await getJobStore().replay(id);
+      return r === "replayed" ? "done" : r;
+    },
+    reason
+  );
 }
 
 /** Remove a dead job for good. */
 export function discardDeadJob(
   admin: VerifiedAdmin,
-  id: string
+  id: string,
+  /** Why, as the operator wrote it (TASK-221): recorded. */
+  reason?: string
 ): Promise<JobsResult<{ readonly id: string; readonly kind: string }>> {
-  return onDeadJob(admin, "job_discarded", id, async () => {
-    const r = await getJobStore().discard(id);
-    return r === "discarded" ? "done" : r;
-  });
+  return onDeadJob(
+    admin,
+    "job_discarded",
+    id,
+    async () => {
+      const r = await getJobStore().discard(id);
+      return r === "discarded" ? "done" : r;
+    },
+    reason
+  );
 }
 
 /** The current tenant's own jobs, newest first — its administrators' read-only history. */

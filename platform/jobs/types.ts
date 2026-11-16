@@ -54,6 +54,13 @@ export interface JobSchedule {
    * (defineJob refuses one).
    */
   readonly required?: boolean;
+  /**
+   * Running it removes records for good (an erasure's purge, a retention sweep, a deleted
+   * tenant's purge, old job rows): the operators' console confirms a run now as an action that
+   * cannot be undone, and asks why (TASK-221, SF-admin-100). Display only — the run route checks
+   * its permission whatever this says.
+   */
+  readonly deletesData?: boolean;
 }
 
 /** Retry timing: exponential from baseMs, capped at maxMs, with jitter (./backoff.ts). */

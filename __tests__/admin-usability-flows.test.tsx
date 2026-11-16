@@ -3,15 +3,14 @@
  */
 /**
  * __tests__/admin-usability-flows.test.tsx — the rest of each fixed screen's flows (TASK-202):
- * every state a person can meet on Approvals, Trusted agents, Erasures and Platform config — the
+ * every state a person can meet on Approvals, Trusted agents and Platform config (Erasures: admin-operator-screens.test.tsx, TASK-221) — the
  * words for each kind of held change, each answer a decision gets, an edit, a suspension, an
  * attestation approved or refused, an unreadable list. Fetch is answered from the route fixtures
  * (__tests__/fixtures/route-responses), never a body written here; the panels' data are the
  * fixtures' bodies, varied where a state needs it.
  */
 import React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { routeAnswer, type RouteFixtureName } from "./fixtures/route-responses";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { renderMessage } from "@/platform/errors/messages";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
 
@@ -30,23 +29,9 @@ import {
   summaryLines,
   whyHeld,
 } from "@/components/admin/HeldActionsPanel";
-import { ErasuresPanel } from "@/components/admin/ErasuresPanel";
-import { PANEL_UNAVAILABLE } from "@/components/admin/PanelUnavailable";
 import { shown } from "@/platform/errors/shown-text";
 import { permissionLabel } from "@/components/admin/ui/labels";
 
-function reply(name: RouteFixtureName) {
-  const [status, body] = routeAnswer(name);
-  const res = {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-    clone: () => res,
-    headers: { get: () => "application/json" },
-  };
-  return res as unknown as Response;
-}
-const bodyOf = <T,>(name: RouteFixtureName) => routeAnswer(name)[1] as T;
 const held = (key: string, v?: Record<string, string | number>) =>
   renderMessage(`screens.held.${key}`, v);
 
@@ -324,157 +309,5 @@ describe("Approvals: each kind of held change in words (N-61)", () => {
     ).toBeTruthy();
     expect(screen.getByText(/\(run stopped\)/)).toBeTruthy();
     expect(screen.getByText(held("details"))).toBeTruthy();
-  });
-});
-
-const er = (key: string, v?: Record<string, string | number>) =>
-  renderMessage(`screens.admin_console.erasures.${key}`, v);
-
-type Overview = {
-  operators: number;
-  erasures: {
-    secondOperator: boolean;
-    purgedAt: string | null;
-    purgeFailing: boolean;
-    purgeAttempts: number;
-    purgeRetryAt: string | null;
-    requestedBy: unknown;
-    steps: Record<string, unknown>[];
-  }[];
-};
-
-describe("Erasures: each step's state and the attestation's decisions (S3-E19)", () => {
-  const fixture = bodyOf<Overview>(
-    "GET /api/operator/erasures — an unverifiable identity, one operator"
-  );
-  const withRequest = (byViewer: boolean): Overview => {
-    const o = JSON.parse(JSON.stringify(fixture)) as Overview;
-    o.operators = 2;
-    o.erasures[0].secondOperator = true;
-    o.erasures[0].steps[0].attestationRequest = {
-      by: { kind: "account", email: "op-a@example.test" },
-      byViewer,
-      at: "2026-01-01T00:00:00.000Z",
-      reason: "deleted_in_old_pool",
-      expiresAt: "2026-01-08T00:00:00.000Z",
-      expired: false,
-    };
-    return o;
-  };
-
-  it("a second operator approves after the confirm; the result stays", async () => {
-    mockApiFetch
-      .mockResolvedValueOnce(
-        reply("POST /api/operator/tenants/[id]/erasures/[userId]/attestation — approved")
-      )
-      .mockResolvedValueOnce(
-        reply("GET /api/operator/erasures — an unverifiable identity, one operator")
-      );
-    render(<ErasuresPanel data={withRequest(false)} />);
-    expect(screen.getByText(/Attestation asked by op-a@example\.test/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: er("approve") }));
-    const id = "0f0fc9b2-0000-4000-8000-000000000001";
-    expect(
-      screen.getByText(
-        er("confirm_approve", { id, reason: er("reason_deleted_in_old_pool") })
-      )
-    ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: er("confirm") }));
-    expect(await screen.findByText(er("approved", { id }))).toBeTruthy();
-    expect(
-      JSON.parse(String((mockApiFetch.mock.calls[0] as [string, RequestInit])[1].body))
-    ).toEqual({
-      decision: "approve",
-      store: "identity-provider",
-    });
-  });
-
-  it("[hostile:self] the requester sees it is theirs, may only reject, and a refusal is said", async () => {
-    mockApiFetch
-      .mockResolvedValueOnce(
-        reply(
-          "POST /api/operator/tenants/[id]/erasures/[userId]/attestation — refused (own request)"
-        )
-      )
-      .mockResolvedValueOnce(
-        reply("GET /api/operator/erasures — an unverifiable identity, one operator")
-      );
-    render(<ErasuresPanel data={withRequest(true)} />);
-    expect(screen.getByText(er("own_request"))).toBeTruthy();
-    expect(screen.queryByRole("button", { name: er("approve") })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: er("reject") }));
-    fireEvent.click(screen.getByRole("button", { name: er("confirm") }));
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toMatch(/Not done for account/)
-    );
-  });
-
-  it("done, attested, expired, purged and failing purges are each said; an unreachable server too", async () => {
-    const o = JSON.parse(JSON.stringify(fixture)) as Overview;
-    o.erasures[0].purgedAt = "2026-01-02T00:00:00.000Z";
-    o.erasures[0].purgeFailing = true;
-    o.erasures[0].purgeAttempts = 2;
-    o.erasures[0].requestedBy = { kind: "erased" };
-    o.erasures[0].steps = [
-      {
-        store: "identity-provider",
-        done: true,
-        doneAt: "2026-01-02T00:00:00.000Z",
-        attempts: 3,
-        poolUnverified: false,
-        attested: {
-          by: { kind: "unknown" },
-          requestedBy: { kind: "account", email: null },
-          at: "2026-01-02T00:00:00.000Z",
-          reason: "pool_decommissioned",
-        },
-      },
-      {
-        store: "mail-list",
-        done: false,
-        attempts: 1,
-        poolUnverified: true,
-        attestationRequest: {
-          by: { kind: "account", email: "op-a@example.test" },
-          byViewer: false,
-          at: "2026-01-01T00:00:00.000Z",
-          reason: "a-new-reason",
-          expiresAt: "2026-01-01T00:00:00.000Z",
-          expired: true,
-        },
-      },
-    ];
-    o.operators = 2;
-    o.erasures[0].secondOperator = true;
-    mockApiFetch
-      .mockRejectedValueOnce(new Error("offline"))
-      .mockRejectedValueOnce(new Error("offline"));
-    const { container } = render(<ErasuresPanel data={o} />);
-    expect(container.textContent).toContain(er("step_other", { store: "mail-list" }));
-    expect(container.textContent).toContain(
-      renderMessage("screens.admin_console.people.erased")
-    );
-    expect(container.textContent).toMatch(/Closed by attestation/);
-    expect(container.textContent).toMatch(/expired on/);
-    expect(container.textContent).toMatch(/Data purged/);
-    expect(container.textContent).toMatch(/The last data purge failed \(2 attempts\)/);
-    // Expired: ask again.
-    fireEvent.click(screen.getByRole("button", { name: er("ask") }));
-    fireEvent.change(screen.getByLabelText(er("field_note")), {
-      target: { value: "checked again" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: er("submit_ask") }));
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toMatch(/Not done for account/)
-    );
-  });
-
-  it("not read yet, or unreadable: said", () => {
-    const { rerender } = render(<ErasuresPanel data={undefined} />);
-    expect(screen.getByText(er("loading"))).toBeTruthy();
-    rerender(<ErasuresPanel data={PANEL_UNAVAILABLE} />);
-    expect(screen.getByRole("alert")).toBeTruthy();
-    rerender(<ErasuresPanel data={{ ...fixture, erasures: [] }} />);
-    expect(screen.getByText(er("empty"))).toBeTruthy();
   });
 });

@@ -8,8 +8,8 @@
  * The agent-registry and capability-mapping views showed "No agents registered" / "No mappings
  * configured" when the route answered 503 (the page dropped the failed read and the view read
  * nothing as empty), and the routes answered [] for a malformed stored value. Now the page keeps a
- * 503 as the PANEL_UNAVAILABLE marker and shows PanelUnavailable (catalog strings, a retry); the
- * two views tell "not read yet", "unavailable" and "empty" apart; and every state passes axe's
+ * 503 as a failed read and its PanelState says so (catalog strings, a retry — TASK-216; the old
+ * PanelUnavailable notice went with the last screen that showed it, TASK-221); the two views tell "not read yet", "unavailable" and "empty" apart; and every state passes axe's
  * WCAG 2.2 AA rules. (The routes' 503 for a malformed value: __tests__/admin-thin-routes.test.ts.)
  */
 import React from "react";
@@ -29,11 +29,6 @@ import {
   CapabilityMappingDataView,
   TrustedAgentsDataView,
 } from "@/components/admin/AdminDataViews";
-import {
-  isPanelUnavailable,
-  PANEL_UNAVAILABLE,
-  PanelUnavailable,
-} from "@/components/admin/PanelUnavailable";
 import { renderMessage } from "@/platform/errors/messages";
 
 // axe-core is installed with @axe-core/playwright (the e2e audits); here it runs in jsdom.
@@ -50,41 +45,6 @@ async function noViolations(container: HTMLElement) {
 }
 
 const UNAVAILABLE = renderMessage("screens.admin_console.unavailable_title");
-
-describe("PanelUnavailable", () => {
-  it("says the panel could not be read — from the catalog — and offers a retry", async () => {
-    const onRetry = jest.fn();
-    const { container } = render(
-      <PanelUnavailable panel="Trusted agents" onRetry={onRetry} />
-    );
-    expect(screen.getByRole("alert")).toHaveTextContent(UNAVAILABLE);
-    expect(UNAVAILABLE).toBe("Unavailable — could not read");
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      /Trusted agents could not be read just now.*not an empty list/
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Try reading Trusted agents again" })
-    );
-    expect(onRetry).toHaveBeenCalledTimes(1);
-    await noViolations(container);
-  });
-  it("without a retry, no button", () => {
-    render(<PanelUnavailable panel="X" />);
-    expect(screen.queryByRole("button")).toBeNull();
-  });
-  it("isPanelUnavailable recognises only the marker", () => {
-    expect(isPanelUnavailable(PANEL_UNAVAILABLE)).toBe(true);
-    for (const v of [
-      undefined,
-      null,
-      {},
-      { agents: [] },
-      "unavailable",
-      { unavailable: "yes" },
-    ])
-      expect(isPanelUnavailable(v)).toBe(false);
-  });
-});
 
 // The views are given what the console read (its PanelState says "Reading…" and a refused read —
 // a 503 among them — before a view is mounted: TASK-216). What reaches a view and holds no list is
@@ -108,7 +68,9 @@ describe.each([
   ],
 ] as const)("%s", (_name, View, field, emptyText, rows, shown) => {
   it.each([
-    ["the old unavailable marker", PANEL_UNAVAILABLE],
+    // The old unavailable marker's shape (its component went with the last screen that showed
+    // it, TASK-221): an object without the list, like any other.
+    ["the old unavailable marker", { __panelUnavailable: true }],
     ["a body without the list", {}],
     ["the list not a list", { [field]: "x" }],
     ["null", null],

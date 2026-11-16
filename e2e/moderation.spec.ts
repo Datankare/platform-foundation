@@ -32,6 +32,9 @@ import {
 } from "@playwright/test";
 import { Client } from "pg";
 import { checkA11y } from "./helpers/a11y";
+
+/** The queue's Refresh (the console's panel state, TASK-221): "Read Review queue again". */
+const REFRESH = "Read Review queue again";
 import { sessionFetch, signInPage } from "./helpers/session";
 
 const OWNER_URL = process.env.E2E_DATABASE_OWNER_URL;
@@ -147,7 +150,7 @@ async function queueRead(page: Page, act: () => Promise<void>): Promise<void> {
       return;
     }
     await waitOut(res.headers()["retry-after"]);
-    act = () => page.getByTestId("rd-refresh").click();
+    act = () => page.getByRole("button", { name: REFRESH }).click();
   }
 }
 
@@ -161,7 +164,7 @@ async function openQueue(page: Page, filter?: "Pending" | "Resolved"): Promise<v
   const open = (await heading.textContent())?.trim() === "Moderation";
   await queueRead(page, () =>
     open
-      ? page.getByTestId("rd-refresh").click()
+      ? page.getByRole("button", { name: REFRESH }).click()
       : page
           .getByRole("navigation")
           .getByRole("button", { name: /^Moderation/ })
@@ -289,7 +292,9 @@ test("2. the moderator reviews the appeal in the console and overturns it (N-117
   await card.getByRole("button", { name: "Get AI suggestion" }).click();
   expect((await assisted).status()).toBe(200);
   await expect(
-    card.getByText(/No suggestion available right now\.|advisory; you decide/)
+    card.getByText(
+      /No suggestion available right now\.|^No suggestion: |advisory; you decide/
+    )
   ).toBeVisible();
 
   // An appeal is acted on through its own route.
@@ -297,7 +302,10 @@ test("2. the moderator reviews the appeal in the console and overturns it (N-117
   await filterQueue(page, "Claimed");
   const mine = page.getByTestId(`rd-item-${id}`);
   await mine.getByRole("button", { name: "Resolve" }).click();
-  await mine.getByLabel("Decision").selectOption("overturn");
+  await mine.getByLabel("Decision", { exact: true }).selectOption("overturn");
+  // Each decision is explained, then confirmed with the reviewer's notes (TASK-221, SF-admin-148).
+  await mine.getByRole("button", { name: "Review the decision" }).click();
+  await expect(mine.getByRole("alertdialog")).toBeFocused();
   await mine.getByLabel("Reviewer notes").fill("A quoted headline; the block was wrong.");
   await patch(page, id, "Submit decision", `/api/moderation/appeals/${id}`);
   await filterQueue(page, "Resolved");

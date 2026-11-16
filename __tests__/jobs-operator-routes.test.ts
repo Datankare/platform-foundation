@@ -179,6 +179,24 @@ describe("only operators reach the Jobs console", () => {
 });
 
 describe("GET /api/operator/jobs", () => {
+  it("names each dead job's tenant (TASK-221, SF-admin-102); a tenant the directory does not list is null", async () => {
+    const { getTenantDirectory } = jest.requireActual("@/platform/tenancy/directory");
+    const list = jest
+      .spyOn(getTenantDirectory(), "listTenants")
+      .mockResolvedValue([
+        { id: A.toUpperCase(), slug: "acme", name: "Acme", status: "active" },
+      ]);
+    await deadJob();
+    const body = await (await view(req("/api/operator/jobs", "GET"))).json();
+    expect(body.deadLetters[0]).toMatchObject({ tenantId: A, tenantName: "Acme" });
+    list.mockRejectedValue(new Error("directory down"));
+    const again = await view(req("/api/operator/jobs", "GET"));
+    // The view never fails for a name: each row says its tenant is not known.
+    expect(again.status).toBe(200);
+    expect((await again.json()).deadLetters[0].tenantName).toBeNull();
+    list.mockRestore();
+  });
+
   it("lists every recurring job with its settings and state, and the dead letters", async () => {
     const id = await deadJob();
     const res = await view(req("/api/operator/jobs", "GET"));
@@ -349,6 +367,35 @@ describe("PATCH /api/operator/jobs/schedules/[kind]", () => {
 });
 
 describe("POST /api/operator/jobs/schedules/[kind]/run", () => {
+  it("records the operator's reason with the run, when one is sent (TASK-221, SF-admin-100)", async () => {
+    const res = await runNowRoute(
+      req("/api/operator/jobs/schedules/test.sched/run", "POST", "super_admin", {
+        reason: " catch up after the outage ",
+      }),
+      kindParams("test.sched")
+    );
+    expect(res.status).toBe(200);
+    expect(mockAudited.mock.calls[0][0]).toMatchObject({
+      details: {
+        type: "job_run_now",
+        kind: "test.sched",
+        reason: "catch up after the outage",
+      },
+    });
+  });
+
+  it("refuses a reason that is too long, and any other key — nothing run", async () => {
+    for (const body of [{ reason: "x".repeat(501) }, { reason: "ok", force: true }]) {
+      const res = await runNowRoute(
+        req("/api/operator/jobs/schedules/test.sched/run", "POST", "super_admin", body),
+        kindParams("test.sched")
+      );
+      expect(res.status).toBe(400);
+    }
+    expect(ran).toBe(0);
+    expect(mockAudited).not.toHaveBeenCalled();
+  });
+
   it("records, enqueues and runs the kind now", async () => {
     const res = await runNowRoute(
       req("/api/operator/jobs/schedules/test.sched/run", "POST"),
@@ -469,6 +516,27 @@ describe("POST /api/operator/jobs/dead/[id]", () => {
       req(`/api/operator/jobs/dead/${id}`, "POST", "super_admin", body),
       idParams(id)
     );
+
+  it("records the operator's reason with a replay and a discard (TASK-221, SF-admin-103, 108)", async () => {
+    const id = await deadJob();
+    expect(
+      (await act(id, { action: "replay", reason: "  the database is back " })).status
+    ).toBe(200);
+    expect(mockAudited.mock.calls[0][0]).toMatchObject({
+      details: { type: "job_replayed", jobId: id, reason: "the database is back" },
+    });
+  });
+
+  it("refuses a reason that is not text, or longer than 500 characters — nothing done", async () => {
+    const id = await deadJob();
+    for (const reason of [7, "x".repeat(501)]) {
+      const res = await act(id, { action: "discard", reason });
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("request.invalid_value");
+    }
+    expect(mockAudited).not.toHaveBeenCalled();
+    expect(await store.getJob(id)).not.toBeNull();
+  });
 
   it("replays a dead job once; a second replay finds it not dead (409)", async () => {
     const id = await deadJob();

@@ -28,11 +28,9 @@
  * These are patterns in the source, so a proxy: they prove a screen does not write these
  * things, not that it uses the shared part well — the screens' own tests and the walk do that.
  *
- * KNOWN is the list of screens not yet converted, each with the pass that converts it and
- * exactly the rules it still breaks. It only shrinks: a rule a file no longer breaks must be
- * removed from its entry (the test fails until it is), a file that breaks none must leave the
- * list, and a rule not in its entry is a new violation. Pass 56d-2 (TASK-220) took the governance
- * screens off it; pass 56d-3 empties it.
+ * KNOWN was the list of screens not yet converted, each with the pass that converted it and
+ * exactly the rules it still broke; it only shrank. Pass 56d-2 (TASK-220) took the governance
+ * screens off it; pass 56d-3 (TASK-221) emptied it, and it now takes no entry at all.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -102,67 +100,20 @@ export function brokenRules(source: string): RuleId[] {
 
 interface Known {
   /** The pass that converts the screen. */
-  readonly pass: "56d-3";
+  readonly pass: string;
   /** Exactly the rules it still breaks. */
   readonly rules: readonly RuleId[];
 }
 
 /**
- * The screens not yet built from the shared parts. Pass 56d-2 converted the governance screens
- * (Approvals, Platform config, Dual control, Trusted agents, and the Roles to Capability-map
- * views — TASK-220); pass 56d-3 converts the operator and moderation screens (Tenancy, Jobs,
- * Erasures, the kill switch, the review queue, staff two-step enrolment).
+ * The screens not yet built from the shared parts: none. Pass 56d-2 converted the governance
+ * screens (TASK-220); pass 56d-3 (TASK-221) converted the last — Tenancy, Jobs, Erasures, the kill
+ * switch, the review queue and staff two-step enrolment — and removed the old "unavailable"
+ * notice with them. The list is empty and stays empty: its type takes no entry (a screen listed
+ * here does not compile), and the test below refuses one — a new screen is built from the shared
+ * parts from its first line.
  */
-const KNOWN: Readonly<Record<string, Known>> = {
-  "components/admin/AgentKillSwitchPanel.tsx": {
-    pass: "56d-3",
-    rules: ["own-outcome", "own-confirm", "own-call", "raw-control", "raw-code-or-id"],
-  },
-  "components/admin/ErasuresPanel.tsx": {
-    pass: "56d-3",
-    rules: ["own-panel-state", "own-outcome", "own-confirm", "own-call", "raw-control"],
-  },
-  "components/admin/JobsPanels.tsx": {
-    pass: "56d-3",
-    rules: [
-      "raw-table",
-      "own-panel-state",
-      "own-outcome",
-      "own-confirm",
-      "own-call",
-      "raw-control",
-      "raw-code-or-id",
-    ],
-  },
-  "components/admin/MfaEnrollment.tsx": {
-    pass: "56d-3",
-    rules: ["own-outcome", "own-call", "raw-control", "raw-code-or-id"],
-  },
-  // The old "unavailable" notice: Erasures (56d-3) still shows it, so it goes with that screen.
-  "components/admin/PanelUnavailable.tsx": {
-    pass: "56d-3",
-    rules: ["own-panel-state", "own-outcome"],
-  },
-  "components/admin/TenancyPanels.tsx": {
-    pass: "56d-3",
-    rules: [
-      "raw-table",
-      "own-panel-state",
-      "own-outcome",
-      "own-call",
-      "raw-control",
-      "raw-code-or-id",
-    ],
-  },
-  "components/ReviewDashboard/recorded.tsx": {
-    pass: "56d-3",
-    rules: ["raw-code-or-id"],
-  },
-  "components/ReviewDashboard/ReviewDashboard.tsx": {
-    pass: "56d-3",
-    rules: ["own-outcome", "own-call", "raw-control"],
-  },
-};
+const KNOWN: Readonly<Record<string, never>> = {};
 
 /** What is wrong with one file, given its known entry (none: it must be clean). */
 export function judge(
@@ -221,13 +172,8 @@ describe("admin screens are built from the shared parts", () => {
     expect(scan()).toEqual([]);
   });
 
-  it("the known list names only screens pass 56d-3 converts, each with its pass", () => {
-    for (const [file, entry] of Object.entries(KNOWN)) {
-      expect(entry.pass).toBe("56d-3");
-      expect(entry.rules.length).toBeGreaterThan(0);
-      expect(new Set(entry.rules).size).toBe(entry.rules.length);
-      expect(existsSync(join(ROOT, file))).toBe(true);
-    }
+  it("the known list is empty, and takes no entry: every screen is built from the shared parts (TASK-221)", () => {
+    expect(Object.keys(KNOWN)).toEqual([]);
   });
 
   it("the console's core is not in the known list: it is converted", () => {
@@ -265,6 +211,24 @@ describe("admin screens are built from the shared parts", () => {
       expect(existsSync(join(ROOT, file))).toBe(true);
       expect(KNOWN[file]).toBeUndefined();
     }
+  });
+
+  it("the operator and moderation screens are not in the known list: pass 56d-3 converted them (TASK-221)", () => {
+    for (const file of [
+      "components/admin/TenancyPanels.tsx",
+      "components/admin/views/TenantSettings.tsx",
+      "components/admin/JobsPanels.tsx",
+      "components/admin/ErasuresPanel.tsx",
+      "components/admin/AgentKillSwitchPanel.tsx",
+      "components/admin/MfaEnrollment.tsx",
+      "components/ReviewDashboard/ReviewDashboard.tsx",
+      "components/ReviewDashboard/recorded.tsx",
+    ]) {
+      expect(existsSync(join(ROOT, file))).toBe(true);
+      expect(brokenRules(readFileSync(join(ROOT, file), "utf8"))).toEqual([]);
+    }
+    // The old "unavailable" notice went with the last screen that showed it.
+    expect(existsSync(join(ROOT, "components/admin/PanelUnavailable.tsx"))).toBe(false);
   });
 
   const PLANTED: readonly [RuleId, string][] = [

@@ -2,12 +2,16 @@
  * @jest-environment jsdom
  */
 /**
- * The tenant settings and operator tenants screens (components/admin/TenancyPanels.tsx,
- * ADR-053 D5/D7): what each sends, and that each shows the server's answer.
+ * __tests__/tenancy-panels.test.tsx — the tenant's own settings and the operators' tenants
+ * console on the console's shared parts (TASK-221; SCREEN-FINDINGS Tenancy, E-87 to E-89, E-91)
+ *
+ * Each case names the finding it holds; each is fed the routes' own answers
+ * (__tests__/fixtures/route-responses.json), so a screen and its route cannot drift apart.
  */
 import { renderMessage } from "@/platform/errors/messages";
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import "@testing-library/jest-dom";
 import {
   OperatorTenantsView,
   TenantSettingsView,
@@ -20,10 +24,15 @@ beforeAll(() => {
 });
 beforeEach(() => fetchMock.mockReset());
 
-/** A route's own answer (__tests__/fixtures/route-responses.json), as fetch resolves it. */
+/** A route's own answer, as fetch resolves it. */
 function reply(name: string) {
   const [status, body] = routeAnswer(name as RouteFixtureName);
-  return { ok: status < 400, status, json: async () => body } as unknown as Response;
+  return {
+    ok: status < 400,
+    status,
+    json: async () => body,
+    headers: new Headers({ "content-type": "application/json" }),
+  } as unknown as Response;
 }
 /** Answer each call in turn with these routes' answers; the last answer repeats. */
 function answers(...list: string[]) {
@@ -31,7 +40,6 @@ function answers(...list: string[]) {
   fetchMock.mockImplementation(async () => reply(list[Math.min(i++, list.length - 1)]!));
 }
 const bodyOf = <T,>(name: string) => routeAnswer(name as RouteFixtureName)[1] as T;
-const messageOf = (name: string) => bodyOf<{ message: string }>(name).message;
 const sent = (n: number) => {
   const [url, init] = fetchMock.mock.calls[n] as [string, RequestInit | undefined];
   return {
@@ -40,694 +48,681 @@ const sent = (n: number) => {
     body: init?.body ? JSON.parse(String(init.body)) : undefined,
   };
 };
+const t = (key: string, v?: Record<string, string | number>) =>
+  renderMessage(`screens.tenancy.${key}`, v);
+const ts = (key: string, v?: Record<string, string | number>) =>
+  renderMessage(`screens.admin_console.tenant_settings.${key}`, v);
+const allow =
+  (...granted: string[]) =>
+  (code: string) =>
+    granted.includes(code);
 
-type TenantData = Parameters<typeof TenantSettingsView>[0]["data"];
-const ACME_TENANT =
-  "GET /api/admin/tenant — a shared deployment's tenant, its spend under the cap";
-const TENANT = bodyOf<NonNullable<TenantData>>(ACME_TENANT);
+const TENANT = bodyOf<Record<string, unknown>>(
+  "GET /api/admin/tenant — a shared deployment's tenant, its spend under the cap"
+);
+const TENANTS = bodyOf<Record<string, unknown>>(
+  "GET /api/operator/tenants — every state"
+);
 
-describe("TenantSettingsView", () => {
-  it("shows loading until there is a tenant", () => {
-    render(<TenantSettingsView data={undefined} />);
-    expect(screen.getByText("Loading…")).toBeDefined();
-  });
-
-  it("shows the tenant, its addresses, spend and settings", () => {
+describe("TenantSettingsView (a tenant's administrators)", () => {
+  it("shows the tenant: its name, kind, state by name, short name, addresses and spend (SF-admin-118)", () => {
     render(<TenantSettingsView data={TENANT} />);
     expect(screen.getByRole("heading", { name: "Acme" })).toBeDefined();
-    expect(screen.getByText(/A tenant of a shared deployment/)).toBeDefined();
+    expect(screen.getByText(t("kind_shared"))).toBeDefined();
+    // The state by its name, in the console's case — never the stored "active".
+    expect(screen.getByText("Active")).toBeDefined();
+    expect(screen.queryByText("active")).toBeNull();
     expect(screen.getByText("acme.example.com")).toBeDefined();
-    expect(screen.getByText("$12.50 of $100.00")).toBeDefined();
-    expect(screen.getByText("tenant's own")).toBeDefined();
-    // Only an overridden setting can go back to the default.
-    expect(
-      screen.getByRole("button", { name: "Use the platform default for signups_enabled" })
-    ).toBeDefined();
-    expect(
-      screen.queryByRole("button", {
-        name: "Use the platform default for max_devices_per_player",
-      })
-    ).toBeNull();
+    expect(screen.getByText(/12\.50 of .*100\.00 today/)).toBeDefined();
   });
 
-  it("says when the tenant's agents have reached the cap", () => {
+  it("a body without its tenant is said as a failed read — never 'Loading…' for ever (E-4)", () => {
+    render(<TenantSettingsView data={{}} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/Could not read/);
+  });
+
+  it("settings it may not see are said with the permission — never an empty list", () => {
+    render(<TenantSettingsView data={{ ...TENANT, settings: null }} />);
+    expect(screen.getByText(/settings are not shown to you/)).toBeDefined();
+    expect(screen.queryByRole("table", { name: /Settings of/ })).toBeNull();
+  });
+
+  it("[E-91] a setting's change is offered only with its tier's permission, else disabled with why", () => {
+    render(
+      <TenantSettingsView data={TENANT} hasPermission={allow("config_manage_standard")} />
+    );
+    // The safety setting: this admin holds only the standard tier.
+    fireEvent.click(screen.getByRole("button", { name: /^Open Signups enabled/ }));
+    const panel = screen.getByRole("region", { name: "Signups enabled" });
+    const edit = within(panel).getByRole("button", { name: ts("edit") });
+    expect(edit).toBeDisabled();
+    expect(edit).toHaveAccessibleDescription(/Needs the permission/);
+    expect(within(panel).getByRole("button", { name: ts("use_default") })).toBeDisabled();
+  });
+
+  it("[SF-admin-110] a number is edited by its type: out of range said at its field; the change confirmed now → after, with its comment", async () => {
+    answers(
+      "PUT /api/admin/config — saved",
+      "GET /api/admin/tenant — a shared deployment's tenant, its spend under the cap"
+    );
+    const reload = jest.fn();
     render(
       <TenantSettingsView
-        data={bodyOf(
-          "GET /api/admin/tenant — a shared deployment's tenant, its cap reached"
-        )}
+        data={TENANT}
+        hasPermission={allow("config_manage_standard")}
+        onReload={reload}
       />
     );
-    expect(screen.getByText(/The cap is reached/)).toBeDefined();
-  });
-
-  it("a single deployment: no addresses needed, no reset", () => {
-    render(
-      <TenantSettingsView data={bodyOf("GET /api/admin/tenant — a single deployment")} />
-    );
-    expect(screen.getByRole("heading", { name: "This deployment" })).toBeDefined();
-    expect(screen.getByText("Not needed in a single-tenant deployment.")).toBeDefined();
-    expect(screen.queryByRole("button", { name: /Use the platform default/ })).toBeNull();
-  });
-
-  it("saves a value as JSON when it parses, then reloads", async () => {
-    answers("PUT /api/admin/config — saved", ACME_TENANT);
-    render(<TenantSettingsView data={TENANT} />);
-    const save = screen.getByRole("button", { name: "Save max_devices_per_player" });
-    expect((save as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("New value for max_devices_per_player"), {
-      target: { value: "5" },
+    fireEvent.click(screen.getByRole("button", { name: /^Open Max devices per player/ }));
+    fireEvent.click(screen.getByRole("button", { name: ts("edit") }));
+    const field = screen.getByLabelText(/New value/);
+    // The range is said before the mistake.
+    expect(field).toHaveAccessibleDescription(/1.*20/);
+    fireEvent.change(field, { target: { value: "99" } });
+    fireEvent.click(screen.getByRole("button", { name: ts("review") }));
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.change(field, { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: ts("review") }));
+    const confirm = screen.getByRole("alertdialog");
+    expect(confirm).toHaveFocus();
+    expect(confirm.querySelector("[data-diff]")).toHaveTextContent(/3.*7/);
+    // The comment is required, and said at its field.
+    fireEvent.click(within(confirm).getByRole("button", { name: ts("save") }));
+    expect(within(confirm).getByRole("alert")).toHaveTextContent(/at least 3 characters/);
+    fireEvent.change(within(confirm).getByLabelText(/Reason/), {
+      target: { value: "more devices for the pilot" },
     });
-    fireEvent.click(save);
-    await screen.findByText("max_devices_per_player saved.");
+    fireEvent.click(within(confirm).getByRole("button", { name: ts("save") }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(sent(0)).toEqual({
       url: "/api/admin/config",
       method: "PUT",
-      // The note is the server's (screens.records.changed_on_page); the screen sends none.
-      body: { key: "max_devices_per_player", value: 5 },
+      body: {
+        key: "max_devices_per_player",
+        value: 7,
+        changeComment: "more devices for the pilot",
+      },
     });
-    expect(sent(1).url).toBe("/api/admin/tenant");
+    // The value is a number, never the text typed; the outcome names the change.
+    expect(await screen.findByText(/Max devices per player set to 7/)).toBeDefined();
+    expect(reload).toHaveBeenCalled();
   });
 
-  it("says when a change is held for approval", async () => {
-    answers("PUT /api/admin/config — held for approval", ACME_TENANT);
-    render(<TenantSettingsView data={TENANT} />);
-    fireEvent.change(screen.getByLabelText("New value for signups_enabled"), {
-      target: { value: "true" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save signups_enabled" }));
-    await screen.findByText("signups_enabled is held for approval.");
-  });
-
-  it("shows the server's refusal and does not reload", async () => {
-    const refused = "PUT /api/admin/config — refused (not this tenant's to set)";
-    answers(refused);
-    render(<TenantSettingsView data={TENANT} />);
-    fireEvent.change(screen.getByLabelText("New value for signups_enabled"), {
-      target: { value: "x" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save signups_enabled" }));
-    await screen.findByText(`signups_enabled: ${messageOf(refused)}`);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  // Round 15, nit 4: a write whose commit was lost may have applied — the page reads the setting
-  // again, so the admin sees its actual value, and says the outcome is unknown.
-  const LOST = messageOf("PUT /api/admin/config — the commit lost");
-
-  it("after a lost commit (save) reloads the setting and says so", async () => {
-    answers(
-      "PUT /api/admin/config — the commit lost",
-      "GET /api/admin/tenant — after a lost commit, max_devices_per_player 7"
+  it("an on/off setting is a checkbox; a held change says it waits — nothing changed yet", async () => {
+    answers("PUT /api/admin/config — held for approval");
+    const reload = jest.fn();
+    render(
+      <TenantSettingsView
+        data={TENANT}
+        hasPermission={allow("config_manage_safety")}
+        onReload={reload}
+      />
     );
-    render(<TenantSettingsView data={TENANT} />);
-    fireEvent.change(screen.getByLabelText("New value for max_devices_per_player"), {
-      target: { value: "7" },
+    fireEvent.click(screen.getByRole("button", { name: /^Open Signups enabled/ }));
+    fireEvent.click(screen.getByRole("button", { name: ts("edit") }));
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: ts("review") }));
+    fireEvent.change(screen.getByLabelText(/Reason/), {
+      target: { value: "open signups" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save max_devices_per_player" }));
-    await screen.findByText(`max_devices_per_player: ${LOST}`);
-    expect(sent(1).url).toBe("/api/admin/tenant");
-    await screen.findByText("7");
+    fireEvent.click(screen.getByRole("button", { name: ts("save") }));
+    const held = await screen.findByText(/Signups enabled set to/);
+    expect(held.closest("[data-outcome]")).toHaveAttribute("data-outcome", "held");
+    expect(sent(0).body.value).toBe(true);
+    // Held: it is listed among the changes waiting for approval — read again.
+    expect(reload).toHaveBeenCalled();
   });
 
-  it("after a lost commit (reset) reloads the setting and says so", async () => {
-    answers(
-      "DELETE /api/admin/config — the commit lost",
-      "GET /api/admin/tenant — after a lost commit, signups_enabled the platform's"
+  it("the settings: filtered by name, opened by a click on the row; each step can be cancelled; Close shuts the panel", () => {
+    render(<TenantSettingsView data={TENANT} showIds />);
+    const search = screen.getByRole("searchbox");
+    fireEvent.change(search, { target: { value: "signups" } });
+    expect(
+      screen.queryByRole("button", { name: /^Open Max devices per player/ })
+    ).toBeNull();
+    fireEvent.change(search, { target: { value: "no such setting at all" } });
+    expect(screen.getByText(/no such setting at all/)).toBeDefined();
+    fireEvent.change(search, { target: { value: "" } });
+    const table = screen.getByRole("table", { name: /Settings of/ });
+    // With Show details the stored key is there to copy.
+    expect(within(table).getAllByText("signups_enabled").length).toBeGreaterThan(0);
+    const regions = screen.queryAllByRole("region").length;
+    fireEvent.click(within(table).getAllByRole("row")[1]!);
+    expect(screen.getAllByRole("region")).toHaveLength(regions + 1);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryAllByRole("region")).toHaveLength(regions);
+  });
+
+  it("a change and a reset can each be cancelled at their confirm step — nothing sent", () => {
+    render(
+      <TenantSettingsView data={TENANT} hasPermission={allow("config_manage_standard")} />
     );
-    render(<TenantSettingsView data={TENANT} />);
-    const reset = "Use the platform default for signups_enabled";
-    fireEvent.click(screen.getByRole("button", { name: reset }));
-    await screen.findByText(`signups_enabled: ${LOST}`);
-    expect(sent(1).url).toBe("/api/admin/tenant");
-    // Reloaded: it uses the platform default now, so there is nothing to reset.
-    await waitFor(() => expect(screen.queryByRole("button", { name: reset })).toBeNull());
-  });
-
-  it("goes back to the default through DELETE", async () => {
-    answers("DELETE /api/admin/config — the platform default again", ACME_TENANT);
-    render(<TenantSettingsView data={TENANT} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Open Max devices per player/ }));
+    fireEvent.click(screen.getByRole("button", { name: ts("edit") }));
+    fireEvent.change(screen.getByLabelText(/New value/), { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: ts("review") }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Use the platform default for signups_enabled" })
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: /Cancel/ })
     );
-    await screen.findByText("signups_enabled uses the platform default again.");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const reset = screen.queryByRole("button", { name: ts("use_default") });
+    if (reset && !(reset as HTMLButtonElement).disabled) {
+      fireEvent.click(reset);
+      fireEvent.click(
+        within(screen.getByRole("alertdialog")).getByRole("button", { name: /Cancel/ })
+      );
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("with no permission given, a setting's change is not offered", () => {
+    render(<TenantSettingsView data={TENANT} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Open Signups enabled/ }));
+    expect(screen.getByRole("button", { name: ts("edit") })).toBeDisabled();
+  });
+
+  it("Use the platform default is confirmed, then sent as a DELETE of the key", async () => {
+    answers("DELETE /api/admin/config — the platform default again");
+    render(
+      <TenantSettingsView data={TENANT} hasPermission={allow("config_manage_safety")} />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Open Signups enabled/ }));
+    fireEvent.click(screen.getByRole("button", { name: ts("use_default") }));
+    const confirm = screen.getByRole("alertdialog");
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(within(confirm).getByRole("button", { name: ts("use_default") }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(sent(0)).toMatchObject({
       url: "/api/admin/config?key=signups_enabled",
       method: "DELETE",
     });
-  });
-
-  it("an unreachable server is a refusal, not a crash", async () => {
-    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
-    render(<TenantSettingsView data={TENANT} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Use the platform default for signups_enabled" })
-    );
-    await screen.findByText("signups_enabled: The request was refused.");
+    expect(
+      await screen.findByText(/Signups enabled follows the platform default/)
+    ).toBeDefined();
   });
 });
 
-const TENANTS = "GET /api/operator/tenants — every state";
-type TenantRows = Parameters<typeof OperatorTenantsView>[0]["data"];
-const ROWS = bodyOf<NonNullable<TenantRows>>(TENANTS).tenants ?? [];
-const idOf = (slug: string) => ROWS.find((t) => t.slug === slug)!.id;
+describe("OperatorTenantsView (operators)", () => {
+  const open = (name: string) =>
+    fireEvent.click(
+      screen.getByRole("button", { name: t("open_tenant", { tenant: name }) })
+    );
 
-describe("OperatorTenantsView", () => {
-  const view = () => render(<OperatorTenantsView data={{ tenants: ROWS }} />);
-  const button = (name: string) => screen.getByRole("button", { name });
-  const none = (name: string) =>
-    expect(screen.queryByRole("button", { name })).toBeNull();
-
-  it("shows loading until there is a list", () => {
-    render(<OperatorTenantsView data={undefined} />);
-    expect(screen.getByText("Loading…")).toBeDefined();
+  it("lists tenants by name in a table that fits a phone: state by name, no actions column (SF-admin-112)", () => {
+    render(<OperatorTenantsView data={TENANTS} />);
+    const table = screen.getByRole("table", { name: t("tenants_caption") });
+    const headers = within(table)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(headers).toEqual([
+      t("col_tenant"),
+      t("col_state"),
+      t("col_users"),
+      t("col_addresses"),
+    ]);
+    expect(within(table).getAllByText("Suspended").length).toBeGreaterThan(0);
+    expect(within(table).queryByText("suspended")).toBeNull();
   });
 
-  it("the tenants table scrolls inside its own box, never the page (390 px, TASK-203)", () => {
-    const { container } = view();
-    const tables = container.querySelectorAll("table");
-    expect(tables.length).toBeGreaterThan(0);
-    for (const table of tables) {
-      const box = table.parentElement!;
-      expect(box.hasAttribute("data-scroll-box")).toBe(true);
-      expect(box.className).toContain("overflow-x-auto");
-    }
+  it("a tenant opens in its own panel, heading focused; Close gives focus back to its row (SF-admin-112)", async () => {
+    render(<OperatorTenantsView data={TENANTS} />);
+    open("Acme");
+    const heading = screen.getByRole("heading", { name: "Acme" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: t("open_tenant", { tenant: "Acme" }) })
+      ).toHaveFocus()
+    );
   });
 
-  it("offers only the actions each state allows", () => {
-    view();
-    button("Suspend Acme");
-    none("Resume Acme");
-    none("Restore Acme");
-    button("Resume Beta");
-    none("Suspend Beta");
-    button("Restore Gone");
-    none("Request deletion of Gone (another operator approves)");
-    none("Make one of Gone's users its administrator");
-    button("Approve the deletion of Doomed");
-    button("Reject the deletion of Doomed");
-    none("Request deletion of Doomed (another operator approves)");
-    // A purged tenant has nothing left to restore, address or export.
-    none("Restore Purged");
-    none("Add an address for Purged");
-    expect(
-      screen.queryByRole("link", { name: "Export all of Purged's data" })
-    ).toBeNull();
-    expect(screen.getByRole("link", { name: "Export all of Acme's data" })).toBeDefined();
-    expect(screen.getByText("purged after 2026-11-20")).toBeDefined();
-  });
-
-  it("asks for a reason inline, then suspends with it", async () => {
-    answers("POST /api/operator/tenants/[id]/state — suspended", TENANTS);
-    view();
-    fireEvent.click(button("Suspend Acme"));
-    const form = screen.getByRole("form", { name: "Suspend Acme" });
-    expect(form).toBeDefined();
-    const confirm = button("Confirm");
-    expect((confirm as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("Reason"), {
-      target: { value: "  unpaid  " },
+  it("[E-87 to E-89, SF-admin-117] suspending is confirmed, says who is locked out, and asks why", async () => {
+    answers("POST /api/operator/tenants/[id]/state — suspended");
+    const reload = jest.fn();
+    render(<OperatorTenantsView data={TENANTS} onReload={reload} />);
+    open("Acme");
+    fireEvent.click(
+      screen.getByRole("button", { name: t("suspend_label", { tenant: "Acme" }) })
+    );
+    const confirm = screen.getByRole("alertdialog", {
+      name: t("confirm_suspend", { tenant: "Acme" }),
     });
-    fireEvent.click(confirm);
-    await screen.findByText("Suspend Acme: done.");
-    expect(sent(0)).toEqual({
-      url: `/api/operator/tenants/${idOf("acme")}/state`,
-      method: "POST",
-      body: { action: "suspend", reason: "unpaid" },
-    });
-    expect(screen.queryByRole("form")).toBeNull();
-  });
-
-  it("cancel and Escape send nothing", () => {
-    view();
-    fireEvent.click(button("Resume Beta"));
-    fireEvent.click(button("Cancel"));
-    expect(screen.queryByRole("form")).toBeNull();
-    fireEvent.click(button("Restore Gone"));
-    fireEvent.keyDown(screen.getByLabelText("Reason"), { key: "Escape" });
-    expect(screen.queryByRole("form")).toBeNull();
+    expect(confirm).toHaveTextContent(/Everyone in the tenant is locked out/);
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("requests a deletion with its reason", async () => {
-    answers("POST /api/operator/tenants/[id]/deletion — requested", TENANTS);
-    view();
-    fireEvent.click(button("Request deletion of Acme (another operator approves)"));
-    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "closed" } });
-    fireEvent.submit(screen.getByRole("form"));
+    fireEvent.change(within(confirm).getByLabelText(/Reason/), {
+      target: { value: "unpaid invoices" },
+    });
+    fireEvent.click(within(confirm).getByRole("button", { name: t("suspend") }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(sent(0)).toEqual({
-      url: `/api/operator/tenants/${idOf("acme")}/deletion`,
+      url: "/api/operator/tenants/aaaaaaaa-0000-4000-8000-0000000000a1/state",
       method: "POST",
-      body: { reason: "closed" },
+      body: { action: "suspend", reason: "unpaid invoices" },
     });
+    expect(await screen.findByText(t("suspend_label", { tenant: "Acme" }))).toBeDefined();
+    expect(reload).toHaveBeenCalled();
   });
 
-  it("decides a pending deletion, and shows a refusal (own request)", async () => {
-    const refused = "POST /api/operator/deletions/[id] — refused (its own requester)";
-    answers(refused);
-    view();
-    fireEvent.click(button("Approve the deletion of Doomed"));
-    await screen.findByText(`Approve the deletion of Doomed: ${messageOf(refused)}`);
-    const pending = ROWS.find((t) => t.slug === "doomed")!.pendingDeletion!;
-    expect(sent(0)).toEqual({
-      url: `/api/operator/deletions/${pending.requestId}`,
-      method: "POST",
-      body: { decision: "approve" },
-    });
-  });
-
-  it("adds and removes addresses", async () => {
-    let call = 0;
-    fetchMock.mockImplementation(async () =>
-      reply(
-        [
-          "POST /api/operator/tenants/[id]/domains — added",
-          TENANTS,
-          "DELETE /api/operator/tenants/[id]/domains — removed",
-          TENANTS,
-        ][Math.min(call++, 3)]!
-      )
+  it("[E-87 to E-89] removing an address is confirmed before the DELETE", async () => {
+    answers("DELETE /api/operator/tenants/[id]/domains — removed");
+    render(<OperatorTenantsView data={TENANTS} />);
+    open("Acme");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("remove_address", { host: "acme.example.com" }),
+      })
     );
-    view();
-    fireEvent.click(button("Add an address for Beta"));
-    fireEvent.change(screen.getByLabelText("Address"), {
-      target: { value: "beta.example.com" },
-    });
-    fireEvent.click(button("Confirm"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(sent(0)).toEqual({
-      url: `/api/operator/tenants/${idOf("beta")}/domains`,
-      method: "POST",
-      body: { host: "beta.example.com" },
-    });
-    fireEvent.click(button("Remove acme.example.com"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
-    expect(sent(2)).toMatchObject({
-      url: `/api/operator/tenants/${idOf("acme")}/domains?host=acme.example.com`,
+    expect(fetchMock).not.toHaveBeenCalled();
+    const confirm = screen.getByRole("alertdialog");
+    expect(confirm).toHaveTextContent(/no longer served/);
+    fireEvent.click(within(confirm).getByRole("button", { name: t("remove") }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(sent(0)).toMatchObject({
+      url: "/api/operator/tenants/aaaaaaaa-0000-4000-8000-0000000000a1/domains?host=acme.example.com",
       method: "DELETE",
     });
   });
 
-  it("makes a user administrator by email", async () => {
-    answers("POST /api/operator/tenants/[id]/admins — made administrator", TENANTS);
-    view();
-    fireEvent.click(button("Make one of Acme's users its administrator"));
-    const field = screen.getByLabelText("Email") as HTMLInputElement;
-    expect(field.type).toBe("email");
-    fireEvent.change(field, { target: { value: "a@acme.example.com" } });
-    fireEvent.click(button("Confirm"));
+  it("[SF-admin-114] one's own deletion request is said, and Approve is not offered on it", () => {
+    render(<OperatorTenantsView data={TENANTS} />);
+    open("Doomed");
+    expect(screen.getByText(/\(you asked for it\)/)).toBeDefined();
+    const approve = screen.getByRole("button", {
+      name: t("approve_deletion_label", { tenant: "Doomed" }),
+    });
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveAccessibleDescription(t("approve_own"));
+    expect(
+      screen.getByRole("button", {
+        name: t("reject_deletion_label", { tenant: "Doomed" }),
+      })
+    ).toBeEnabled();
+  });
+
+  it("[SF-admin-114] another operator's request is named by address, and Approve is offered", () => {
+    const other = JSON.parse(JSON.stringify(TENANTS)) as {
+      tenants: { pendingDeletion?: Record<string, unknown> }[];
+    };
+    for (const x of other.tenants)
+      if (x.pendingDeletion)
+        x.pendingDeletion = {
+          ...x.pendingDeletion,
+          byViewer: false,
+          requester: { email: "op-b@example.com", role: "Operator", erased: false },
+        };
+    render(<OperatorTenantsView data={other} />);
+    open("Doomed");
+    expect(screen.getAllByText("op-b@example.com").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("button", {
+        name: t("approve_deletion_label", { tenant: "Doomed" }),
+      })
+    ).toBeEnabled();
+  });
+
+  it("[E-87 to E-89] rejecting a deletion is confirmed, and its refusal is said with its reason", async () => {
+    answers("POST /api/operator/deletions/[id] — refused (its own requester)");
+    render(<OperatorTenantsView data={TENANTS} />);
+    open("Doomed");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("reject_deletion_label", { tenant: "Doomed" }),
+      })
+    );
+    const confirm = screen.getByRole("alertdialog");
+    fireEvent.click(within(confirm).getByRole("button", { name: t("reject_deletion") }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(sent(0)).toEqual({
-      url: `/api/operator/tenants/${idOf("acme")}/admins`,
+    expect(sent(0)).toMatchObject({
+      url: "/api/operator/deletions/aaaaaaaa-0000-4000-8000-0000000000f1",
       method: "POST",
-      body: { email: "a@acme.example.com" },
+      body: { decision: "reject" },
     });
+    await waitFor(() =>
+      expect(document.querySelector("[data-outcome='refused']")).not.toBeNull()
+    );
   });
 
-  it("provisions a tenant, splitting the addresses, and clears the form", async () => {
-    answers("POST /api/operator/tenants — provisioned", TENANTS);
-    view();
-    const provision = button("Provision");
-    expect((provision as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("Slug"), { target: { value: " new " } });
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New Co" } });
-    fireEvent.change(screen.getByLabelText("Addresses (comma-separated)"), {
-      target: { value: "a.example.com, b.example.com  c.example.com" },
-    });
-    fireEvent.click(provision);
-    await screen.findByText("Provision: done.");
-    expect(sent(0)).toEqual({
-      url: "/api/operator/tenants",
-      method: "POST",
-      body: {
-        slug: "new",
-        name: "New Co",
-        domains: ["a.example.com", "b.example.com", "c.example.com"],
-      },
-    });
-    expect((screen.getByLabelText("Slug") as HTMLInputElement).value).toBe("");
+  it("[SF-admin-113] making an administrator checks the address at its field, and says who, of which tenant", async () => {
+    answers("POST /api/operator/tenants/[id]/admins — made administrator");
+    render(<OperatorTenantsView data={TENANTS} />);
+    open("Acme");
+    fireEvent.click(
+      screen.getByRole("button", { name: t("make_admin_label", { tenant: "Acme" }) })
+    );
+    const email = screen.getByLabelText(t("email"));
+    fireEvent.change(email, { target: { value: "not an address" } });
+    fireEvent.click(screen.getByRole("button", { name: t("review") }));
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    fireEvent.change(email, { target: { value: "ann@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: t("review") }));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: t("make_admin"),
+      })
+    );
+    expect(
+      await screen.findByText(
+        t("made_admin", { email: "ann@example.com", tenant: "Acme" })
+      )
+    ).toBeDefined();
   });
 
-  it("keeps the form when provisioning is refused", async () => {
-    const refused = "POST /api/operator/tenants — refused (the slug taken)";
-    answers(refused);
-    view();
-    fireEvent.change(screen.getByLabelText("Slug"), { target: { value: "acme" } });
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Acme 2" } });
-    fireEvent.click(button("Provision"));
-    await screen.findByText(`Provision: ${messageOf(refused)}`);
-    expect((screen.getByLabelText("Slug") as HTMLInputElement).value).toBe("acme");
-  });
-
-  it("purges due tenants", async () => {
-    answers("POST /api/operator/purge — none due", TENANTS);
-    view();
-    fireEvent.click(button("Purge due"));
-    await screen.findByText("Purge due tenants: done.");
+  it("[E-87 to E-89, SF-admin-113] purging due tenants cannot be undone, is confirmed, and says what was purged", async () => {
+    answers("POST /api/operator/purge — none due");
+    render(<OperatorTenantsView data={TENANTS} />);
+    fireEvent.click(screen.getByRole("button", { name: t("purge_due") }));
+    const confirm = screen.getByRole("alertdialog", { name: t("confirm_purge") });
+    expect(confirm).toHaveAttribute("data-risk", "irreversible");
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(within(confirm).getByRole("button", { name: t("purge_due") }));
+    expect(await screen.findByText(t("purge_none_done"))).toBeDefined();
     expect(sent(0)).toMatchObject({ url: "/api/operator/purge", method: "POST" });
   });
 
-  it("shows each readiness check, its state named for screen readers", async () => {
+  it("[SF-admin-119] readiness: a checking state, each check by name, and the time of the check", async () => {
     answers("GET /api/operator/readiness — this deployment");
-    view();
-    fireEvent.click(button("Check"));
-    // Each check by the catalog's name, and its detail worded by the catalog (TASK-206).
-    await screen.findByText(
-      new RegExp(renderMessage("screens.readiness.owner_unset").slice(0, 30))
-    );
-    expect(
-      screen.getByText(
-        new RegExp(renderMessage("screens.readiness.database_role_missing"))
-      )
-    ).toBeDefined();
-    expect(screen.getAllByText("(ready)").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("(not ready)").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("(unknown)").length).toBeGreaterThan(0);
+    render(<OperatorTenantsView data={TENANTS} />);
+    fireEvent.click(screen.getByRole("button", { name: t("check") }));
+    expect(screen.getByText(t("checking"))).toBeDefined();
+    expect(await screen.findByText(/Checked at/)).toBeDefined();
+    const checks = bodyOf<{ checks: { name: string }[] }>(
+      "GET /api/operator/readiness — this deployment"
+    ).checks;
+    expect(checks.length).toBeGreaterThan(0);
+    for (const c of checks)
+      expect(
+        document
+          .querySelector(`[data-check="${c.name}"]`)
+          ?.textContent?.startsWith(`${c.name}:`)
+      ).toBe(false);
   });
 
-  it("reports a failed readiness check", async () => {
-    const refused = "GET /api/operator/readiness — refused (no permission)";
-    answers(refused);
-    view();
-    await act(async () => {
-      fireEvent.click(button("Check"));
+  it("[SF-admin-111] the tenant's held changes are the Approvals card: what, before and after, who asked, when", async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).endsWith("/approvals")
+        ? reply("GET /api/operator/tenants/[id]/approvals — a setting's held change")
+        : reply(
+            "GET /api/operator/tenants/[id]/config — every setting, one only operators set"
+          )
+    );
+    render(
+      <OperatorTenantsView data={TENANTS} hasPermission={() => true} viewerId="someone" />
+    );
+    open("Acme");
+    fireEvent.click(screen.getByRole("button", { name: t("tab_settings") }));
+    const li = await waitFor(() => {
+      const found = document.querySelector("li[data-approval]");
+      expect(found).not.toBeNull();
+      return found!;
     });
-    await screen.findByText(`Readiness: ${messageOf(refused)}`);
+    expect(li.querySelector("[data-diff]")).not.toBeNull();
+    expect(li.querySelector("time")).not.toBeNull();
+    expect(li.querySelector("[data-requester]")).not.toBeNull();
+    // A decision is the Approvals confirm step — never one click.
+    fireEvent.click(
+      within(li as HTMLElement).getAllByRole("button", { name: /^Approve/ })[0]!
+    );
+    expect(within(li as HTMLElement).getByRole("alertdialog")).toBeDefined();
+  });
+
+  it("[SF-admin-115] a refused read of the held changes is said as one — never 'none'", async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).endsWith("/approvals")
+        ? reply(
+            "GET /api/operator/tenants/[id]/approvals — refused (a single deployment)"
+          )
+        : reply(
+            "GET /api/operator/tenants/[id]/config — every setting, one only operators set"
+          )
+    );
+    render(<OperatorTenantsView data={TENANTS} hasPermission={() => true} />);
+    open("Acme");
+    fireEvent.click(screen.getByRole("button", { name: t("tab_settings") }));
+    await waitFor(() =>
+      expect(document.querySelector("[data-read-failed='true']")).not.toBeNull()
+    );
+    expect(screen.queryByText(t("held_none"))).toBeNull();
+  });
+
+  it("[SF-admin-116] the export says it is working, and a refused one is said — nothing saved", async () => {
+    answers("GET /api/operator/readiness — refused (no permission)");
+    render(<OperatorTenantsView data={TENANTS} />);
+    open("Acme");
+    fireEvent.click(
+      screen.getByRole("button", { name: t("export_label", { tenant: "Acme" }) })
+    );
+    expect(screen.getByText(t("exporting_status", { tenant: "Acme" }))).toBeDefined();
+    await waitFor(() =>
+      expect(document.querySelector("[data-outcome='refused']")).not.toBeNull()
+    );
+    expect(sent(0)).toMatchObject({
+      url: "/api/operator/tenants/aaaaaaaa-0000-4000-8000-0000000000a1/export",
+      method: "GET",
+    });
+  });
+
+  it("[SF-admin-116] an export that stopped part-way is not saved as if it were whole", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({
+        "content-disposition": 'attachment; filename="tenant-x.ndjson"',
+      }),
+      blob: async () =>
+        new Blob(['{"export":{}}\n{"table":"t","row":{}}\n{"error":"export_failed"}\n']),
+    } as unknown as Response);
+    render(<OperatorTenantsView data={TENANTS} />);
+    open("Acme");
+    fireEvent.click(
+      screen.getByRole("button", { name: t("export_label", { tenant: "Acme" }) })
+    );
+    expect(await screen.findByText(t("export_incomplete"))).toBeDefined();
+  });
+
+  it("provisioning says what is missing at its field, then confirms the tenant read back", async () => {
+    answers("POST /api/operator/tenants — provisioned");
+    render(<OperatorTenantsView data={TENANTS} />);
+    const form = screen.getByRole("form", { name: t("provision_heading") });
+    fireEvent.click(within(form).getByRole("button", { name: t("review") }));
+    expect(within(form).getByLabelText(t("slug"))).toHaveAttribute(
+      "aria-invalid",
+      "true"
+    );
+    fireEvent.change(within(form).getByLabelText(t("slug")), {
+      target: { value: "zeta" },
+    });
+    fireEvent.change(within(form).getByLabelText(t("name")), {
+      target: { value: "Zeta" },
+    });
+    fireEvent.change(within(form).getByLabelText(t("domains")), {
+      target: { value: "zeta.example.com, www.zeta.example.com" },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: t("review") }));
+    const confirm = screen.getByRole("alertdialog");
+    expect(confirm).toHaveTextContent("zeta.example.com, www.zeta.example.com");
+    fireEvent.click(within(confirm).getByRole("button", { name: t("provision") }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(sent(0).body).toEqual({
+      slug: "zeta",
+      name: "Zeta",
+      domains: ["zeta.example.com", "www.zeta.example.com"],
+    });
+    expect(
+      await screen.findByText(t("what_provision", { tenant: "Zeta" }))
+    ).toBeDefined();
   });
 });
 
-describe("OperatorTenantsView — one tenant's settings, as an operator", () => {
-  const CONFIG =
-    "GET /api/operator/tenants/[id]/config — every setting, one only operators set";
-  const HELD =
-    "GET /api/operator/tenants/[id]/approvals — a two-person approval, its requester not here";
-  const NONE = "GET /api/operator/tenants/[id]/approvals — none";
-  const DECIDE = "POST /api/operator/tenants/[id]/approvals/[approvalId] —";
-  const heldId = (name: string) =>
-    bodyOf<{ approvals: { id: string }[] }>(name).approvals.at(-1)!.id;
-  /** Route each call by URL and method. */
-  /** Route each "METHOD url" to the fixture that answers it (a table of names, not bodies). */
-  function routes(table: ReadonlyMap<string, string>) {
-    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-      const k = `${init?.method ?? "GET"} ${url}`;
-      const name = table.get(k);
-      if (!name) throw new Error(`unexpected request: ${k}`);
-      return reply(name);
-    });
-  }
-  const base = `/api/operator/tenants/${idOf("acme")}`;
-  // The erasure's account is not in this tenant's users: the label says so — as a noun phrase,
-  // never "Erase the account an account that is no longer found" (TASK-208, N-111).
-  const ERASE = "Erase an account that is no longer found";
-  const open = async () => {
-    render(<OperatorTenantsView data={{ tenants: ROWS }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Settings of Acme" }));
-    await screen.findByRole("heading", { name: "Settings of Acme" });
-  };
-
-  it("is not offered for a deleted tenant", () => {
-    render(<OperatorTenantsView data={{ tenants: ROWS }} />);
-    expect(screen.queryByRole("button", { name: "Settings of Gone" })).toBeNull();
-  });
-
-  it("lists every setting — including those only operators set — and the held changes", async () => {
-    routes(
-      new Map([
-        [`GET ${base}/config`, CONFIG],
-        [`GET ${base}/approvals`, HELD],
-      ])
-    );
-    await open();
-    expect(screen.getByText("agent.budget.tenant_max_cost_per_day")).toBeDefined();
-    expect(screen.getByText("operators only · safety")).toBeDefined();
-    expect(screen.getByText("its administrators may set this")).toBeDefined();
-    expect(screen.getByText("Waiting for approval")).toBeDefined();
-    // The requester is never named by id (TASK-202, N-63): a listing that names none says so.
-    const requester = bodyOf<{ approvals: { requester: string }[] }>(HELD).approvals[0]!
-      .requester;
-    expect(document.body.textContent).not.toContain(requester);
-    expect(
-      screen.getByText(/requested by an account not found in this tenant/)
-    ).toBeDefined();
-    // Filter narrows the list.
-    fireEvent.change(screen.getByLabelText("Filter"), { target: { value: "budget" } });
-    expect(screen.queryByText("max_devices_per_player")).toBeNull();
-  });
-
-  it("sets a platform-governed key for the tenant through the operator route", async () => {
-    routes(
-      new Map([
-        [`GET ${base}/config`, CONFIG],
-        [`GET ${base}/approvals`, NONE],
-        [`PUT ${base}/config`, "PUT /api/operator/tenants/[id]/config — saved"],
-      ])
-    );
-    await open();
-    fireEvent.change(
-      screen.getByLabelText("New value for agent.budget.tenant_max_cost_per_day"),
-      { target: { value: "25" } }
-    );
+describe("OperatorTenantsView: each step, each answer", () => {
+  const open = (name: string) =>
     fireEvent.click(
-      screen.getByRole("button", { name: "Save agent.budget.tenant_max_cost_per_day" })
+      screen.getByRole("button", { name: t("open_tenant", { tenant: name }) })
     );
-    await screen.findByText("agent.budget.tenant_max_cost_per_day saved.");
-    const put = fetchMock.mock.calls.find(
-      ([u, i]) => u === `${base}/config` && (i as RequestInit)?.method === "PUT"
-    ) as [string, RequestInit];
-    expect(JSON.parse(String(put[1].body))).toEqual({
-      key: "agent.budget.tenant_max_cost_per_day",
-      value: 25,
-    });
-  });
 
-  it("says when a change waits for a second approver, and resets through DELETE", async () => {
-    routes(
-      new Map([
-        [`GET ${base}/config`, CONFIG],
-        [`GET ${base}/approvals`, NONE],
-        [
-          `PUT ${base}/config`,
-          "PUT /api/operator/tenants/[id]/config — held for approval",
-        ],
-        [
-          `DELETE ${base}/config?key=max_devices_per_player`,
-          "DELETE /api/operator/tenants/[id]/config — the platform default again",
-        ],
-      ])
-    );
-    await open();
-    fireEvent.change(screen.getByLabelText("New value for max_devices_per_player"), {
-      target: { value: "9" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save max_devices_per_player" }));
-    await screen.findByText("max_devices_per_player is held for approval.");
+  it("asking to delete a tenant is confirmed with its reason, and said as held for a second operator", async () => {
+    answers("POST /api/operator/tenants/[id]/deletion — requested");
+    render(<OperatorTenantsView data={TENANTS} />);
+    open("Acme");
     fireEvent.click(
-      screen.getByRole("button", {
-        name: "Use the platform default for max_devices_per_player",
-      })
+      screen.getByRole("button", { name: t("delete_label", { tenant: "Acme" }) })
     );
-    await screen.findByText("max_devices_per_player uses the platform default again.");
-  });
-
-  it("decides a held change in that tenant, and shows a refusal", async () => {
-    const refused = `${DECIDE} refused (its own requester)`;
-    const id = heldId(HELD);
-    routes(
-      new Map([
-        [`GET ${base}/config`, CONFIG],
-        [`GET ${base}/approvals`, HELD],
-        [`POST ${base}/approvals/${id}`, refused],
-      ])
-    );
-    await open();
+    let confirm = screen.getByRole("alertdialog");
+    fireEvent.click(within(confirm).getByRole("button", { name: t("cancel") }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     fireEvent.click(
-      screen.getByRole("button", {
-        name: "Approve the held change: Setting Moderation: strike ban threshold",
-      })
+      screen.getByRole("button", { name: t("delete_label", { tenant: "Acme" }) })
     );
-    await screen.findByText(
-      `Setting Moderation: strike ban threshold: ${messageOf(refused)}`
-    );
-    const post = fetchMock.mock.calls.find(([u]) => u === `${base}/approvals/${id}`) as [
-      string,
-      RequestInit,
-    ];
-    expect(JSON.parse(String(post[1].body))).toEqual({
-      decision: "approve",
-      source: "config-approval",
+    confirm = screen.getByRole("alertdialog");
+    fireEvent.change(within(confirm).getByLabelText(/Reason/), {
+      target: { value: "the contract ended" },
     });
-  });
-
-  // TASK-194 round 17: an operator's decision is read as the Approvals panel reads it — the shared
-  // reader (decision-outcome.ts): what became of the approval, and when; the list read again.
-  it.each([
-    [
-      `${DECIDE} approved, its apply settling`,
-      "Its outcome is being checked: if it did not apply, it is listed again within 75 minutes.",
-    ],
-    [
-      `${DECIDE} approved, stale and withdrawn`,
-      "It was withdrawn; the requester must ask again.",
-    ],
-  ])(
-    "a decision's outcome (%s) is said as the Approvals panel says it, and the list read again",
-    async (answer, then) => {
-      const said = `Setting Moderation: strike ban threshold: ${messageOf(answer)} ${then}`;
-      routes(
-        new Map([
-          [`GET ${base}/config`, CONFIG],
-          [`GET ${base}/approvals`, HELD],
-          [`POST ${base}/approvals/${heldId(HELD)}`, answer],
-        ])
-      );
-      await open();
-      const reads = () =>
-        fetchMock.mock.calls.filter(([u]) => u === `${base}/approvals`).length;
-      const before = reads();
-      fireEvent.click(
-        screen.getByRole("button", {
-          name: "Approve the held change: Setting Moderation: strike ban threshold",
-        })
-      );
-      await screen.findByText(said);
-      await waitFor(() => expect(reads()).toBe(before + 1));
-    }
-  );
-
-  it("an undecided held change offers its three decisions, and withdraws it through the operator route (round 7, I-3)", async () => {
-    const UNDECIDED =
-      "GET /api/operator/tenants/[id]/approvals — an undecided erasure no one in it may decide";
-    const undecided = bodyOf<{ approvals: { id: string; undecided?: boolean }[] }>(
-      UNDECIDED
-    ).approvals.find((a) => a.undecided)!;
-    routes(
-      new Map([
-        [`GET ${base}/config`, CONFIG],
-        [`GET ${base}/approvals`, UNDECIDED],
-        [
-          `POST ${base}/approvals/${undecided.id}`,
-          `${DECIDE} an undecided erasure withdrawn`,
-        ],
-      ])
-    );
-    await open();
-    // No one in the tenant may decide it: said, for the operator.
-    expect(
-      screen.getByText(
-        "No one in this tenant but its requester and the account it acts on may approve it again or mark it executed (another holder who fails its rules may only withdraw it): decide it here."
-      )
-    ).toBeDefined();
-    // The proposed copy is approved as any hold; the undecided one only by its three decisions
-    // (this checked a name no template makes, so it held whatever the panel showed).
-    expect(
-      screen.getAllByRole("button", { name: `Approve the held change: ${ERASE}` })
-    ).toHaveLength(1);
-    expect(
-      screen.getByRole("button", {
-        // Named in words (TASK-202, N-62): the tool's id was the label.
-        name: `Mark executed: ${ERASE} — verified that it took effect`,
-      })
-    ).toBeDefined();
-    expect(
-      screen.getByRole("button", {
-        name: `Approve again: ${ERASE} — verified that it did not take effect`,
-      })
-    ).toBeDefined();
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: `Withdraw: ${ERASE} — verified that it did not take effect; it will not run`,
-      })
-    );
+    fireEvent.click(within(confirm).getByRole("button", { name: t("delete") }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(sent(0)).toEqual({
+      url: "/api/operator/tenants/aaaaaaaa-0000-4000-8000-0000000000a1/deletion",
+      method: "POST",
+      body: { reason: "the contract ended" },
+    });
     await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.some(([u]) => u === `${base}/approvals/${undecided.id}`)
-      ).toBe(true)
+      expect(document.querySelector("[data-outcome='held']")).not.toBeNull()
     );
-    const post = fetchMock.mock.calls.find(
-      ([u]) => u === `${base}/approvals/${undecided.id}`
-    ) as [string, RequestInit];
-    expect(JSON.parse(String(post[1].body))).toEqual({
-      decision: "withdraw",
-      source: "runtime",
+  });
+
+  it("adding an address: needed at its field, then confirmed", async () => {
+    answers("POST /api/operator/tenants/[id]/domains — added");
+    render(<OperatorTenantsView data={TENANTS} />);
+    open("Acme");
+    fireEvent.click(
+      screen.getByRole("button", { name: t("add_address_label", { tenant: "Acme" }) })
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("review") }));
+    expect(screen.getByLabelText(t("address"))).toHaveAttribute("aria-invalid", "true");
+    fireEvent.change(screen.getByLabelText(t("address")), {
+      target: { value: "shop.acme.example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("review") }));
+    const confirm = screen.getByRole("alertdialog");
+    fireEvent.click(within(confirm).getByRole("button", { name: t("add_address") }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(sent(0)).toMatchObject({
+      url: "/api/operator/tenants/aaaaaaaa-0000-4000-8000-0000000000a1/domains",
+      method: "POST",
+      body: { host: "shop.acme.example.com" },
     });
   });
 
-  it("an approval that now waits for a second one says so — never that it is done (TASK-208)", async () => {
-    const LISTED = "GET /api/operator/tenants/[id]/approvals — a setting's held change";
-    routes(
-      new Map([
-        [`GET ${base}/config`, CONFIG],
-        [`GET ${base}/approvals`, LISTED],
-        [
-          `POST ${base}/approvals/${heldId(LISTED)}`,
-          `${DECIDE} approved, now waiting for a second approval`,
-        ],
-      ])
-    );
-    await open();
+  it("another operator's deletion request: Approve is the confirm step, sent as approve", async () => {
+    const other = JSON.parse(JSON.stringify(TENANTS)) as {
+      tenants: { pendingDeletion?: Record<string, unknown> }[];
+    };
+    for (const x of other.tenants)
+      if (x.pendingDeletion)
+        x.pendingDeletion = { ...x.pendingDeletion, byViewer: false };
+    answers("POST /api/operator/deletions/[id] — refused (its own requester)");
+    render(<OperatorTenantsView data={other} />);
+    open("Doomed");
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Approve the held change: Setting Config: dual control keys",
+        name: t("approve_deletion_label", { tenant: "Doomed" }),
       })
     );
-    // The decision answers pendingApproval (this read `pending`, and said "… : done.").
-    await screen.findByText(
-      "Approved: Setting Config: dual control keys. It now waits for a second approval (two-person approval) before it takes effect."
-    );
-    expect(screen.queryByText("Setting Config: dual control keys: done.")).toBeNull();
+    const confirm = screen.getByRole("alertdialog");
+    fireEvent.click(within(confirm).getByRole("button", { name: t("approve_deletion") }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(sent(0).body).toMatchObject({ decision: "approve" });
   });
 
-  it("an undecided duplicate refused approval again says what to do with it (round 8, item 1)", async () => {
-    const UNDECIDED =
-      "GET /api/operator/tenants/[id]/approvals — an undecided erasure no one in it may decide";
-    const undecided = bodyOf<{ approvals: { id: string; undecided?: boolean }[] }>(
-      UNDECIDED
-    ).approvals.find((a) => a.undecided)!;
-    routes(
-      new Map([
-        [`GET ${base}/config`, CONFIG],
-        [`GET ${base}/approvals`, UNDECIDED],
-        [
-          `POST ${base}/approvals/${undecided.id}`,
-          `${DECIDE} an undecided erasure approved again, another open`,
-        ],
-      ])
-    );
-    await open();
+  it("purging says each tenant purged by name and its rows; cancelling sends nothing", async () => {
+    answers("POST /api/operator/purge — one purged");
+    render(<OperatorTenantsView data={TENANTS} />);
+    fireEvent.click(screen.getByRole("button", { name: t("purge_due") }));
     fireEvent.click(
-      screen.getByRole("button", {
-        name: `Approve again: ${ERASE} — verified that it did not take effect`,
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: t("cancel") })
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: t("purge_due") }));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: t("purge_due"),
       })
     );
-    // As the Approvals panel says it (round 17: one reader): an erasure's duplicate is named.
-    await screen.findByText(
-      renderMessage("screens.held.result_duplicate_undecided", {
-        label: ERASE,
-      })
+    const done = await screen.findByText(/Gone/, { selector: "[data-outcome] *" });
+    expect(done.closest("[data-outcome]")?.textContent).toContain(
+      t("purge_one", { tenant: "Gone", rows: 12 })
     );
-    expect(
-      renderMessage("screens.held.result_duplicate_undecided", {
-        label: "purge_user_data",
-      })
-    ).toMatch(/withdraw it/);
   });
 
-  it("an unreadable tenant's settings say why; Close removes the panel", async () => {
-    const refused =
-      "GET /api/operator/tenants/[id]/config — refused (a single deployment)";
-    routes(
-      new Map([
-        [`GET ${base}/config`, refused],
-        [
-          `GET ${base}/approvals`,
-          "GET /api/operator/tenants/[id]/approvals — refused (a single deployment)",
-        ],
-      ])
+  it("a readiness check that is refused is said, and can be tried again", async () => {
+    answers("GET /api/operator/readiness — refused (no permission)");
+    render(<OperatorTenantsView data={TENANTS} />);
+    fireEvent.click(screen.getByRole("button", { name: t("check") }));
+    await waitFor(() =>
+      expect(document.querySelector("[data-read-failed='true']")).not.toBeNull()
     );
-    await open();
-    expect(screen.getByText(`Settings of Acme: ${messageOf(refused)}`)).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    expect(screen.queryByRole("heading", { name: "Settings of Acme" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /again/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("provisioning can be cancelled at its confirm step; a row opens by a click anywhere on it", () => {
+    render(<OperatorTenantsView data={TENANTS} />);
+    const form = screen.getByRole("form", { name: t("provision_heading") });
+    fireEvent.change(within(form).getByLabelText(t("slug")), {
+      target: { value: "zeta" },
+    });
+    fireEvent.change(within(form).getByLabelText(t("name")), {
+      target: { value: "Zeta" },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: t("review") }));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: t("cancel") })
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    const table = screen.getByRole("table", { name: t("tenants_caption") });
+    fireEvent.click(within(table).getAllByRole("row")[1]!);
+    expect(screen.getAllByRole("region").length).toBeGreaterThan(0);
+  });
+
+  it("a held change decided in the tenant's settings reads its settings and held changes again", async () => {
+    let approvalsRead = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "POST")
+        return reply(
+          "POST /api/operator/tenants/[id]/approvals/[approvalId] — approved, its apply settling"
+        );
+      if (String(url).endsWith("/approvals")) {
+        approvalsRead++;
+        return reply(
+          "GET /api/operator/tenants/[id]/approvals — a setting's held change"
+        );
+      }
+      return reply(
+        "GET /api/operator/tenants/[id]/config — every setting, one only operators set"
+      );
+    });
+    render(
+      <OperatorTenantsView data={TENANTS} hasPermission={() => true} viewerId="someone" />
+    );
+    open("Acme");
+    fireEvent.click(screen.getByRole("button", { name: t("tab_settings") }));
+    const li = (await waitFor(() => {
+      const found = document.querySelector("li[data-approval]");
+      expect(found).not.toBeNull();
+      return found!;
+    })) as HTMLElement;
+    fireEvent.click(within(li).getAllByRole("button", { name: /^Approve/ })[0]!);
+    const confirm = within(li).getByRole("alertdialog");
+    const note = within(confirm).queryByLabelText(/Reason|Note/);
+    if (note) fireEvent.change(note, { target: { value: "looks right to me" } });
+    fireEvent.click(within(confirm).getAllByRole("button", { name: /^Approve/ })[0]!);
+    await waitFor(() => expect(approvalsRead).toBeGreaterThan(1));
+  });
+
+  it("a body without its list is said as a failed read", () => {
+    render(<OperatorTenantsView data={{}} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/Could not read/);
   });
 });

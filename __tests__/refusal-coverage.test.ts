@@ -212,7 +212,7 @@ export function usesSharedHandler(text: string): boolean {
 }
 
 /**
- * The console's shared readers and changers (TASK-216, TASK-220): a panel's read and a governed
+ * The console's shared readers and changers (TASK-216, TASK-220, TASK-221): a panel's read and a governed
  * change. Each makes its request through adminCall — checked below, in its own file — so a
  * screen calling one is covered as a caller of adminCall is.
  */
@@ -223,6 +223,8 @@ export const SHARED_CALLERS: readonly { readonly name: string; readonly file: st
     { name: "runAdminAction", file: "components/admin/ui/governed.ts" },
     { name: "runConfigAction", file: "components/admin/ui/governed.ts" },
     { name: "runRouteChange", file: "components/admin/ui/governed.ts" },
+    // An operator route that answers `{ result }` (TASK-221).
+    { name: "runOperatorAction", file: "components/admin/ui/governed.ts" },
   ];
 
 /**

@@ -111,7 +111,10 @@ export function editPermission(tier: SettingEntry["permissionTier"]): string {
  * b, c" — no brackets or quotation marks; "None" when empty), else as text. A list of lists stays
  * as written: its own screen (Capability map, Trusted agents) shows it in words.
  */
-export function valueText(entry: SettingEntry, value: unknown): string {
+export function valueText(
+  entry: Pick<SettingEntry, "key" | "valueType">,
+  value: unknown
+): string {
   if (entry.valueType === "string_enum" && typeof value === "string")
     return settingValueLabel(entry.key, value);
   if (Array.isArray(value) && value.every((v) => typeof v === "string"))
@@ -120,7 +123,7 @@ export function valueText(entry: SettingEntry, value: unknown): string {
 }
 
 /** A setting's range, in words. */
-function rangeText(e: SettingRules): string {
+export function rangeText(e: SettingRules): string {
   if (e.minValue !== null && e.maxValue !== null)
     return t("range", { min: e.minValue, max: e.maxValue });
   if (e.minValue !== null) return t("range_min", { min: e.minValue });
@@ -128,7 +131,7 @@ function rangeText(e: SettingRules): string {
   return t("range_none");
 }
 
-const TYPE_KEYS: Record<SettingType, string> = {
+export const TYPE_KEYS: Record<SettingType, string> = {
   number: "type_number",
   boolean: "type_boolean",
   string: "type_string",
@@ -137,13 +140,14 @@ const TYPE_KEYS: Record<SettingType, string> = {
 };
 
 /** The control for a setting's type, inside its Field (label, help and error wired). */
-function ValueInput({
+export function ValueInput({
   entry,
   raw,
   problem,
   onChange,
 }: {
-  readonly entry: SettingEntry;
+  /** A setting's key and rules (Platform config's, or a tenant's own — TASK-221). */
+  readonly entry: SettingRules & { readonly key: string };
   readonly raw: string | boolean;
   readonly problem: string | null;
   readonly onChange: (v: string | boolean) => void;

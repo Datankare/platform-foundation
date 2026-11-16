@@ -366,6 +366,8 @@ export const PLATFORM_AUDIT_DETAILS_SCHEMA: DetailsSchema = {
   "admin_action:power_reduction_applied": ["key", "changes"],
   "admin_action:job_run_now": [
     "kind",
+    // Why it was run now, as the operator wrote it (TASK-221).
+    "reason",
     "enqueued",
     "claimed",
     "succeeded",
@@ -375,8 +377,8 @@ export const PLATFORM_AUDIT_DETAILS_SCHEMA: DetailsSchema = {
     "hung",
     "stoppedBy",
   ],
-  "admin_action:job_replayed": ["jobId", "kind", "tenantId"],
-  "admin_action:job_discarded": ["jobId", "kind", "tenantId"],
+  "admin_action:job_replayed": ["jobId", "kind", "tenantId", "reason"],
+  "admin_action:job_discarded": ["jobId", "kind", "tenantId", "reason"],
   // An operator's decision on an external call whose outcome was unknown (TASK-215, audit B-12).
   "admin_action:effect_resolved": [
     "effectId",

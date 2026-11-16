@@ -442,9 +442,26 @@ dbDescribe(`${SUITE} /api/operator/tenants`, () => {
         status: "active",
         domains: [h],
         userCount: 2,
-        pendingDeletion: { requestId, requestedBy: op1.userId },
+        pendingDeletion: expect.objectContaining({
+          requestId,
+          requestedBy: op1.userId,
+          // The requester is the viewer: another operator approves (TASK-221, SF-admin-114).
+          byViewer: true,
+        }),
       })
     );
+    // Who asked, by address — the account's own address, never its id.
+    const own = await q<{ email: string | null }>(
+      "select email from users where id = $1::uuid",
+      [op1.userId]
+    );
+    const listed = tenants.find((x: { id: string }) => x.id === t.id).pendingDeletion;
+    expect(listed.requester?.email ?? null).toBe(own[0]?.email ?? null);
+    // Seen by the other operator: not theirs.
+    const other = await (await tenantsGET(req("/api/operator/tenants", op2))).json();
+    expect(
+      other.tenants.find((x: { id: string }) => x.id === t.id).pendingDeletion.byViewer
+    ).toBe(false);
     expect(tenants.find((x: { id: string }) => x.id === home.id)).toMatchObject({
       userCount: 3,
     });

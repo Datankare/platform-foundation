@@ -5,6 +5,7 @@
 import React from "react";
 import { renderShown, shown, type ShownText } from "@/platform/errors/shown-text";
 import { recordedFactor } from "@/platform/moderation/reasons";
+import { StoredText } from "@/components/admin/ui/Stored";
 
 /**
  * A recorded reason as a moderator reads it (TASK-209): the catalog's words, or — for a record
@@ -22,12 +23,10 @@ export function Recorded({
   return (
     <>
       {text}{" "}
-      <details className="inline">
-        <summary className="inline cursor-pointer underline">
-          {renderShown(shown("screens.moderation.legacy.show"))}
-        </summary>
-        <span className="block font-mono break-all">{stored}</span>
-      </details>
+      <StoredText
+        text={stored}
+        show={renderShown(shown("screens.moderation.legacy.show"))}
+      />
     </>
   );
 }

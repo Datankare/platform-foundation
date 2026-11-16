@@ -655,12 +655,15 @@ describe("Show details: offered to admins and super-admins only", () => {
   );
 
   it("round 1 (5): only where it changes something — not on a section with no id table", async () => {
-    serveSession("GET /api/admin/session — an admin");
+    // A super admin: every section, so one that keeps no detail (Password policy) is among them.
+    serveSession("GET /api/admin/session — a super admin");
     render(<AdminPage />);
     await screen.findByText("ann@example.com");
     await settle();
     expect(screen.getByRole("button", { name: SHOW })).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: /^Tenant$/ }));
+    // Password policy keeps no stored name or id as a detail (the Tenant section now does: its
+    // reference, TASK-221).
+    fireEvent.click(screen.getByRole("button", { name: /^Password policy$/ }));
     await settle();
     expect(screen.queryByRole("button", { name: SHOW })).toBeNull();
   });

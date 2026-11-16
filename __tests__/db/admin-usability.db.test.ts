@@ -393,6 +393,9 @@ dbDescribe("GET /api/operator/erasures (TASK-202, S3-E19)", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     const body = await json<ErasureOverview>(res);
     const row = body.erasures.find((e) => e.userId === pending);
+    // Its tenant by name, as the tenants table holds it (TASK-221, SF-admin-090).
+    const tenant = await withOwnerTxForTest(a.id);
+    expect(row?.tenantName).toBe(tenant);
     expect(row).toMatchObject({
       tenantId: a.id,
       requestedBy: { kind: "account", email: email("requester") },
@@ -457,3 +460,14 @@ dbDescribe("GET /api/operator/erasures (TASK-202, S3-E19)", () => {
     }
   });
 });
+
+/** The tenant's name as the tenants table holds it (read as the owner). */
+async function withOwnerTxForTest(tenantId: string): Promise<string | null> {
+  const { withOwnerTx } = await import("@/platform/data");
+  const { rows } = await withOwnerTx("operator", (tx) =>
+    tx.query<{ name: string | null }>("select name from tenants where id = $1::uuid", [
+      tenantId,
+    ])
+  );
+  return rows[0]?.name ?? null;
+}

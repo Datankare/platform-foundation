@@ -1,25 +1,63 @@
 "use client";
 
 /**
- * components/admin/JobsPanels.tsx — the operators' Jobs console (ADR-056 D2, D3)
+ * components/admin/JobsPanels.tsx — the operators' Jobs console (ADR-056 D2, D3), on the
+ * console's shared parts (TASK-221)
  *
- *   OperatorJobsView   operators (platform_operate): every recurring job — turn it on or off
- *                      (a required one is always on: shown so, no switch), change its
- *                      interval, run it now, see its last run and outcome — and the
- *                      dead-lettered jobs, to replay or discard; external calls whose outcome
- *                      is unknown, to mark as took effect or not (TASK-215, audit B-12)
+ *   OperatorJobsView   operators (platform_operate): every recurring job — turn it on or off (a
+ *                      required one is always on: said so, no switch), change its interval, run it
+ *                      now, see its last run and outcome — the dead-lettered jobs, to replay or
+ *                      discard, and the external calls whose outcome is unknown, to mark as took
+ *                      effect or not (TASK-215, audit B-12)
  *   TenantJobsList     a tenant's administrators: their own tenant's recent jobs, read-only
  *
+ * Each list is the one table; a job opens its panel at the row (beside the list when wide, in its
+ * place on a phone), and every action there is confirmed in the one confirm step (SF-admin-100,
+ * 103, 105, 108):
+ *
+ *   - Run now says what it will do, and for a job that removes records for good (its schedule's
+ *     `deletesData`) that it cannot be undone and why it is run — recorded with the run;
+ *   - turning a job on or off, changing its interval, replaying or discarding a dead job ask why
+ *     (one minimum length, said before the mistake); the route records it;
+ *   - an interval outside its bounds is said at its field, with the bounds (SF-admin-106);
+ *   - each section keeps its own outcomes until each is dismissed (SF-admin-101): a replay's
+ *     outcome is beside the dead jobs, not under the schedules;
+ *   - a tenant is named by its name (SF-admin-102), a job by the catalogue's name, its owner and
+ *     its tenant opt-out by name (SF-admin-107), every date in the console's format.
+ *
  * Every action calls the server, which decides (tier permission, approvals, dual control, audit);
- * this only shows what it answers. A change asks for its reason inline — never window.prompt —
- * and a discard asks to be confirmed. Every word comes from the catalog (screens.jobs, ADR-051).
+ * this only shows what it answers.
+ *
+ * @module components/admin
  */
 
+import React, { useState } from "react";
 import { isShownText, renderShown, type ShownText } from "@/platform/errors/shown-text";
-import React, { useCallback, useId, useState } from "react";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
-import { apiFetch } from "@/platform/auth/api-fetch";
-import { handleRefusal } from "@/platform/errors/refusal";
+import { AdminTable, type Column } from "@/components/admin/ui/AdminTable";
+import {
+  DetailFacts,
+  DetailLayout,
+  DetailPanel,
+} from "@/components/admin/ui/DetailPanel";
+import { ConfirmStep } from "@/components/admin/ui/ConfirmStep";
+import { Field, TextInput } from "@/components/admin/ui/Field";
+import { IdDetail } from "@/components/admin/ui/Ref";
+import { StoredText } from "@/components/admin/ui/Stored";
+import { adminCall } from "@/components/admin/ui/admin-call";
+import { runOperatorAction, runRouteChange } from "@/components/admin/ui/governed";
+import { outcome, refusedOutcome } from "@/components/admin/ui/Outcome";
+import {
+  effectTypeLabel,
+  jobKindLabel,
+  ownerLabel,
+  settingLabel,
+} from "@/components/admin/ui/labels";
+import { BUTTON, SURFACE, TEXT } from "@/components/admin/ui/tokens";
+import { formatDateTime } from "@/components/admin/admin-format";
+import { ListUnreadable, elementWith, useChange, useOutcomes } from "./views/kit";
+import type { SectionViewProps } from "./section-views";
+import { sectionTitle } from "./ui/sections";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.jobs.${key}`, values);
@@ -54,75 +92,10 @@ export function JobError({ recorded }: { readonly recorded: string }) {
   if (codedJobError(recorded) !== null) return <>{jobErrorText(recorded)}</>;
   return (
     <>
-      {t("errors.uncoded")}{" "}
-      <details className="inline">
-        <summary className="inline cursor-pointer underline">
-          {t("errors.uncoded_show")}
-        </summary>
-        <span className="block font-mono break-all">{recorded}</span>
-      </details>
+      {t("errors.uncoded")} <StoredText text={recorded} show={t("errors.uncoded_show")} />
     </>
   );
 }
-
-const card = "bg-[#111827] rounded-xl border border-gray-800 p-5";
-const th =
-  "text-xs text-gray-400 uppercase tracking-wider py-2 px-3 border-b border-gray-800 text-left";
-const td = "py-2 px-3 text-gray-300 border-b border-gray-800/50 align-top";
-const input =
-  "bg-[#0a0f1e] border border-gray-700 rounded-md px-2 py-1 text-sm text-gray-200 focus:outline-none focus:border-blue-500";
-const button =
-  "px-3 py-1 rounded-md text-sm bg-blue-700 hover:bg-blue-800 text-white disabled:opacity-50";
-const quiet =
-  "px-3 py-1 rounded-md text-sm border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-50";
-
-interface ApiReply {
-  readonly ok: boolean;
-  readonly status: number;
-  readonly body: Record<string, unknown>;
-}
-
-async function call(url: string, init?: RequestInit): Promise<ApiReply> {
-  try {
-    const res = await apiFetch(url, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    });
-    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    return { ok: res.ok, status: res.status, body };
-  } catch {
-    return { ok: false, status: 0, body: {} };
-  }
-}
-
-/**
- * A refusal in words, through the shared handler (platform/errors/refusal.ts): the server's message,
- * else the catalog's for its code, else a generic one — so every code a route answers is shown as
- * that code is everywhere (refusal coverage; TASK-215 brought this screen to it).
- */
-function reasonOf(reply: ApiReply): string {
-  if (reply.status === 0) return t("refused");
-  return handleRefusal(reply.body.code, {
-    message: reply.body.message,
-    params: reply.body.params,
-  }).message;
-}
-
-type Tone = "ok" | "error";
-
-function Status({ text, tone }: { text: string; tone: Tone }) {
-  return (
-    <p
-      role="status"
-      className={`text-sm mt-2 ${tone === "ok" ? "text-green-400" : "text-red-400"}`}
-    >
-      {text}
-    </p>
-  );
-}
-
-const when = (iso: string | null | undefined) =>
-  iso ? iso.replace("T", " ").slice(0, 19) : t("never");
 
 // ── Shapes the server sends ─────────────────────────────────────────────
 
@@ -155,12 +128,16 @@ export interface ScheduleRow {
   tenantOptOutKey: string | null;
   /** Cannot be turned off (TASK-194 round 18): no "Turn off". */
   required?: boolean;
+  /** Running it removes records for good (TASK-221): run now cannot be undone. */
+  deletesData?: boolean;
   state: ScheduleState | null;
 }
 
 export interface JobRow {
   id: string;
   tenantId?: string | null;
+  /** The tenant's name (TASK-221, SF-admin-102); null for the platform or one not listed. */
+  tenantName?: string | null;
   kind: string;
   status: "queued" | "running" | "succeeded" | "dead" | "parked";
   attempts: number;
@@ -174,6 +151,7 @@ export interface JobRow {
 export interface EffectRow {
   id: string;
   tenantId: string;
+  tenantName?: string | null;
   operationId: string;
   effectKey: string;
   effectType: string;
@@ -191,557 +169,798 @@ const OUTCOMES = new Set(["succeeded", "retrying", "dead"]);
 const STATUSES = new Set(["queued", "running", "succeeded", "dead", "parked"]);
 const outcomeLabel = (s: string | null) =>
   s && OUTCOMES.has(s) ? t(`outcome_${s}`) : t("outcome_none");
-const statusLabel = (s: string) => (STATUSES.has(s) ? t(`status_${s}`) : s);
+/** A job's state in words; one the catalog does not know is said to be unknown (never as stored). */
+const statusLabel = (s: string) =>
+  STATUSES.has(s) ? t(`status_${s}`) : t("status_unknown");
 
-/** An action that needs a reason first (a change to governed settings). */
-interface Pending {
-  readonly label: string;
-  readonly submit: (reason: string) => void;
+/** A job's tenant by name: the platform, or a tenant the directory no longer lists. */
+function tenantText(row: {
+  tenantId?: string | null;
+  tenantName?: string | null;
+}): string {
+  if (!row.tenantId) return t("platform");
+  return row.tenantName ?? t("tenant_unlisted");
 }
 
-function ReasonForm({
-  pending,
-  busy,
-  onDone,
-}: {
-  pending: Pending;
-  busy: boolean;
-  onDone: () => void;
-}) {
-  const [reason, setReason] = useState("");
-  const id = useId();
-  const trimmed = reason.trim();
-  return (
-    <form
-      aria-label={pending.label}
-      className="flex flex-wrap gap-2 items-end mt-3 p-3 rounded-md border border-gray-700"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (trimmed.length < 3) return;
-        pending.submit(trimmed);
-        onDone();
-      }}
-    >
-      <p className="w-full text-sm text-white">{pending.label}</p>
-      <label className="text-sm text-gray-400" htmlFor={id}>
-        {t("reason")}
-      </label>
-      <input
-        id={id}
-        className={`${input} w-72`}
-        value={reason}
-        autoFocus
-        onChange={(e) => setReason(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") onDone();
-        }}
-      />
-      <button className={button} type="submit" disabled={busy || trimmed.length < 3}>
-        {t("confirm")}
-      </button>
-      <button className={quiet} type="button" onClick={onDone}>
-        {t("cancel")}
-      </button>
-    </form>
+/** Who runs it, in words: each tenant, each active tenant, or the platform once. */
+function scopeText(row: ScheduleRow): string {
+  return t(
+    row.scope === "platform"
+      ? "scope_platform"
+      : row.runsForSuspended
+        ? "scope_each_tenant_suspended"
+        : "scope_each_tenant"
   );
 }
 
+/** A run now's answer in words: queued for how many, and what ran within its time. */
+function runNowText(kind: string, body: Record<string, unknown>): string {
+  const result = (body.result ?? {}) as Record<string, unknown>;
+  const report = (result.report ?? {}) as Record<string, unknown>;
+  const n = (v: unknown) => (typeof v === "number" ? v : 0);
+  return t("run_now_done", {
+    job: jobKindLabel(kind),
+    enqueued: n(result.enqueued),
+    succeeded: n(report.succeeded),
+    retried: n(report.retried),
+    dead: n(report.dead),
+  });
+}
+
+type Facts = [string, React.ReactNode][];
+
 // ── One recurring job ───────────────────────────────────────────────────
 
-function ScheduleRowView({
+type ScheduleStep = "view" | "toggle" | "interval" | "confirm_interval" | "run";
+
+function ScheduleDetail({
   row,
+  run,
   busy,
-  ask,
-  act,
+  add,
+  onReload,
+  showIds,
+  onClose,
 }: {
-  row: ScheduleRow;
-  busy: boolean;
-  ask: (p: Pending) => void;
-  act: (label: string, url: string, init: RequestInit) => Promise<boolean>;
+  readonly row: ScheduleRow;
+  readonly run: ReturnType<typeof useChange>["run"];
+  readonly busy: boolean;
+  readonly add: ReturnType<typeof useOutcomes>["add"];
+  readonly onReload?: () => void;
+  readonly showIds: boolean;
+  readonly onClose: () => void;
 }) {
+  const [step, setStep] = useState<ScheduleStep>("view");
   const [interval, setIntervalDraft] = useState("");
-  const intervalId = useId();
+  const [problem, setProblem] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
   const base = `/api/operator/jobs/schedules/${encodeURIComponent(row.kind)}`;
-  const named = { kind: row.kind };
-  const n = Number(interval);
-  const intervalValid =
-    interval.trim() !== "" &&
-    Number.isInteger(n) &&
-    n >= row.minIntervalMinutes &&
-    n <= row.maxIntervalMinutes;
-  const toggleLabel = t(row.enabled ? "turn_off_label" : "turn_on_label", named);
-  const intervalLabel = t("interval_label", named);
-  const setLabel = t("set_interval_label", named);
+  const name = jobKindLabel(row.kind);
   const s = row.state;
+  const bounds = { min: row.minIntervalMinutes, max: row.maxIntervalMinutes };
+  const facts: Facts = [
+    ...(showIds
+      ? ([[t("field_kind"), <IdDetail key="k" id={row.kind} show />]] as Facts)
+      : []),
+    [
+      t("field_what"),
+      isShownText(row.description) ? renderShown(row.description) : t("no_description"),
+    ],
+    [t("field_runs_for"), scopeText(row)],
+    [t("field_owner"), ownerLabel(row.owner)],
+    ...(row.tenantOptOutKey
+      ? ([
+          [
+            t("field_opt_out"),
+            t("tenant_opt_out", { setting: settingLabel(row.tenantOptOutKey) }),
+          ],
+        ] as Facts)
+      : []),
+    [
+      t("field_state"),
+      row.required ? t("required") : t(row.enabled ? "enabled" : "disabled"),
+    ],
+    [t("field_interval"), t("every", { minutes: row.intervalMinutes })],
+    [t("field_last_run"), formatDateTime(s?.lastRunAt ?? null)],
+    [t("field_next_run"), formatDateTime(s?.nextRunAt ?? null)],
+    [
+      t("field_outcome"),
+      <span key="o">
+        {outcomeLabel(s?.lastStatus ?? null)}
+        {row.scope === "each-tenant" && s?.failing
+          ? ` (${t("outcome_tenants", { failing: s.failing, reported: s.reported ?? s.failing })})`
+          : ""}
+        {s?.lastError ? (
+          <span className="block">
+            <JobError recorded={s.lastError} />
+          </span>
+        ) : null}
+      </span>,
+    ],
+    [
+      t("field_queue"),
+      t("queue_counts", {
+        queued: s?.queued ?? 0,
+        running: s?.running ?? 0,
+        dead: s?.dead ?? 0,
+      }),
+    ],
+  ];
+  const back = () => setStep("view");
+  const deletes = row.deletesData === true;
+  const wanted = Number(interval.trim());
+
+  let body: React.ReactNode;
+  if (step === "toggle")
+    body = (
+      <ConfirmStep
+        action={row.enabled ? "jobs.turn_off" : "jobs.turn_on"}
+        title={t(row.enabled ? "confirm_turn_off" : "confirm_turn_on", { job: name })}
+        confirmLabel={t(row.enabled ? "turn_off" : "turn_on")}
+        busy={busy}
+        onCancel={back}
+        onConfirm={(given) =>
+          void run(
+            () =>
+              runRouteChange(base, "PATCH", {
+                enabled: !row.enabled,
+                changeComment: given.reason,
+              }),
+            t(row.enabled ? "what_turn_off" : "what_turn_on", { job: name })
+          ).then(back)
+        }
+      />
+    );
+  else if (step === "interval")
+    body = (
+      <form
+        noValidate
+        aria-label={t("interval_label", { job: name })}
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const text = interval.trim();
+          if (text === "" || !Number.isInteger(wanted))
+            return setProblem(t("interval_not_whole", bounds));
+          if (wanted < bounds.min || wanted > bounds.max)
+            return setProblem(t("interval_out_of_bounds", bounds));
+          if (wanted === row.intervalMinutes) return setProblem(t("interval_unchanged"));
+          setProblem(null);
+          setStep("confirm_interval");
+        }}
+      >
+        <Field
+          label={t("interval_field")}
+          help={t("interval_bounds", bounds)}
+          error={problem}
+        >
+          {(control) => (
+            <TextInput
+              {...control}
+              inputMode="numeric"
+              value={interval}
+              className="max-w-xs"
+              onChange={(e) => {
+                setIntervalDraft(e.target.value);
+                setProblem(null);
+              }}
+            />
+          )}
+        </Field>
+        <div className="flex flex-wrap gap-2">
+          <button type="submit" className={BUTTON.primary} disabled={busy}>
+            {t("review")}
+          </button>
+          <button type="button" className={BUTTON.quiet} onClick={back}>
+            {t("cancel")}
+          </button>
+        </div>
+      </form>
+    );
+  else if (step === "confirm_interval")
+    body = (
+      <ConfirmStep
+        action="jobs.set_interval"
+        title={t("confirm_interval", { job: name })}
+        confirmLabel={t("set_interval")}
+        busy={busy}
+        onCancel={() => setStep("interval")}
+        onConfirm={(given) =>
+          void run(
+            () =>
+              runRouteChange(base, "PATCH", {
+                intervalMinutes: wanted,
+                changeComment: given.reason,
+              }),
+            t("what_interval", { job: name, minutes: wanted })
+          ).then(() => {
+            setIntervalDraft("");
+            back();
+          })
+        }
+      >
+        <p>{t("interval_change", { from: row.intervalMinutes, to: wanted })}</p>
+      </ConfirmStep>
+    );
+  else if (step === "run")
+    body = (
+      <ConfirmStep
+        action={deletes ? "jobs.run_now_deletes" : "jobs.run_now"}
+        title={t("confirm_run_now", { job: name })}
+        confirmLabel={t("run_now")}
+        busy={running}
+        onCancel={back}
+        onConfirm={(given) => {
+          setRunning(true);
+          void adminCall(
+            `/api/operator/jobs/schedules/${encodeURIComponent(row.kind)}/run`,
+            {
+              method: "POST",
+              json: given.reason ? { reason: given.reason } : {},
+            }
+          ).then((answer) => {
+            setRunning(false);
+            add(
+              answer.ok
+                ? outcome("applied", runNowText(row.kind, answer.body))
+                : refusedOutcome(answer.refusal, {
+                    action: t("what_run_now", { job: name }),
+                  })
+            );
+            if (answer.ok) onReload?.();
+            back();
+          });
+        }}
+      >
+        <p>{scopeText(row)}</p>
+      </ConfirmStep>
+    );
+  else
+    body = (
+      <div className="flex flex-wrap gap-2">
+        {row.required ? (
+          <p className={`w-full text-xs ${TEXT.faint}`}>{t("required_help")}</p>
+        ) : (
+          <button
+            type="button"
+            className={BUTTON.quiet}
+            disabled={busy}
+            onClick={() => setStep("toggle")}
+          >
+            {t(row.enabled ? "turn_off" : "turn_on")}
+          </button>
+        )}
+        <button
+          type="button"
+          className={BUTTON.quiet}
+          disabled={busy}
+          onClick={() => setStep("interval")}
+        >
+          {t("change_interval")}
+        </button>
+        <button
+          type="button"
+          className={deletes ? BUTTON.danger : BUTTON.primary}
+          disabled={busy}
+          onClick={() => setStep("run")}
+        >
+          {t("run_now")}
+        </button>
+      </div>
+    );
 
   return (
-    <tr>
-      <td className={td}>
-        <span className="font-mono text-blue-300">{row.kind}</span>
-        {isShownText(row.description) ? (
-          <p className="text-xs text-gray-400 mt-1">{renderShown(row.description)}</p>
-        ) : null}
-        <p className="text-xs text-gray-400 mt-1">
-          {t(
-            row.scope === "platform"
-              ? "scope_platform"
-              : row.runsForSuspended
-                ? "scope_each_tenant_suspended"
-                : "scope_each_tenant"
-          )}{" "}
-          · {t("owner", { owner: row.owner })}
-          {row.tenantOptOutKey && (
-            <>
-              {" · "}
-              {t("tenant_opt_out", { key: row.tenantOptOutKey })}
-            </>
-          )}
-        </p>
-      </td>
-      <td className={td}>
-        <p className={row.enabled ? "text-green-400" : "text-amber-400"}>
-          {t(row.enabled ? "enabled" : "disabled")}
-        </p>
-        <p className="text-xs text-gray-400">
-          {t("every", { minutes: row.intervalMinutes })}
-        </p>
-        <div className="flex gap-2 items-center mt-2">
-          <label className="sr-only" htmlFor={intervalId}>
-            {intervalLabel}
-          </label>
-          <input
-            id={intervalId}
-            className={`${input} w-24`}
-            inputMode="numeric"
-            value={interval}
-            placeholder={String(row.intervalMinutes)}
-            onChange={(e) => setIntervalDraft(e.target.value)}
+    <DetailPanel
+      title={name}
+      onClose={onClose}
+      returnFocus={() => elementWith("data-job-open", row.kind)}
+    >
+      <div className="space-y-4">
+        <DetailFacts facts={facts} />
+        {body}
+      </div>
+    </DetailPanel>
+  );
+}
+
+// ── A dead job, and an unresolved call ──────────────────────────────────
+
+function DeadDetail({
+  job,
+  run,
+  busy,
+  showIds,
+  onClose,
+}: {
+  readonly job: JobRow;
+  readonly run: ReturnType<typeof useChange>["run"];
+  readonly busy: boolean;
+  readonly showIds: boolean;
+  readonly onClose: () => void;
+}) {
+  const [asking, setAsking] = useState<"replay" | "discard" | null>(null);
+  const name = jobKindLabel(job.kind);
+  const url = `/api/operator/jobs/dead/${encodeURIComponent(job.id)}`;
+  const facts: Facts = [
+    ...(showIds
+      ? ([[t("field_reference"), <IdDetail key="i" id={job.id} show />]] as Facts)
+      : []),
+    [t("field_tenant"), tenantText(job)],
+    [
+      t("field_attempts"),
+      t("attempts", { attempts: job.attempts, max: job.maxAttempts }),
+    ],
+    [t("field_failed_at"), formatDateTime(job.updatedAt)],
+    [
+      t("field_error"),
+      job.lastError ? <JobError key="e" recorded={job.lastError} /> : t("no_error"),
+    ],
+  ];
+  return (
+    <DetailPanel
+      title={name}
+      onClose={onClose}
+      returnFocus={() => elementWith("data-dead-open", job.id)}
+    >
+      <div className="space-y-4">
+        <DetailFacts facts={facts} />
+        {asking ? (
+          <ConfirmStep
+            action={asking === "replay" ? "jobs.replay" : "jobs.discard"}
+            title={t(asking === "replay" ? "confirm_replay" : "confirm_discard", {
+              job: name,
+              tenant: tenantText(job),
+            })}
+            confirmLabel={t(asking)}
+            busy={busy}
+            onCancel={() => setAsking(null)}
+            onConfirm={(given) =>
+              void run(
+                () =>
+                  runOperatorAction(url, "POST", {
+                    action: asking,
+                    reason: given.reason,
+                  }),
+                t(asking === "replay" ? "what_replay" : "what_discard", { job: name }),
+                { who: tenantText(job) }
+              ).then(() => setAsking(null))
+            }
           />
-          <button
-            className={quiet}
-            aria-label={setLabel}
-            disabled={busy || !intervalValid}
-            onClick={() =>
-              ask({
-                label: setLabel,
-                submit: (reason) =>
-                  void act(setLabel, base, {
-                    method: "PATCH",
-                    body: JSON.stringify({ intervalMinutes: n, changeComment: reason }),
-                  }).then((done) => done && setIntervalDraft("")),
-              })
-            }
-          >
-            {t("set_interval")}
-          </button>
-        </div>
-        <p className="text-xs text-gray-400 mt-1">
-          {t("interval_bounds", {
-            min: row.minIntervalMinutes,
-            max: row.maxIntervalMinutes,
-          })}
-        </p>
-      </td>
-      <td className={td}>
-        <p>{t("last_run", { at: when(s?.lastRunAt), count: s?.lastEnqueued ?? 0 })}</p>
-        <p className="text-xs text-gray-400">
-          {t("next_run", { at: when(s?.nextRunAt) })}
-        </p>
-        <div
-          className={`text-xs ${s?.lastStatus === "dead" ? "text-red-400" : "text-gray-400"}`}
-        >
-          {outcomeLabel(s?.lastStatus ?? null)}
-          {row.scope === "each-tenant" && s?.failing
-            ? ` (${t("outcome_tenants", { failing: s.failing, reported: s.reported ?? s.failing })})`
-            : ""}
-          {s?.lastError ? (
-            <>
-              {" — "}
-              <JobError recorded={s.lastError} />
-            </>
-          ) : null}
-        </div>
-      </td>
-      <td className={td}>
-        {t("queue_counts", {
-          queued: s?.queued ?? 0,
-          running: s?.running ?? 0,
-          dead: s?.dead ?? 0,
-        })}
-      </td>
-      <td className={td}>
-        <div className="flex flex-wrap gap-1">
-          {/* A required schedule is always on: no toggle (TASK-194 round 18). */}
-          {row.required ? (
-            <span className="text-xs text-gray-400 self-center">{t("required")}</span>
-          ) : (
+        ) : (
+          <div className="flex flex-wrap gap-2">
             <button
-              className={quiet}
-              aria-label={toggleLabel}
+              type="button"
+              className={BUTTON.primary}
               disabled={busy}
-              onClick={() =>
-                ask({
-                  label: toggleLabel,
-                  submit: (reason) =>
-                    void act(toggleLabel, base, {
-                      method: "PATCH",
-                      body: JSON.stringify({
-                        enabled: !row.enabled,
-                        changeComment: reason,
-                      }),
-                    }),
-                })
-              }
+              onClick={() => setAsking("replay")}
             >
-              {t(row.enabled ? "turn_off" : "turn_on")}
+              {t("replay")}
             </button>
-          )}
-          <button
-            className={quiet}
-            aria-label={t("run_now_label", named)}
-            disabled={busy}
-            onClick={() =>
-              void act(t("run_now_label", named), `${base}/run`, { method: "POST" })
+            <button
+              type="button"
+              className={BUTTON.quiet}
+              disabled={busy}
+              onClick={() => setAsking("discard")}
+            >
+              {t("discard")}
+            </button>
+          </div>
+        )}
+      </div>
+    </DetailPanel>
+  );
+}
+
+function EffectDetail({
+  effect,
+  run,
+  busy,
+  showIds,
+  onClose,
+}: {
+  readonly effect: EffectRow;
+  readonly run: ReturnType<typeof useChange>["run"];
+  readonly busy: boolean;
+  readonly showIds: boolean;
+  readonly onClose: () => void;
+}) {
+  const [asking, setAsking] = useState<"took_effect" | "no_effect" | null>(null);
+  const name = effectTypeLabel(effect.effectType);
+  const facts: Facts = [
+    ...(showIds
+      ? ([
+          [t("field_call_key"), <IdDetail key="k" id={effect.effectKey} show />],
+          [t("field_reference"), <IdDetail key="i" id={effect.id} show />],
+        ] as Facts)
+      : []),
+    [t("field_tenant"), tenantText(effect)],
+    [t("field_attempts"), String(effect.attempts)],
+    [t("field_since"), formatDateTime(effect.createdAt)],
+  ];
+  return (
+    <DetailPanel
+      title={name}
+      onClose={onClose}
+      returnFocus={() => elementWith("data-effect-open", effect.id)}
+    >
+      <div className="space-y-4">
+        <DetailFacts facts={facts} />
+        <p className={`text-sm ${TEXT.quiet}`}>{t("effect_help")}</p>
+        {asking ? (
+          <ConfirmStep
+            action={
+              asking === "took_effect"
+                ? "jobs.effect_took_effect"
+                : "jobs.effect_no_effect"
             }
-          >
-            {t("run_now")}
-          </button>
-        </div>
-      </td>
-    </tr>
+            title={t(`confirm_${asking}`, { call: name, tenant: tenantText(effect) })}
+            confirmLabel={t(asking)}
+            busy={busy}
+            onCancel={() => setAsking(null)}
+            onConfirm={() =>
+              void run(
+                () =>
+                  runOperatorAction(
+                    `/api/operator/jobs/effects/${encodeURIComponent(effect.id)}`,
+                    "POST",
+                    { outcome: asking }
+                  ),
+                t(`what_${asking}`, { call: name }),
+                { who: tenantText(effect) }
+              ).then(() => setAsking(null))
+            }
+          />
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {(["took_effect", "no_effect"] as const).map((o) => (
+              <button
+                key={o}
+                type="button"
+                className={BUTTON.quiet}
+                disabled={busy}
+                onClick={() => setAsking(o)}
+              >
+                {t(o)}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </DetailPanel>
+  );
+}
+
+/** One section of the console: its heading, its outcomes, its list and the open row's panel. */
+function JobsSection({
+  id,
+  title,
+  intro,
+  list,
+  children,
+  detail,
+}: {
+  readonly id: string;
+  readonly title: string;
+  readonly intro: string;
+  readonly list: React.ReactNode;
+  readonly children: React.ReactNode;
+  readonly detail: React.ReactNode | null;
+}) {
+  return (
+    <section className={`${SURFACE.panel} min-w-0 space-y-3 p-4`} aria-labelledby={id}>
+      <h3 id={id} className={`text-base font-semibold ${TEXT.strong}`}>
+        {title}
+      </h3>
+      <p className={`text-sm ${TEXT.faint}`}>{intro}</p>
+      {list}
+      <DetailLayout detail={detail}>{children}</DetailLayout>
+    </section>
   );
 }
 
 // ── The console ─────────────────────────────────────────────────────────
 
-export function OperatorJobsView({ data: initial }: { data: JobsData | undefined }) {
-  const [data, setData] = useState<JobsData | undefined>(initial);
-  const [seen, setSeen] = useState(initial);
-  if (initial !== seen) {
-    setSeen(initial);
-    setData(initial);
-  }
-  const [busy, setBusy] = useState(false);
-  const [pending, setPending] = useState<Pending | null>(null);
-  const [confirmDiscard, setConfirmDiscard] = useState<JobRow | null>(null);
-  const [confirmEffect, setConfirmEffect] = useState<{
-    effect: EffectRow;
-    outcome: "took_effect" | "no_effect";
-  } | null>(null);
-  const [status, setStatus] = useState<{ text: string; tone: Tone } | null>(null);
+export function OperatorJobsView({ data, onReload, showIds = false }: SectionViewProps) {
+  const schedulesOut = useOutcomes(t("schedules_results"));
+  const deadOut = useOutcomes(t("dead_results"));
+  const effectsOut = useOutcomes(t("effects_results"));
+  const schedulesChange = useChange(schedulesOut.add, onReload);
+  const deadChange = useChange(deadOut.add, onReload);
+  const effectsChange = useChange(effectsOut.add, onReload);
+  const [openKind, setOpenKind] = useState<string | null>(null);
+  const [openDead, setOpenDead] = useState<string | null>(null);
+  const [openEffect, setOpenEffect] = useState<string | null>(null);
 
-  const reload = useCallback(async () => {
-    const r = await call("/api/operator/jobs");
-    if (r.ok) setData(r.body as JobsData);
-  }, []);
+  const jobs = (data ?? {}) as JobsData;
+  // A body without its lists is not an empty list (review 14 L-1): said as a failed read.
+  if (
+    !Array.isArray(jobs.schedules) ||
+    !Array.isArray(jobs.deadLetters) ||
+    !Array.isArray(jobs.unresolvedEffects)
+  )
+    return <ListUnreadable panel={sectionTitle("jobs")} onRetry={onReload} />;
+  const schedules = [...jobs.schedules].sort((a, b) =>
+    jobKindLabel(a.kind).localeCompare(jobKindLabel(b.kind))
+  );
+  const dead = jobs.deadLetters;
+  const effects = jobs.unresolvedEffects;
+  const schedule = schedules.find((r) => r.kind === openKind) ?? null;
+  const deadJob = dead.find((j) => j.id === openDead) ?? null;
+  const effect = effects.find((e) => e.id === openEffect) ?? null;
 
-  /** Run one action; report its answer; reload. */
-  const act = async (label: string, url: string, init: RequestInit) => {
-    setBusy(true);
-    setStatus(null);
-    try {
-      const r = await call(url, init);
-      setStatus(
-        r.ok
-          ? {
-              text: t(r.status === 202 || r.body.pending ? "held" : "done", { label }),
-              tone: "ok",
-            }
-          : { text: t("failed", { label, reason: reasonOf(r) }), tone: "error" }
-      );
-      if (r.ok) await reload();
-      return r.ok;
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!data?.schedules) return <p className="text-gray-400">{t("loading")}</p>;
-  const dead = data.deadLetters ?? [];
-  const effects = data.unresolvedEffects ?? [];
+  const scheduleColumns: Column<ScheduleRow>[] = [
+    {
+      id: "job",
+      header: t("col_job"),
+      cell: (row) => (
+        <span className="min-w-0 break-words">
+          <button
+            type="button"
+            data-job-open={row.kind}
+            aria-label={t("open_job", { job: jobKindLabel(row.kind) })}
+            className={BUTTON.link}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpenKind(row.kind);
+            }}
+          >
+            {jobKindLabel(row.kind)}
+          </button>
+          <span className={`mt-1 block text-xs ${TEXT.faint}`}>{scopeText(row)}</span>
+        </span>
+      ),
+    },
+    {
+      id: "state",
+      header: t("col_schedule"),
+      value: (row) =>
+        t("state_line", {
+          state: row.required ? t("required") : t(row.enabled ? "enabled" : "disabled"),
+          minutes: row.intervalMinutes,
+        }),
+    },
+    {
+      id: "last",
+      header: t("col_last"),
+      cell: (row) => (
+        <span>
+          {formatDateTime(row.state?.lastRunAt ?? null)}
+          <span className={`block text-xs ${TEXT.faint}`}>
+            {outcomeLabel(row.state?.lastStatus ?? null)}
+          </span>
+        </span>
+      ),
+    },
+    {
+      id: "queue",
+      header: t("col_queue"),
+      secondary: true,
+      value: (row) =>
+        t("queue_counts", {
+          queued: row.state?.queued ?? 0,
+          running: row.state?.running ?? 0,
+          dead: row.state?.dead ?? 0,
+        }),
+    },
+  ];
+  const deadColumns: Column<JobRow>[] = [
+    {
+      id: "job",
+      header: t("col_job"),
+      cell: (job) => (
+        <button
+          type="button"
+          data-dead-open={job.id}
+          aria-label={t("open_dead", {
+            job: jobKindLabel(job.kind),
+            tenant: tenantText(job),
+          })}
+          className={BUTTON.link}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpenDead(job.id);
+          }}
+        >
+          {jobKindLabel(job.kind)}
+        </button>
+      ),
+    },
+    { id: "tenant", header: t("col_tenant"), value: (job) => tenantText(job) },
+    {
+      id: "failed",
+      header: t("col_failed_at"),
+      kind: "datetime",
+      value: (job) => job.updatedAt,
+    },
+    {
+      id: "error",
+      header: t("col_error"),
+      secondary: true,
+      cell: (job) =>
+        job.lastError ? <JobError recorded={job.lastError} /> : t("no_error"),
+    },
+  ];
+  const effectColumns: Column<EffectRow>[] = [
+    {
+      id: "call",
+      header: t("col_call"),
+      cell: (e) => (
+        <button
+          type="button"
+          data-effect-open={e.id}
+          aria-label={t("open_effect", {
+            call: effectTypeLabel(e.effectType),
+            tenant: tenantText(e),
+          })}
+          className={BUTTON.link}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            setOpenEffect(e.id);
+          }}
+        >
+          {effectTypeLabel(e.effectType)}
+        </button>
+      ),
+    },
+    { id: "tenant", header: t("col_tenant"), value: (e) => tenantText(e) },
+    { id: "since", header: t("col_since"), kind: "datetime", value: (e) => e.createdAt },
+  ];
 
   return (
-    <div className="space-y-6">
-      <section className={card} aria-labelledby="schedules-heading">
-        <h3 id="schedules-heading" className="text-base font-semibold text-white">
-          {t("schedules_heading")}
-        </h3>
-        <p className="text-sm text-gray-400 mt-1">{t("schedules_intro")}</p>
-        {pending && (
-          <ReasonForm
-            key={pending.label}
-            pending={pending}
-            busy={busy}
-            onDone={() => setPending(null)}
-          />
-        )}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm mt-3 min-w-[36rem]">
-            <thead>
-              <tr>
-                <th className={th}>{t("col_job")}</th>
-                <th className={th}>{t("col_schedule")}</th>
-                <th className={th}>{t("col_last")}</th>
-                <th className={th}>{t("col_queue")}</th>
-                <th className={th}>{t("col_actions")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.schedules.map((row) => (
-                <ScheduleRowView
-                  key={row.kind}
-                  row={row}
-                  busy={busy}
-                  ask={setPending}
-                  act={act}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {status && <Status {...status} />}
-      </section>
+    <div className="min-w-0 space-y-6">
+      <JobsSection
+        id="schedules-heading"
+        title={t("schedules_heading")}
+        intro={t("schedules_intro")}
+        list={schedulesOut.list}
+        detail={
+          schedule ? (
+            <ScheduleDetail
+              key={schedule.kind}
+              row={schedule}
+              run={schedulesChange.run}
+              busy={schedulesChange.busy}
+              add={schedulesOut.add}
+              onReload={onReload}
+              showIds={showIds}
+              onClose={() => setOpenKind(null)}
+            />
+          ) : null
+        }
+      >
+        <AdminTable
+          caption={t("schedules_caption")}
+          columns={scheduleColumns}
+          rows={schedules}
+          rowKey={(row) => row.kind}
+          compact={schedule !== null}
+          selectedKey={openKind}
+          onRowClick={(row) => setOpenKind(row.kind)}
+          empty={t("schedules_none")}
+        />
+      </JobsSection>
 
-      <section className={card} aria-labelledby="dead-heading">
-        <h3 id="dead-heading" className="text-base font-semibold text-white">
-          {t("dead_heading")}
-        </h3>
-        <p className="text-sm text-gray-400 mt-1">{t("dead_intro")}</p>
-        {confirmDiscard && (
-          <div
-            role="group"
-            aria-label={t("discard_label", { kind: confirmDiscard.kind })}
-            className="flex flex-wrap gap-2 items-center mt-3 p-3 rounded-md border border-gray-700"
-          >
-            <p className="w-full text-sm text-white">
-              {t("discard_confirm", { kind: confirmDiscard.kind })}
-            </p>
-            <button
-              className={button}
-              disabled={busy}
-              onClick={() => {
-                const job = confirmDiscard;
-                setConfirmDiscard(null);
-                void act(
-                  t("discard_label", { kind: job.kind }),
-                  `/api/operator/jobs/dead/${encodeURIComponent(job.id)}`,
-                  { method: "POST", body: JSON.stringify({ action: "discard" }) }
-                );
-              }}
-            >
-              {t("discard")}
-            </button>
-            <button className={quiet} onClick={() => setConfirmDiscard(null)}>
-              {t("cancel")}
-            </button>
-          </div>
-        )}
-        {dead.length === 0 ? (
-          <p className="text-sm text-gray-400 mt-3">{t("dead_none")}</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm mt-3 min-w-[36rem]">
-              <thead>
-                <tr>
-                  <th className={th}>{t("col_job")}</th>
-                  <th className={th}>{t("col_tenant")}</th>
-                  <th className={th}>{t("col_attempts")}</th>
-                  <th className={th}>{t("col_error")}</th>
-                  <th className={th}>{t("col_actions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dead.map((job) => (
-                  <tr key={job.id}>
-                    <td className={td}>
-                      <span className="font-mono text-blue-300">{job.kind}</span>
-                      <p className="text-xs text-gray-400">{when(job.updatedAt)}</p>
-                    </td>
-                    <td className={`${td} font-mono text-xs`}>
-                      {job.tenantId ?? t("platform")}
-                    </td>
-                    <td className={td}>
-                      {t("attempts", { attempts: job.attempts, max: job.maxAttempts })}
-                    </td>
-                    <td className={`${td} text-red-300`}>
-                      {job.lastError ? (
-                        <JobError recorded={job.lastError} />
-                      ) : (
-                        t("no_error")
-                      )}
-                    </td>
-                    <td className={td}>
-                      <div className="flex flex-wrap gap-1">
-                        <button
-                          className={quiet}
-                          aria-label={t("replay_label", { kind: job.kind })}
-                          disabled={busy}
-                          onClick={() =>
-                            void act(
-                              t("replay_label", { kind: job.kind }),
-                              `/api/operator/jobs/dead/${encodeURIComponent(job.id)}`,
-                              {
-                                method: "POST",
-                                body: JSON.stringify({ action: "replay" }),
-                              }
-                            )
-                          }
-                        >
-                          {t("replay")}
-                        </button>
-                        <button
-                          className={quiet}
-                          aria-label={t("discard_label", { kind: job.kind })}
-                          disabled={busy}
-                          onClick={() => setConfirmDiscard(job)}
-                        >
-                          {t("discard")}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      <JobsSection
+        id="dead-heading"
+        title={t("dead_heading")}
+        intro={t("dead_intro")}
+        list={deadOut.list}
+        detail={
+          deadJob ? (
+            <DeadDetail
+              key={deadJob.id}
+              job={deadJob}
+              run={deadChange.run}
+              busy={deadChange.busy}
+              showIds={showIds}
+              onClose={() => setOpenDead(null)}
+            />
+          ) : null
+        }
+      >
+        <AdminTable
+          caption={t("dead_caption")}
+          columns={deadColumns}
+          rows={dead}
+          rowKey={(job) => job.id}
+          compact={deadJob !== null}
+          selectedKey={openDead}
+          onRowClick={(job) => setOpenDead(job.id)}
+          empty={t("dead_none")}
+        />
+      </JobsSection>
 
-      <section className={card} aria-labelledby="effects-heading">
-        <h3 id="effects-heading" className="text-base font-semibold text-white">
-          {t("effects_heading")}
-        </h3>
-        <p className="text-sm text-gray-400 mt-1">{t("effects_intro")}</p>
-        {confirmEffect && (
-          <div
-            role="group"
-            aria-label={t(`${confirmEffect.outcome}_label`, {
-              key: confirmEffect.effect.effectKey,
-            })}
-            className="flex flex-wrap gap-2 items-center mt-3 p-3 rounded-md border border-gray-700"
-          >
-            <p className="w-full text-sm text-white">
-              {t("effect_confirm", {
-                key: confirmEffect.effect.effectKey,
-                outcome: t(confirmEffect.outcome),
-              })}
-            </p>
-            <button
-              className={button}
-              disabled={busy}
-              onClick={() => {
-                const { effect, outcome } = confirmEffect;
-                setConfirmEffect(null);
-                void act(
-                  t(`${outcome}_label`, { key: effect.effectKey }),
-                  `/api/operator/jobs/effects/${encodeURIComponent(effect.id)}`,
-                  { method: "POST", body: JSON.stringify({ outcome }) }
-                );
-              }}
-            >
-              {t(confirmEffect.outcome)}
-            </button>
-            <button className={quiet} onClick={() => setConfirmEffect(null)}>
-              {t("cancel")}
-            </button>
-          </div>
-        )}
-        {effects.length === 0 ? (
-          <p className="text-sm text-gray-400 mt-3">{t("effects_none")}</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm mt-3 min-w-[36rem]">
-              <thead>
-                <tr>
-                  <th className={th}>{t("col_call")}</th>
-                  <th className={th}>{t("col_tenant")}</th>
-                  <th className={th}>{t("col_attempts")}</th>
-                  <th className={th}>{t("col_since")}</th>
-                  <th className={th}>{t("col_actions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {effects.map((effect) => (
-                  <tr key={effect.id}>
-                    <td className={td}>
-                      <span className="font-mono text-blue-300">{effect.effectKey}</span>
-                      <p className="text-xs text-gray-400">{effect.effectType}</p>
-                    </td>
-                    <td className={`${td} font-mono text-xs`}>{effect.tenantId}</td>
-                    <td className={td}>{effect.attempts}</td>
-                    <td className={td}>{when(effect.createdAt)}</td>
-                    <td className={td}>
-                      <div className="flex flex-wrap gap-1">
-                        {(["took_effect", "no_effect"] as const).map((outcome) => (
-                          <button
-                            key={outcome}
-                            className={quiet}
-                            aria-label={t(`${outcome}_label`, { key: effect.effectKey })}
-                            disabled={busy}
-                            onClick={() => setConfirmEffect({ effect, outcome })}
-                          >
-                            {t(outcome)}
-                          </button>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      <JobsSection
+        id="effects-heading"
+        title={t("effects_heading")}
+        intro={t("effects_intro")}
+        list={effectsOut.list}
+        detail={
+          effect ? (
+            <EffectDetail
+              key={effect.id}
+              effect={effect}
+              run={effectsChange.run}
+              busy={effectsChange.busy}
+              showIds={showIds}
+              onClose={() => setOpenEffect(null)}
+            />
+          ) : null
+        }
+      >
+        <AdminTable
+          caption={t("effects_caption")}
+          columns={effectColumns}
+          rows={effects}
+          rowKey={(e) => e.id}
+          compact={effect !== null}
+          selectedKey={openEffect}
+          onRowClick={(e) => setOpenEffect(e.id)}
+          empty={t("effects_none")}
+        />
+      </JobsSection>
     </div>
   );
 }
 
 // ── A tenant's own history (read-only) ──────────────────────────────────
 
-export function TenantJobsList({ jobs }: { jobs: JobRow[] | null | undefined }) {
+/**
+ * A tenant's recent jobs, for its administrators: `undefined` — not part of this read (nothing is
+ * shown); `null` — the route could not read them (said so, never "no jobs").
+ */
+export function TenantJobsList({ jobs }: { readonly jobs: JobRow[] | null | undefined }) {
   if (jobs === undefined) return null;
+  const columns: Column<JobRow>[] = [
+    {
+      id: "job",
+      header: t("col_job"),
+      cell: (job) => (
+        <span className="min-w-0 break-words">
+          {jobKindLabel(job.kind)}
+          {job.lastError ? (
+            <span className="mt-1 block text-xs text-red-300">
+              <JobError recorded={job.lastError} />
+            </span>
+          ) : null}
+        </span>
+      ),
+    },
+    { id: "status", header: t("col_status"), value: (job) => statusLabel(job.status) },
+    {
+      id: "attempts",
+      header: t("col_attempts"),
+      secondary: true,
+      value: (job) => t("attempts", { attempts: job.attempts, max: job.maxAttempts }),
+    },
+    {
+      id: "updated",
+      header: t("col_updated"),
+      kind: "datetime",
+      value: (job) => job.updatedAt,
+    },
+  ];
   return (
-    <section className={card} aria-labelledby="tenant-jobs-heading">
-      <h3 id="tenant-jobs-heading" className="text-base font-semibold text-white">
+    <section
+      className={`${SURFACE.panel} min-w-0 space-y-3 p-4`}
+      aria-labelledby="tenant-jobs-heading"
+    >
+      <h3 id="tenant-jobs-heading" className={`text-base font-semibold ${TEXT.strong}`}>
         {t("tenant_heading")}
       </h3>
-      <p className="text-sm text-gray-400 mt-1">{t("tenant_intro")}</p>
+      <p className={`text-sm ${TEXT.faint}`}>{t("tenant_intro")}</p>
       {jobs === null ? (
-        <p className="text-sm text-gray-400 mt-3">{t("tenant_unavailable")}</p>
-      ) : jobs.length === 0 ? (
-        <p className="text-sm text-gray-400 mt-3">{t("tenant_none")}</p>
+        <p data-read-failed="true" className={`text-sm ${TEXT.quiet}`}>
+          {t("tenant_unavailable")}
+        </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm mt-3 min-w-[36rem]">
-            <thead>
-              <tr>
-                <th className={th}>{t("col_job")}</th>
-                <th className={th}>{t("col_status")}</th>
-                <th className={th}>{t("col_attempts")}</th>
-                <th className={th}>{t("col_updated")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map((job) => (
-                <tr key={job.id}>
-                  <td className={td}>
-                    <span className="font-mono text-blue-300">{job.kind}</span>
-                    {job.lastError && (
-                      <div className="text-xs text-red-300 mt-1">
-                        <JobError recorded={job.lastError} />
-                      </div>
-                    )}
-                  </td>
-                  <td className={td}>{statusLabel(job.status)}</td>
-                  <td className={td}>
-                    {t("attempts", { attempts: job.attempts, max: job.maxAttempts })}
-                  </td>
-                  <td className={td}>{when(job.updatedAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <AdminTable
+          caption={t("tenant_caption")}
+          columns={columns}
+          rows={jobs}
+          rowKey={(job) => job.id}
+          empty={t("tenant_none")}
+        />
       )}
     </section>
   );

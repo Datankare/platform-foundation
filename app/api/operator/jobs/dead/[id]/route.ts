@@ -26,8 +26,13 @@ const ACTION_BODY_SCHEMA: InputSchemaNode = {
   type: "object",
   properties: {
     action: { type: "string" },
+    // Why, as the operator wrote it (TASK-221): recorded with the replay or the discard.
+    reason: { type: "string" },
   },
 };
+
+/** The most characters a reason keeps (the console's own limit, REASON_MAX). */
+const REASON_MAX = 500;
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -57,7 +62,20 @@ export const POST = tenantRoute(async function POST(
   const { id } = await params;
   const read = await readJsonBody(request, ACTION_BODY_SCHEMA);
   if (!read.ok) return read.response;
-  const { action } = read.body as Record<string, unknown>;
+  const { action, reason: given } = read.body as Record<string, unknown>;
+  if (given !== undefined && (typeof given !== "string" || given.length > REASON_MAX)) {
+    return apiError("request.invalid_value", {
+      params: {
+        field: "reason",
+        allowed: ["text_max"],
+        expected: "text_max",
+        max: REASON_MAX,
+      },
+      request,
+    });
+  }
+  const reason =
+    typeof given === "string" && given.trim() !== "" ? given.trim() : undefined;
   if (action !== "replay" && action !== "discard") {
     return apiError("request.invalid_value", {
       params: { field: "action", allowed: ["replay", "discard"] },
@@ -67,8 +85,8 @@ export const POST = tenantRoute(async function POST(
   try {
     const result =
       action === "replay"
-        ? await replayDeadJob(guard.admin, id)
-        : await discardDeadJob(guard.admin, id);
+        ? await replayDeadJob(guard.admin, id, reason)
+        : await discardDeadJob(guard.admin, id, reason);
     return jobsResponse(result, request);
   } catch (error) {
     return internalError(error, { request, context: "Dead-letter action failed" });

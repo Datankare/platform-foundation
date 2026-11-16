@@ -696,9 +696,9 @@ describe("labels: a name for every code, never the code", () => {
     expect(toolLabel("change_user_role")).toBe("Change an account's role");
     expect(columnLabel("last_sign_in_at")).toBe("Last sign-in");
     expect(roleLabel("super_admin", "Super Admin")).toBe("Super admin");
-    expect(jobKindLabel("data.retention")).toBe(
-      renderMessage("screens.jobs.kinds.data_retention")
-    );
+    // A job's short name (TASK-221) — its description is screens.jobs.kinds.
+    expect(jobKindLabel("data.retention")).toBe("Data retention");
+    expect(jobKindLabel("gdpr.retention-purge")).toBe("Erasure purge");
   });
 
   it.each([

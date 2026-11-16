@@ -169,3 +169,31 @@ export async function runRouteChange(
   if (answer.body.success === true) return { standing: "applied", body: answer.body };
   return { standing: "refused", refusal: refusalOf(answer.body), lost: false };
 }
+
+/**
+ * A change sent to an operator route that answers its result as `{ result }` (the tenants, jobs and
+ * erasure routes, TASK-221): any 2xx is done — or held, when the route says so (202, `held` or
+ * `pending`), or when the caller knows the action only asks (`asks`: a request another operator
+ * decides, such as an attestation or a deletion) — and anything else refused, with the catalogue's
+ * sentence for its code.
+ */
+export async function runOperatorAction(
+  url: string,
+  method: "POST" | "PATCH" | "PUT" | "DELETE",
+  json?: unknown,
+  options: { readonly asks?: boolean } = {}
+): Promise<GovernedAnswer> {
+  const answer = await adminCall(url, { method, json });
+  if (!answer.ok)
+    return {
+      standing: "refused",
+      refusal: answer.refusal,
+      lost: answer.refusal.code === LOST,
+    };
+  const held =
+    options.asks === true ||
+    answer.status === 202 ||
+    answer.body.held === true ||
+    answer.body.pending === true;
+  return { standing: held ? "held" : "applied", body: answer.body };
+}

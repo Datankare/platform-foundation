@@ -80,6 +80,9 @@ function checkSchedule(kind: string, schedule: JobSchedule): JobSchedule {
   if (schedule.required !== undefined && typeof schedule.required !== "boolean") {
     throw new JobDefinitionError(kind, "required is true or false");
   }
+  if (schedule.deletesData !== undefined && typeof schedule.deletesData !== "boolean") {
+    throw new JobDefinitionError(kind, "deletesData is true or false");
+  }
   if (schedule.tenantOptOutKey !== undefined) {
     // A tenant's opt-out would turn it off for that tenant (TASK-194 round 19).
     if (schedule.required) {

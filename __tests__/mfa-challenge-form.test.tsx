@@ -18,7 +18,7 @@ beforeEach(() => {
 describe("MfaChallengeForm", () => {
   it("renders code input and verify button", () => {
     render(<MfaChallengeForm {...mockProps} />);
-    expect(screen.getByText("Two-Factor Authentication")).toBeDefined();
+    expect(screen.getByText("Two-step verification")).toBeDefined();
     expect(screen.getByText("Verify")).toBeDefined();
   });
 

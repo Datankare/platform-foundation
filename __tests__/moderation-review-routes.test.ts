@@ -33,8 +33,12 @@ jest.mock("@/platform/rate-limit", () =>
 // The real audit module writes through a fake platform/data (helpers/fake-data.ts): a submission
 // is recorded before it is filed (TASK-194, audit C-9).
 jest.mock("@/platform/data", () => require("./helpers/fake-data").fakeDataModule());
+jest.mock("@/platform/moderation/config", () => ({
+  ...jest.requireActual("@/platform/moderation/config"),
+  loadEscalationSlaHours: jest.fn(async () => 24),
+}));
 jest.mock("@/platform/moderation/review-service", () => ({
-  getQueue: jest.fn(),
+  getQueuePage: jest.fn(),
   getQueueStats: jest.fn(),
   submitForReview: jest.fn(),
   claimItem: jest.fn(),
@@ -45,7 +49,7 @@ jest.mock("@/platform/moderation/review-service", () => ({
 import { NextRequest } from "next/server";
 import { authAs, CALLERS, type CallerName } from "@/__tests__/helpers/test-identities";
 import {
-  getQueue,
+  getQueuePage,
   getQueueStats,
   submitForReview,
   claimItem,
@@ -108,19 +112,32 @@ beforeEach(() => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("GET /api/moderation/review", () => {
+  const page = (items: unknown[], hasMore = false) =>
+    (getQueuePage as jest.Mock).mockResolvedValue({ items, hasMore });
+
   it("lists queue items and gates on can_moderate", async () => {
-    (getQueue as jest.Mock).mockResolvedValue([{ id: "review-1" }]);
+    page([
+      {
+        id: "review-1",
+        source: "appeal",
+        status: "pending",
+        createdAt: "2026-11-01T00:00:00Z",
+      },
+    ]);
 
     const res = await GET(getRequest({ status: "pending" }));
     const data = await res.json();
 
     expect(res.status).toBe(200);
     expect(data.items).toHaveLength(1);
-    expect(getQueue).toHaveBeenCalledWith(expect.objectContaining({ status: "pending" }));
+    expect(data.hasMore).toBe(false);
+    expect(getQueuePage).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "pending" })
+    );
   });
 
-  it("parses all filters including numeric limit", async () => {
-    (getQueue as jest.Mock).mockResolvedValue([]);
+  it("parses all filters including numeric limit and the page's offset", async () => {
+    page([]);
 
     await GET(
       getRequest({
@@ -131,10 +148,11 @@ describe("GET /api/moderation/review", () => {
         since: "2026-01-01",
         before: "2026-12-31",
         limit: "5",
+        offset: "50",
       })
     );
 
-    expect(getQueue).toHaveBeenCalledWith(
+    expect(getQueuePage).toHaveBeenCalledWith(
       expect.objectContaining({
         source: "escalation",
         priority: "high",
@@ -143,14 +161,97 @@ describe("GET /api/moderation/review", () => {
         since: "2026-01-01",
         before: "2026-12-31",
         limit: 5,
+        offset: 50,
       })
     );
   });
 
-  it("caps the page size", async () => {
-    (getQueue as jest.Mock).mockResolvedValue([]);
+  it("caps the page size, and reads 25 when no limit is named (TASK-221, SF-admin-149)", async () => {
+    page([]);
     await GET(getRequest({ limit: "1000000000" }));
-    expect(getQueue).toHaveBeenCalledWith(expect.objectContaining({ limit: 200 }));
+    expect(getQueuePage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ limit: 200 })
+    );
+    await GET(getRequest({}));
+    expect(getQueuePage).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 25 }));
+  });
+
+  it("says whether more items follow the page", async () => {
+    page(
+      [
+        {
+          id: "a",
+          source: "appeal",
+          status: "pending",
+          createdAt: "2026-11-01T00:00:00Z",
+        },
+      ],
+      true
+    );
+    expect((await (await GET(getRequest())).json()).hasMore).toBe(true);
+  });
+
+  it("names each item's people by address, says whose claim it is, and when an open escalation is due (TASK-221, SF-admin-140, 141, 146)", async () => {
+    fakeData().answer = (sql) =>
+      /from users u/.test(sql)
+        ? [
+            {
+              id: TARGET,
+              sub: null,
+              email: "tia@example.com",
+              role: "Member",
+              erased: false,
+            },
+            {
+              id: REVIEWER_ID,
+              sub: null,
+              email: "mo@example.com",
+              role: "Moderator",
+              erased: false,
+            },
+          ]
+        : undefined;
+    page([
+      {
+        id: "e1",
+        source: "escalation",
+        status: "claimed",
+        targetUserId: TARGET,
+        claimedBy: REVIEWER_ID,
+        createdAt: "2026-11-01T00:00:00.000Z",
+      },
+      {
+        id: "r1",
+        source: "appeal",
+        status: "resolved",
+        targetUserId: TARGET,
+        resolvedBy: REVIEWER_ID,
+        createdAt: "2026-11-01T00:00:00.000Z",
+      },
+    ]);
+    const data = await (await GET(getRequest())).json();
+    const [open, done] = data.items;
+    expect(open.target).toEqual({
+      email: "tia@example.com",
+      role: "Member",
+      erased: false,
+    });
+    expect(open.claimer).toEqual({
+      email: "mo@example.com",
+      role: "Moderator",
+      erased: false,
+    });
+    // The SLA (24 h in this test) after its creation: when the escalation reaper acts on it.
+    expect(open.dueAt).toBe("2026-11-02T00:00:00.000Z");
+    expect(done.resolver).toEqual({
+      email: "mo@example.com",
+      role: "Moderator",
+      erased: false,
+    });
+    // Only an open escalation has a due time.
+    expect(done.dueAt).toBeUndefined();
+    expect(typeof open.claimedByViewer).toBe("boolean");
+    fakeData().reset();
   });
 
   it.each(["targetUserId", "claimedBy"])(
@@ -159,7 +260,7 @@ describe("GET /api/moderation/review", () => {
       const res = await GET(getRequest({ [field]: "x,id.neq.0" }));
       expect(res.status).toBe(400);
       expect((await res.json()).code).toBe("request.invalid_value");
-      expect(getQueue).not.toHaveBeenCalled();
+      expect(getQueuePage).not.toHaveBeenCalled();
     }
   );
 
@@ -171,7 +272,7 @@ describe("GET /api/moderation/review", () => {
 
     expect(res.status).toBe(200);
     expect(data.stats.pendingCount).toBe(3);
-    expect(getQueue).not.toHaveBeenCalled();
+    expect(getQueuePage).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -183,15 +284,18 @@ describe("GET /api/moderation/review", () => {
   ] as const)("refuses %s (no can_moderate, or not in good standing)", async (caller) => {
     const res = await GET(getRequest({}, caller));
     expect([401, 403]).toContain(res.status);
-    expect(getQueue).not.toHaveBeenCalled();
+    expect(getQueuePage).not.toHaveBeenCalled();
   });
 
-  it("returns 500 when the service throws", async () => {
-    (getQueue as jest.Mock).mockRejectedValue(new Error("boom"));
+  it("[hostile:store-down] a queue that cannot be read is refused as unavailable — never an empty list (TASK-221)", async () => {
+    (getQueuePage as jest.Mock).mockRejectedValue(new Error("boom"));
 
     const res = await GET(getRequest());
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.code).toBe("service.unavailable");
+    expect(body.items).toBeUndefined();
   });
 });
 

@@ -2,358 +2,173 @@
  * @jest-environment jsdom
  */
 /**
- * The agent kill switch in the consoles (components/admin/AgentKillSwitchPanel.tsx, TASK-172):
- * the admin console's section for config_manage_safety holders (POST /api/admin/agents/suspend)
- * and the operators' per-tenant one (POST /api/operator/tenants/[id]/agents/suspend). A reason is
- * required, an explicit confirmation comes before anything is sent (inline — never
- * window.prompt or window.confirm), the request goes through apiFetch, and the answer is shown:
- * the agents suspended, the holds withdrawn, whether the invalidation was published again. Every
- * view passes axe's WCAG 2.2 AA rules.
+ * __tests__/agent-kill-switch-panel.test.tsx — the agent kill switch on the console's shared
+ * parts (TASK-172; TASK-221, SF-admin-125 to 127)
+ *
+ * Fed the route's own answers (__tests__/fixtures/route-responses.json).
  */
+import { renderMessage } from "@/platform/errors/messages";
 import React from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import "@testing-library/jest-dom";
 import {
   AdminKillSwitchView,
   AgentKillSwitch,
 } from "@/components/admin/AgentKillSwitchPanel";
-import AdminShell from "@/components/admin/AdminShell";
-import { OperatorTenantsView } from "@/components/admin/TenancyPanels";
 import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
-
-// axe-core is installed with @axe-core/playwright (the e2e audits); here it runs in jsdom.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const axe = require("axe-core");
 
 const fetchMock = jest.fn();
 beforeAll(() => {
   global.fetch = fetchMock as unknown as typeof fetch;
 });
-beforeEach(() => {
-  fetchMock.mockReset();
-  jest.spyOn(window, "prompt").mockImplementation(() => {
-    throw new Error("window.prompt must not be used");
-  });
-  jest.spyOn(window, "confirm").mockImplementation(() => {
-    throw new Error("window.confirm must not be used");
-  });
-});
-afterEach(() => jest.restoreAllMocks());
+beforeEach(() => fetchMock.mockReset());
 
-/** The route's own answer (__tests__/fixtures/route-responses.json), as fetch resolves it. */
-function reply(name: RouteFixtureName) {
-  const [status, body] = routeAnswer(name);
-  return { ok: status < 400, status, json: async () => body } as unknown as Response;
-}
-function answer(name: RouteFixtureName) {
-  fetchMock.mockImplementation(async () => reply(name));
-}
-const messageOf = (name: RouteFixtureName) =>
-  (routeAnswer(name)[1] as { message: string }).message;
-const TWO = "POST /api/admin/agents/suspend — two suspended, a held change withdrawn";
-const WITHDRAWN = (routeAnswer(TWO)[1] as { withdrawn: string[] }).withdrawn;
-const sent = (n: number) => {
-  const [url, init] = fetchMock.mock.calls[n] as [string, RequestInit | undefined];
+function reply(name: string) {
+  const [status, body] = routeAnswer(name as RouteFixtureName);
   return {
-    url,
-    method: init?.method ?? "GET",
-    body: init?.body ? JSON.parse(String(init.body)) : undefined,
-    headers: (init?.headers ?? {}) as Record<string, string>,
-  };
-};
+    ok: status < 400,
+    status,
+    json: async () => body,
+    headers: new Headers({ "content-type": "application/json" }),
+  } as unknown as Response;
+}
+const bodyOf = <T,>(name: string) => routeAnswer(name as RouteFixtureName)[1] as T;
+const t = (key: string, v?: Record<string, string | number | string[]>) =>
+  renderMessage(`screens.kill_switch.${key}`, v as never);
 
-async function noViolations(container: HTMLElement) {
-  const results = await axe.run(container, {
-    runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag22aa"] },
-    // jsdom has no layout or canvas: contrast is the e2e audit's.
-    rules: { "color-contrast": { enabled: false } },
+async function suspend(reason = "an agent misbehaved") {
+  fireEvent.click(screen.getByRole("button", { name: t("suspend") }));
+  const confirm = screen.getByRole("alertdialog");
+  fireEvent.change(within(confirm).getByLabelText(/Reason/), {
+    target: { value: reason },
   });
-  expect(results.violations.map((v: { id: string }) => v.id)).toEqual([]);
+  fireEvent.click(within(confirm).getByRole("button", { name: t("confirm_yes") }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 }
 
-const reasonBox = () => screen.getByLabelText("Reason (recorded with the suspension)");
-const suspendButton = () => screen.getByRole("button", { name: "Suspend every agent" });
-const confirmButton = () =>
-  screen.getByRole("button", { name: "Yes, suspend every agent" });
-
-async function suspendWith(reason: string) {
-  fireEvent.change(reasonBox(), { target: { value: reason } });
-  fireEvent.click(suspendButton());
-  await act(async () => {
-    fireEvent.click(confirmButton());
-  });
-}
-
-describe("the admin console's kill switch (config_manage_safety)", () => {
-  it("needs a reason before it can be asked for", () => {
+describe("AgentKillSwitch", () => {
+  it("is confirmed in the one confirm step: what happens, focus in, a reason required, nothing sent before", async () => {
     render(<AdminKillSwitchView />);
-    expect(suspendButton()).toHaveProperty("disabled", true);
-    fireEvent.change(reasonBox(), { target: { value: "   " } });
-    expect(suspendButton()).toHaveProperty("disabled", true);
-    fireEvent.change(reasonBox(), { target: { value: "agent:x looping" } });
-    expect(suspendButton()).toHaveProperty("disabled", false);
-    // Submitting a blank form does nothing.
-    fireEvent.change(reasonBox(), { target: { value: "" } });
-    fireEvent.submit(reasonBox().closest("form")!);
-    expect(screen.queryByRole("button", { name: "Yes, suspend every agent" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: t("suspend") }));
+    const confirm = screen.getByRole("alertdialog", { name: t("confirm_heading") });
+    expect(confirm).toHaveFocus();
+    expect(confirm).toHaveTextContent(t("confirm_body"));
+    fireEvent.click(within(confirm).getByRole("button", { name: t("confirm_yes") }));
+    expect(within(confirm).getByRole("alert")).toHaveTextContent(/at least 3 characters/);
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("asks for confirmation first; nothing is sent until it is given, and cancel sends nothing", () => {
-    render(<AdminKillSwitchView />);
-    fireEvent.change(reasonBox(), { target: { value: "incident 42" } });
-    fireEvent.click(suspendButton());
-    expect(screen.getByText("Suspend every agent now?")).toBeDefined();
-    expect(screen.getByText("Reason: incident 42")).toBeDefined();
-    expect(document.activeElement).toBe(confirmButton());
-    expect(reasonBox()).toHaveProperty("disabled", true);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByText("Suspend every agent now?")).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(window.prompt).not.toHaveBeenCalled();
-    expect(window.confirm).not.toHaveBeenCalled();
-  });
-
-  it("sends the trimmed reason to the admin route, and shows the agents suspended and the holds withdrawn", async () => {
-    answer(TWO);
-    render(<AdminKillSwitchView />);
-    await suspendWith("  incident 42  ");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(sent(0)).toMatchObject({
-      url: "/api/admin/agents/suspend",
-      method: "POST",
-      body: { reason: "incident 42" },
-      headers: { "Content-Type": "application/json" },
-    });
-    const status = await screen.findByRole("status");
-    expect(
-      within(status).getByText("2 agents suspended: agent:x and agent:y.")
-    ).toBeDefined();
-    expect(within(status).getByText("1 pending hold withdrawn:")).toBeDefined();
-    expect(WITHDRAWN).toHaveLength(1);
-    expect(within(status).getByText(WITHDRAWN[0]!)).toBeDefined();
-    // Back to the form: a second suspension needs its own confirmation.
-    expect(screen.queryByText("Suspend every agent now?")).toBeNull();
-  });
-
-  it("nothing active: says so, and whether the invalidation was published again", async () => {
-    answer("POST /api/admin/agents/suspend — none active, told again");
-    render(<AdminKillSwitchView />);
-    await suspendWith("again");
-    expect(
-      await screen.findByText("No agent was active, so none was suspended.")
-    ).toBeDefined();
-    expect(
-      screen.getByText("Every instance was told again to drop its cached agent registry.")
-    ).toBeDefined();
-    expect(screen.getByText("No pending hold was withdrawn.")).toBeDefined();
-  });
-
-  it("nothing active and the invalidation not published: a warning", async () => {
-    answer(
-      "POST /api/admin/agents/suspend — none active, the invalidation not published"
-    );
-    render(<AdminKillSwitchView />);
-    await suspendWith("again");
-    expect(await screen.findByText(/did not go through/)).toBeDefined();
-  });
-
-  it("agents suspended: the republish is not reported (it is only for none active)", async () => {
-    answer("POST /api/admin/agents/suspend — one suspended");
-    render(<AdminKillSwitchView />);
-    await suspendWith("again");
-    await screen.findByText("1 agent suspended: agent:x.");
-    expect(screen.queryByText(/told again/)).toBeNull();
-    expect(screen.queryByText(/did not go through/)).toBeNull();
-  });
-
-  it("a refusal shows the server's reason; a 503 is unavailable, never a refusal", async () => {
-    answer("POST /api/admin/agents/suspend — refused (the registry unreadable)");
-    const { unmount } = render(<AdminKillSwitchView />);
-    await suspendWith("x");
-    expect((await screen.findByRole("alert")).textContent).toBe(
-      "Not suspended: The agents could not all be suspended. Nothing was changed; try again."
-    );
-    unmount();
-
-    answer("POST /api/admin/agents/suspend — refused (the audit log down)");
-    render(<AdminKillSwitchView />);
-    await suspendWith("x");
-    expect((await screen.findByRole("alert")).textContent).toMatch(/unavailable/);
-  });
-
-  it("a refusal by the guard shows its reason; a network failure is unavailable", async () => {
-    const refused = "POST /api/admin/agents/suspend — refused (no permission)";
-    answer(refused);
-    const { unmount } = render(<AdminKillSwitchView />);
-    await suspendWith("x");
-    expect((await screen.findByRole("alert")).textContent).toBe(
-      `Not suspended: ${messageOf(refused)}`
-    );
-    unmount();
-
-    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
-    render(<AdminKillSwitchView />);
-    await suspendWith("x");
-    expect((await screen.findByRole("alert")).textContent).toMatch(/unavailable/);
-  });
-
-  it("a body that is not JSON is a refusal, not a crash", async () => {
-    fetchMock.mockImplementation(
-      async () =>
-        ({
-          ok: false,
-          status: 500,
-          json: async () => {
-            throw new SyntaxError("not json");
-          },
-        }) as unknown as Response
-    );
-    render(<AdminKillSwitchView />);
-    await suspendWith("x");
-    expect((await screen.findByRole("alert")).textContent).toBe(
-      "Not suspended: The request was refused."
-    );
-  });
-
-  it("shows the busy state while the request runs, and editing the reason clears the answer", async () => {
-    let release!: (r: Response) => void;
-    fetchMock.mockImplementation(
-      () => new Promise<Response>((resolve) => (release = resolve))
-    );
-    render(<AdminKillSwitchView />);
-    fireEvent.change(reasonBox(), { target: { value: "x" } });
-    fireEvent.click(suspendButton());
-    fireEvent.click(confirmButton());
-    expect(screen.getByRole("button", { name: "Suspending…" })).toHaveProperty(
-      "disabled",
-      true
-    );
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveProperty(
-      "disabled",
-      true
-    );
-    await act(async () => {
-      release(reply("POST /api/admin/agents/suspend — one suspended"));
-    });
-    await screen.findByText("1 agent suspended: agent:x.");
-    fireEvent.change(reasonBox(), { target: { value: "y" } });
-    expect(screen.queryByRole("status")).toBeNull();
-  });
-
-  it("is accessible (axe, WCAG 2.2 AA): the form, the confirmation and the answer", async () => {
-    answer(TWO);
-    const { container } = render(<AdminKillSwitchView />);
-    await noViolations(container);
-    fireEvent.change(reasonBox(), { target: { value: "x" } });
-    fireEvent.click(suspendButton());
-    await noViolations(container);
-    await act(async () => {
-      fireEvent.click(confirmButton());
-    });
-    await screen.findByRole("status");
-    await noViolations(container);
-  });
-
-  it("is a section of the admin console only for a holder of config_manage_safety", () => {
-    const shell = (granted: string[]) =>
-      render(
-        <AdminShell
-          adminName="A"
-          hasPermission={(p) => granted.includes(p)}
-          onSignOut={() => undefined}
-        >
-          {(section) => <p>{section}</p>}
-        </AdminShell>
-      );
-    const { unmount } = shell(["can_access_admin", "admin_manage_agents"]);
-    expect(screen.queryByRole("button", { name: /Agent kill switch/ })).toBeNull();
-    unmount();
-    shell(["config_manage_safety"]);
-    fireEvent.click(screen.getByRole("button", { name: /Agent kill switch/ }));
-    expect(screen.getByText("kill-switch")).toBeDefined();
-  });
-});
-
-describe("the operators' per-tenant kill switch (platform_operate)", () => {
-  const ROWS = [
-    {
-      id: "t-active",
-      slug: "acme",
-      name: "Acme",
-      status: "active",
-      domains: [],
-      userCount: 4,
-    },
-    {
-      id: "t/odd id",
-      slug: "beta",
-      name: "Beta",
-      status: "suspended",
-      domains: [],
-      userCount: 1,
-    },
-    {
-      id: "t-deleted",
-      slug: "gone",
-      name: "Gone",
-      status: "deleted",
-      domains: [],
-      userCount: 0,
-      purgeAfter: "2026-11-20T00:00:00Z",
-    },
-  ];
-  const view = () => render(<OperatorTenantsView data={{ tenants: ROWS }} />);
-
-  it("is offered for every tenant not deleted", () => {
-    view();
-    screen.getByRole("button", { name: "Agent kill switch for Acme" });
-    screen.getByRole("button", { name: "Agent kill switch for Beta" });
-    expect(
-      screen.queryByRole("button", { name: "Agent kill switch for Gone" })
-    ).toBeNull();
-  });
-
-  it("opens for that tenant, confirms, and sends the reason to its route", async () => {
-    answer("POST /api/operator/tenants/[id]/agents/suspend — one suspended");
-    view();
-    fireEvent.click(screen.getByRole("button", { name: "Agent kill switch for Beta" }));
-    expect(
-      screen.getByRole("form", { name: "Suspend every agent of Beta" })
-    ).toBeDefined();
-    fireEvent.change(reasonBox(), { target: { value: "beta incident" } });
-    fireEvent.click(suspendButton());
-    expect(screen.getByText("Suspend every agent of Beta now?")).toBeDefined();
-    expect(fetchMock).not.toHaveBeenCalled();
-    await act(async () => {
-      fireEvent.click(confirmButton());
-    });
-    expect(sent(0)).toMatchObject({
-      url: "/api/operator/tenants/t%2Fodd%20id/agents/suspend",
-      method: "POST",
-      body: { reason: "beta incident" },
-    });
-    await screen.findByText("1 agent suspended: agent:x.");
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    expect(
-      screen.queryByRole("form", { name: "Suspend every agent of Beta" })
-    ).toBeNull();
-  });
-
-  it("is accessible (axe, WCAG 2.2 AA) inside the tenants console", async () => {
-    const { container } = view();
-    fireEvent.click(screen.getByRole("button", { name: "Agent kill switch for Acme" }));
-    await noViolations(container);
-  });
-});
-
-describe("AgentKillSwitch without a close", () => {
-  it("renders for a named tenant without a close button", async () => {
-    render(<AgentKillSwitch endpoint="/x" tenant="Zed" />);
-    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    // Escape is Cancel: nothing sent, focus back on the button that opened it.
+    fireEvent.keyDown(confirm, { key: "Escape" });
     await waitFor(() =>
-      expect(
-        screen.getByRole("heading", { name: "Suspend every agent of Zed" })
-      ).toBeDefined()
+      expect(screen.getByRole("button", { name: t("suspend") })).toHaveFocus()
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends the reason to its route and says what was suspended — kept until dismissed (SF-admin-127)", async () => {
+    fetchMock.mockResolvedValue(
+      reply("POST /api/admin/agents/suspend — two suspended, a held change withdrawn")
+    );
+    render(<AdminKillSwitchView />);
+    await suspend();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/admin/agents/suspend");
+    expect(JSON.parse(String(init.body))).toEqual({ reason: "an agent misbehaved" });
+    const body = bodyOf<{ suspended: string[]; withdrawn: string[] }>(
+      "POST /api/admin/agents/suspend — two suspended, a held change withdrawn"
+    );
+    const done = await screen.findByText(
+      t("suspended", { count: body.suspended.length, agents: body.suspended })
+    );
+    const entry = done.closest("[data-outcome]")!;
+    expect(entry).toHaveAttribute("data-outcome", "applied");
+    // The withdrawn holds are named as what they are — no id unless details are shown.
+    expect(entry).toHaveTextContent(t("withdrawn", { count: body.withdrawn.length }));
+    for (const id of body.withdrawn) expect(entry.textContent).not.toContain(id);
+    // A second suspension adds to the list; the first stays until it is dismissed.
+    fetchMock.mockClear();
+    await suspend("again");
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-outcome]")).toHaveLength(2)
+    );
+    fireEvent.click(
+      within(entry as HTMLElement).getByRole("button", { name: "Dismiss" })
+    );
+    expect(document.querySelectorAll("[data-outcome]")).toHaveLength(1);
+  });
+
+  it("[SF-admin-125] with Show details, each withdrawn hold's reference is shown", async () => {
+    fetchMock.mockResolvedValue(
+      reply("POST /api/admin/agents/suspend — two suspended, a held change withdrawn")
+    );
+    render(<AdminKillSwitchView showIds />);
+    await suspend();
+    const { withdrawn } = bodyOf<{ withdrawn: string[] }>(
+      "POST /api/admin/agents/suspend — two suspended, a held change withdrawn"
+    );
+    for (const id of withdrawn) expect(await screen.findByText(id)).toBeDefined();
+  });
+
+  it("nothing active, and the instances not told again: done, with what to check", async () => {
+    fetchMock.mockResolvedValue(
+      reply(
+        "POST /api/admin/agents/suspend — none active, the invalidation not published"
+      )
+    );
+    render(<AdminKillSwitchView />);
+    await suspend();
+    const said = await screen.findByText(t("none_active"));
+    const entry = said.closest("[data-outcome]")!;
+    expect(entry).toHaveAttribute("data-outcome", "unrecorded");
+    expect(entry).toHaveTextContent(/Check the platform's alerts/);
+  });
+
+  it.each([
+    "POST /api/admin/agents/suspend — refused (no permission)",
+    "POST /api/admin/agents/suspend — refused (rate limited)",
+    "POST /api/admin/agents/suspend — refused (the audit log down)",
+  ])("[SF-admin-126] %s: the catalogue's sentence — never a raw code", async (name) => {
+    fetchMock.mockResolvedValue(reply(name));
+    render(<AdminKillSwitchView />);
+    await suspend();
+    await waitFor(() =>
+      expect(document.querySelector("[data-outcome='refused']")).not.toBeNull()
+    );
+    const text = document.querySelector("[data-outcome='refused']")!.textContent ?? "";
+    const { code } = bodyOf<{ code: string }>(name);
+    expect(text).not.toContain(code);
+  });
+
+  it("no answer at all is said — nothing was suspended", async () => {
+    fetchMock.mockRejectedValue(new Error("offline"));
+    render(<AdminKillSwitchView />);
+    await suspend();
+    await waitFor(() =>
+      expect(document.querySelector("[data-outcome='refused']")).not.toBeNull()
+    );
+  });
+
+  it("a tenant's switch, for operators: its route, and the tenant named", async () => {
+    fetchMock.mockResolvedValue(
+      reply("POST /api/operator/tenants/[id]/agents/suspend — one suspended")
+    );
+    render(
+      <AgentKillSwitch endpoint="/api/operator/tenants/t1/agents/suspend" tenant="Acme" />
+    );
+    expect(screen.getByText(t("intro_tenant", { tenant: "Acme" }))).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: t("suspend") }));
+    expect(
+      screen.getByRole("alertdialog", {
+        name: t("confirm_heading_tenant", { tenant: "Acme" }),
+      })
+    ).toBeDefined();
+    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: "abuse" } });
+    fireEvent.click(screen.getByRole("button", { name: t("confirm_yes") }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(
+      "/api/operator/tenants/t1/agents/suspend"
+    );
+    await waitFor(() =>
+      expect(document.querySelector("[data-outcome-who]")).toHaveTextContent("Acme")
     );
   });
 });

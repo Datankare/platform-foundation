@@ -33,8 +33,8 @@ candidate" rows.
   (`components/admin/ui/`: the table, the panel state, the outcome display, the confirmation
   step and its registry, the permission gate, labels, the call helper, the detail panel, the
   field, the section registry), and a guard keeps a screen from building one by hand
-  (`__tests__/admin-shared-components-guard.test.ts`; its known list is the screens the next
-  two passes convert). What an admin sees: who is signed in; sections in five groups, the open
+  (`__tests__/admin-shared-components-guard.test.ts`; pass 3, TASK-221, emptied its known list,
+  which now takes no entry). What an admin sees: who is signed in; sections in five groups, the open
   one in the address (`?section=`); a failed read said as that on every section, with Refresh;
   every command that cannot be undone marked so, saying what is lost; outcomes that say what
   changed, for whom and what happens next, kept until dismissed; a role change confirmed "from →
@@ -42,7 +42,30 @@ candidate" rows.
   `GET /api/admin/session` adds `email` and `displayName`; `GET /api/admin/users` adds
   `page.total` and `page.totalCapped`; `POST /api/admin/ai` adds `plan.roles`. A consumer's own
   admin screens under `components/admin/` are read by the guard too: build them from the shared
-  parts, or list them in its known list with the pass that converts them.
+  parts (since TASK-221 there is no known list to put one on).
+
+- **The admin console on shared parts, pass 3 of 3: the operator and moderation screens
+  (TASK-221).** Tenant, Tenants, Jobs, Erasures, the agent kill switch, the review queue and staff
+  two-step enrolment are built from the shared parts; no admin screen builds a table, a panel
+  state, an outcome, a confirmation, a call or a form control of its own. What an operator sees:
+  every tenant change, purge, run now, replay, discard and held-change decision confirmed first,
+  saying what happens to people (a job that removes records, a purge and a discard marked as
+  ones that cannot be undone, with a reason recorded); a tenant opened in its own panel with its
+  settings edited by type and offered only with the tier's permission; tenants, jobs and erased
+  accounts by name, never an id; the review queue paged, its people by address, its claims and
+  due times shown, only the claimant offered Resolve and Release, each decision explained and
+  confirmed with notes; no admin screen scrolls sideways on a phone. No migration, no setting.
+  Answers that change, compatibly unless said: `GET /api/moderation/review` pages (`offset`,
+  `limit` — 25 by default, at most 200 — and `hasMore`), names `target`, `claimer` and
+  `resolver` by address, adds `claimedByViewer` and, for an open escalation, `dueAt`, and
+  **answers 503 `service.unavailable` when the queue cannot be read** (it answered an empty
+  list); `GET /api/operator/jobs` adds `tenantName` and `deletesData`;
+  `GET /api/operator/erasures` adds `tenantName`; `GET /api/operator/tenants` adds
+  `pendingDeletion.requester` and `byViewer`; `POST …/jobs/schedules/[kind]/run` and
+  `POST …/jobs/dead/[id]` take an optional `reason`, recorded. A consumer's own job kinds declare
+  `schedule.deletesData` when a run removes records, and name themselves in
+  the app's catalogue, `screens.app.jobs`. `ReviewQueueStore` gains `page()` (throws when it cannot read);
+  `components/admin/PanelUnavailable` is removed (use `PanelState` / `ReadFailed`).
 
 - **Server-side sessions: the browser holds no token (TASK-214, ADR-057, SEC-016).** A sign-in is
   a server-side record (`auth_sessions`, migration 070) behind one HttpOnly, Secure, SameSite=Lax

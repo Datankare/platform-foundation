@@ -29,19 +29,6 @@ import { ErasuresPanel } from "@/components/admin/ErasuresPanel";
 import { ExpandableText } from "@/components/admin/ExpandableText";
 import AdminShell from "@/components/admin/AdminShell";
 
-/** A response as the route answered it (status and body from its fixture). */
-function reply(name: RouteFixtureName) {
-  const [status, body] = routeAnswer(name);
-  const res = {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-    clone: () => res,
-    headers: { get: () => "application/json" },
-  };
-  return res as unknown as Response;
-}
-
 /** The body of a fixture (the data a page passes a panel). */
 const bodyOf = (name: RouteFixtureName) => routeAnswer(name)[1] as never;
 
@@ -129,44 +116,7 @@ describe("Erasures: open erasures and the attestation (S3-E19)", () => {
       screen.getByText(er("requested_by", { person: "requester@example.test" }))
     ).toBeTruthy();
   });
-
-  it("with a second operator: ask, with a reason and a note; the result stays", async () => {
-    const two = JSON.parse(JSON.stringify(data)) as {
-      operators: number;
-      erasures: { secondOperator: boolean }[];
-    };
-    two.operators = 2;
-    two.erasures[0].secondOperator = true;
-    mockApiFetch
-      .mockResolvedValueOnce(
-        reply("POST /api/operator/tenants/[id]/erasures/[userId]/attestation — asked")
-      )
-      .mockResolvedValueOnce(
-        reply("GET /api/operator/erasures — an unverifiable identity, one operator")
-      );
-    render(<ErasuresPanel data={two} />);
-    fireEvent.click(screen.getByRole("button", { name: er("ask") }));
-    fireEvent.change(screen.getByLabelText(er("field_note")), {
-      target: { value: "ab" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: er("submit_ask") }));
-    expect(screen.getByRole("alert").textContent).toBe(er("note_short"));
-    fireEvent.change(screen.getByLabelText(er("field_note")), {
-      target: { value: "absent from both pools" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: er("submit_ask") }));
-    const id = "0f0fc9b2-0000-4000-8000-000000000001";
-    expect(await screen.findByText(er("asked", { id }))).toBeTruthy();
-    const [url, init] = mockApiFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(
-      `/api/operator/tenants/aaaaaaaa-0000-4000-8000-00000000000a/erasures/${id}/attestation`
-    );
-    expect(JSON.parse(String(init.body))).toEqual({
-      reason: "pool_decommissioned",
-      note: "absent from both pools",
-      store: "identity-provider",
-    });
-  });
+  // Asking, approving and rejecting: admin-operator-screens.test.tsx (TASK-221).
 });
 
 describe("long cells and narrow screens (N-64)", () => {

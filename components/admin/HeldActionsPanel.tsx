@@ -48,7 +48,7 @@ import { formatDateTime, fullTimestamp, readableRole } from "./admin-format";
 import { adminCall } from "@/components/admin/ui/admin-call";
 import { ConfirmStep } from "@/components/admin/ui/ConfirmStep";
 import { GatedButton, needsPermission } from "@/components/admin/ui/PermissionGate";
-import { outcome } from "@/components/admin/ui/Outcome";
+import { outcome, type OutcomeEntry } from "@/components/admin/ui/Outcome";
 import { IdDetail } from "@/components/admin/ui/Ref";
 import {
   featureLabel,
@@ -66,7 +66,7 @@ import { handleRefusal } from "@/platform/errors/refusal";
 import type { SectionViewProps } from "@/components/admin/section-views";
 import { sectionTitle } from "@/components/admin/ui/sections";
 
-type Decision = "approve" | "reject" | "mark_executed" | "reapprove" | "withdraw";
+export type Decision = "approve" | "reject" | "mark_executed" | "reapprove" | "withdraw";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.held.${key}`, values);
@@ -470,8 +470,11 @@ const DECISION_WORDS: Record<
   },
 };
 
-/** One held change's card: what it is, who asked and why, and the decisions this viewer has. */
-function HoldCard({
+/**
+ * One held change's card: what it is, who asked and why, and the decisions this viewer has. The
+ * operators' view of a tenant's held changes shows the same card (TASK-221, SF-admin-111).
+ */
+export function HoldCard({
   a,
   gate,
   busy,
@@ -606,6 +609,46 @@ function HoldCard({
   );
 }
 
+/**
+ * One decision on a held change, sent to `url` (the admin's decision route, or an operator's for a
+ * tenant's change): what became of it, as an outcome naming the change — and whether the listing
+ * should be read again (decided, or no longer what it was).
+ */
+export async function decideHeld(
+  url: string,
+  row: PendingApproval,
+  decision: Decision,
+  note: string
+): Promise<{
+  readonly entry: OutcomeEntry;
+  readonly accepted: boolean;
+  readonly reload: boolean;
+}> {
+  const answer = await adminCall(url, {
+    method: "POST",
+    json: { decision, source: row.source, ...(note ? { note } : {}) },
+  });
+  const what = describeWhat(row);
+  if (!answer.ok) {
+    // What became of the approval (round 15, I-1; round 16), from the refusal's own body.
+    const kept = answer.body as DecisionOutcome;
+    const text = refusedDecisionText(row.label, answer.refusal, kept, what);
+    return {
+      entry: text
+        ? outcome("refused", text, { refusal: answer.refusal })
+        : outcome("refused", answer.refusal.message, {
+            action: what,
+            refusal: answer.refusal,
+          }),
+      accepted: false,
+      // Withdrawn, settling or not kept: the row is no longer what it was — read the list again.
+      reload: changesTheList(kept),
+    };
+  }
+  const shown = acceptedResult(decision, row, answer.body);
+  return { entry: outcome(shown.kind, shown.text), accepted: true, reload: true };
+}
+
 export function HeldActionsPanel({
   data,
   hasPermission = () => false,
@@ -630,32 +673,17 @@ export function HeldActionsPanel({
   async function decide(row: PendingApproval, decision: Decision, note: string) {
     const key = `${row.source}:${row.id}`;
     setBusyKey(key);
-    const answer = await adminCall(`/api/admin/approvals/${encodeURIComponent(row.id)}`, {
-      method: "POST",
-      json: { decision, source: row.source, ...(note ? { note } : {}) },
-    });
+    const decided = await decideHeld(
+      `/api/admin/approvals/${encodeURIComponent(row.id)}`,
+      row,
+      decision,
+      note
+    );
     setBusyKey(null);
-    const what = describeWhat(row);
-    if (!answer.ok) {
-      // What became of the approval (round 15, I-1; round 16), from the refusal's own body.
-      const kept = answer.body as DecisionOutcome;
-      const text = refusedDecisionText(row.label, answer.refusal, kept, what);
-      add(
-        text
-          ? outcome("refused", text, { refusal: answer.refusal })
-          : outcome("refused", answer.refusal.message, {
-              action: what,
-              refusal: answer.refusal,
-            })
-      );
-      // Withdrawn, settling or not kept: the row is no longer what it was — read the list again.
-      if (changesTheList(kept)) onReload?.();
-      return;
-    }
-    const shown = acceptedResult(decision, row, answer.body);
-    add(outcome(shown.kind, shown.text));
-    setRows((rs) => rs.filter((r) => !(r.id === row.id && r.source === row.source)));
-    onReload?.();
+    add(decided.entry);
+    if (decided.accepted)
+      setRows((rs) => rs.filter((r) => !(r.id === row.id && r.source === row.source)));
+    if (decided.reload) onReload?.();
   }
 
   // A body without its list is not an empty list (review 14 L-1): said as a failed read.

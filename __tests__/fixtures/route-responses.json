@@ -17,6 +17,7 @@
           "maxIntervalMinutes": 60,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.moderation.escalation-reaper.enabled",
             "interval": "jobs.moderation.escalation-reaper.interval_minutes"
@@ -37,6 +38,7 @@
           "maxIntervalMinutes": 120,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.moderation.release-claims.enabled",
             "interval": "jobs.moderation.release-claims.interval_minutes"
@@ -57,6 +59,7 @@
           "maxIntervalMinutes": 1440,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.moderation.expire-strikes.enabled",
             "interval": "jobs.moderation.expire-strikes.interval_minutes"
@@ -77,6 +80,7 @@
           "maxIntervalMinutes": 1440,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.accounts.expire-restrictions.enabled",
             "interval": "jobs.accounts.expire-restrictions.interval_minutes"
@@ -97,6 +101,7 @@
           "maxIntervalMinutes": 1440,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": true,
           "settings": {
             "enabled": "jobs.gdpr.retention-purge.enabled",
             "interval": "jobs.gdpr.retention-purge.interval_minutes"
@@ -117,6 +122,7 @@
           "maxIntervalMinutes": 10080,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": true,
           "settings": {
             "enabled": "jobs.agents.trajectory-retention.enabled",
             "interval": "jobs.agents.trajectory-retention.interval_minutes"
@@ -137,6 +143,7 @@
           "maxIntervalMinutes": 10080,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": true,
           "settings": {
             "enabled": "jobs.data.retention.enabled",
             "interval": "jobs.data.retention.interval_minutes"
@@ -157,6 +164,7 @@
           "maxIntervalMinutes": 1440,
           "tenantOptOutKey": null,
           "required": true,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.config.expire-approvals.enabled",
             "interval": "jobs.config.expire-approvals.interval_minutes"
@@ -177,6 +185,7 @@
           "maxIntervalMinutes": 1440,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": true,
           "settings": {
             "enabled": "jobs.tenancy.purge-due.enabled",
             "interval": "jobs.tenancy.purge-due.interval_minutes"
@@ -197,6 +206,7 @@
           "maxIntervalMinutes": 10080,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": true,
           "settings": {
             "enabled": "jobs.jobs.prune.enabled",
             "interval": "jobs.jobs.prune.interval_minutes"
@@ -215,6 +225,7 @@
           "maxIntervalMinutes": 60,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.test.sched.enabled",
             "interval": "jobs.test.sched.interval_minutes"
@@ -3165,6 +3176,7 @@
           "maxIntervalMinutes": 60,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.moderation.escalation-reaper.enabled",
             "interval": "jobs.moderation.escalation-reaper.interval_minutes"
@@ -3198,6 +3210,7 @@
           "maxIntervalMinutes": 1440,
           "tenantOptOutKey": null,
           "required": true,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.config.expire-approvals.enabled",
             "interval": "jobs.config.expire-approvals.interval_minutes"
@@ -3216,6 +3229,7 @@
           "maxIntervalMinutes": 10080,
           "tenantOptOutKey": "social.scheduled_agents_enabled",
           "required": false,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.test.optout.enabled",
             "interval": "jobs.test.optout.interval_minutes"
@@ -3236,7 +3250,8 @@
           "lastError": "The database was unavailable.",
           "createdAt": "2026-01-01T00:15:00.000Z",
           "updatedAt": "2026-01-01T00:18:00.000Z",
-          "finishedAt": "2026-01-01T00:17:00.000Z"
+          "finishedAt": "2026-01-01T00:17:00.000Z",
+          "tenantName": null
         },
         {
           "id": "00000000-0000-4000-8000-000000000002",
@@ -3250,7 +3265,8 @@
           "lastError": "reported:erasures_incomplete",
           "createdAt": "2026-01-01T00:11:00.000Z",
           "updatedAt": "2026-01-01T00:14:00.000Z",
-          "finishedAt": "2026-01-01T00:13:00.000Z"
+          "finishedAt": "2026-01-01T00:13:00.000Z",
+          "tenantName": null
         },
         {
           "id": "00000000-0000-4000-8000-000000000003",
@@ -3264,7 +3280,8 @@
           "lastError": "database_unavailable",
           "createdAt": "2026-01-01T00:01:00.000Z",
           "updatedAt": "2026-01-01T00:07:00.000Z",
-          "finishedAt": "2026-01-01T00:06:00.000Z"
+          "finishedAt": "2026-01-01T00:06:00.000Z",
+          "tenantName": null
         },
         {
           "id": "00000000-0000-4000-8000-000000000004",
@@ -3278,7 +3295,8 @@
           "lastError": "database_unavailable",
           "createdAt": "2026-01-01T00:00:00.000Z",
           "updatedAt": "2026-01-01T00:05:00.000Z",
-          "finishedAt": "2026-01-01T00:04:00.000Z"
+          "finishedAt": "2026-01-01T00:04:00.000Z",
+          "tenantName": null
         }
       ],
       "unresolvedEffects": []
@@ -3302,6 +3320,7 @@
           "maxIntervalMinutes": 60,
           "tenantOptOutKey": null,
           "required": false,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.moderation.escalation-reaper.enabled",
             "interval": "jobs.moderation.escalation-reaper.interval_minutes"
@@ -3335,6 +3354,7 @@
           "maxIntervalMinutes": 1440,
           "tenantOptOutKey": null,
           "required": true,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.config.expire-approvals.enabled",
             "interval": "jobs.config.expire-approvals.interval_minutes"
@@ -3353,6 +3373,7 @@
           "maxIntervalMinutes": 10080,
           "tenantOptOutKey": "social.scheduled_agents_enabled",
           "required": false,
+          "deletesData": false,
           "settings": {
             "enabled": "jobs.test.optout.enabled",
             "interval": "jobs.test.optout.interval_minutes"
@@ -3374,6 +3395,37 @@
       },
       "success": false,
       "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "POST /api/operator/jobs/schedules/[kind]/run — ran": {
+    "status": 200,
+    "body": {
+      "result": {
+        "enqueued": 1,
+        "report": {
+          "workerId": "fixture",
+          "scheduled": [],
+          "scheduleErrors": 0,
+          "claimed": 0,
+          "succeeded": 0,
+          "retried": 0,
+          "dead": 0,
+          "skipped": 0,
+          "lostLease": 0,
+          "continued": 0,
+          "released": 0,
+          "hung": 0,
+          "stoppedBy": "idle",
+          "durationMs": 0
+        }
+      }
+    }
+  },
+  "POST /api/operator/jobs/effects/[id] — took effect": {
+    "status": 200,
+    "body": {
+      "id": "eeeeeeee-0000-4000-8000-000000000001",
+      "status": "confirmed"
     }
   },
   "POST /api/operator/jobs/dead/[id] — replayed": {
@@ -3979,7 +4031,8 @@
   "GET /api/moderation/review — none": {
     "status": 200,
     "body": {
-      "items": []
+      "items": [],
+      "hasMore": false
     }
   },
   "GET /api/moderation/review — one pending escalation": {
@@ -4049,9 +4102,15 @@
           "requestId": "req-1",
           "id": "review-1",
           "createdAt": "2026-01-01T00:00:00.000Z",
-          "updatedAt": "2026-01-01T00:00:00.000Z"
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "target": null,
+          "claimer": null,
+          "resolver": null,
+          "claimedByViewer": false,
+          "dueAt": "2026-01-01T01:00:00.000Z"
         }
-      ]
+      ],
+      "hasMore": false
     }
   },
   "GET /api/moderation/review — a pending and a claimed escalation": {
@@ -4121,7 +4180,12 @@
           "requestId": "req-1",
           "id": "review-1",
           "createdAt": "2026-01-01T00:00:00.000Z",
-          "updatedAt": "2026-01-01T00:00:00.000Z"
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "target": null,
+          "claimer": null,
+          "resolver": null,
+          "claimedByViewer": false,
+          "dueAt": "2026-01-01T01:00:00.000Z"
         },
         {
           "source": "escalation",
@@ -4188,9 +4252,15 @@
           "createdAt": "2026-01-01T00:00:00.000Z",
           "updatedAt": "2026-01-01T00:00:00.000Z",
           "claimedBy": "00000000-0000-4000-9000-887b6c240009",
-          "claimedAt": "2026-01-01T00:00:00.000Z"
+          "claimedAt": "2026-01-01T00:00:00.000Z",
+          "target": null,
+          "claimer": null,
+          "resolver": null,
+          "claimedByViewer": true,
+          "dueAt": "2026-01-01T01:00:00.000Z"
         }
-      ]
+      ],
+      "hasMore": false
     }
   },
   "GET /api/moderation/review?status=pending — the pending escalation": {
@@ -4260,15 +4330,22 @@
           "requestId": "req-1",
           "id": "review-1",
           "createdAt": "2026-01-01T00:00:00.000Z",
-          "updatedAt": "2026-01-01T00:00:00.000Z"
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "target": null,
+          "claimer": null,
+          "resolver": null,
+          "claimedByViewer": false,
+          "dueAt": "2026-01-01T01:00:00.000Z"
         }
-      ]
+      ],
+      "hasMore": false
     }
   },
   "GET /api/moderation/review?status=pending — none": {
     "status": 200,
     "body": {
-      "items": []
+      "items": [],
+      "hasMore": false
     }
   },
   "GET /api/moderation/review — the escalation claimed": {
@@ -4340,21 +4417,27 @@
           "createdAt": "2026-01-01T00:00:00.000Z",
           "updatedAt": "2026-01-01T00:00:00.000Z",
           "claimedBy": "00000000-0000-4000-9000-887b6c240009",
-          "claimedAt": "2026-01-01T00:00:00.000Z"
+          "claimedAt": "2026-01-01T00:00:00.000Z",
+          "target": null,
+          "claimer": null,
+          "resolver": null,
+          "claimedByViewer": true,
+          "dueAt": "2026-01-01T01:00:00.000Z"
         }
-      ]
+      ],
+      "hasMore": false
     }
   },
   "GET /api/moderation/review — the store failing": {
-    "status": 500,
+    "status": 503,
     "body": {
-      "code": "internal.error",
-      "message": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000.",
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
       "params": {
-        "requestId": "req_0000000000000000"
+        "service": "review_queue"
       },
       "success": false,
-      "error": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000."
+      "error": "This service is unavailable right now. Try again shortly."
     }
   },
   "GET /api/moderation/review — a pending appeal": {
@@ -4402,9 +4485,14 @@
           "originalDecisionId": "traj-1",
           "id": "review-1",
           "createdAt": "2026-01-01T00:00:00.000Z",
-          "updatedAt": "2026-01-01T00:00:00.000Z"
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "target": null,
+          "claimer": null,
+          "resolver": null,
+          "claimedByViewer": false
         }
-      ]
+      ],
+      "hasMore": false
     }
   },
   "PATCH /api/moderation/appeals/[id] — claimed": {
@@ -6093,7 +6181,9 @@
           "userCount": 2,
           "pendingDeletion": {
             "requestId": "aaaaaaaa-0000-4000-8000-0000000000f1",
-            "requestedBy": "00000000-0000-4000-9000-97a91570000b"
+            "requestedBy": "00000000-0000-4000-9000-97a91570000b",
+            "requester": null,
+            "byViewer": true
           }
         },
         {
@@ -6232,6 +6322,17 @@
     "status": 200,
     "body": {
       "result": []
+    }
+  },
+  "POST /api/operator/purge — one purged": {
+    "status": 200,
+    "body": {
+      "result": [
+        {
+          "tenantId": "aaaaaaaa-0000-4000-8000-0000000000c1",
+          "rows": 12
+        }
+      ]
     }
   },
   "GET /api/operator/readiness — this deployment": {

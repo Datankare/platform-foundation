@@ -1,417 +1,361 @@
-/** @jest-environment jsdom */
 /**
- * __tests__/review-dashboard.test.tsx
- *
- * RTL tests for the reasoning-forward ReviewDashboard (Sprint 6 Full C).
- * Covers: load/empty/error states, claim, release, resolve (happy/validation/
- * modify), filter refetch, PATCH failure, the on-demand AI-assist flow
- * (banner / decision prefill / no-suggestion), and reasoning-context render.
+ * @jest-environment jsdom
  */
-
+/**
+ * __tests__/review-dashboard.test.tsx — the human review queue on the console's shared parts
+ * (ADR-024, ADR-025; TASK-221, SF-admin-140 to 149)
+ *
+ * Fed the routes' own answers (__tests__/fixtures/route-responses.json).
+ */
+import { renderMessage } from "@/platform/errors/messages";
 import React from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import ReviewDashboard from "@/components/ReviewDashboard/ReviewDashboard";
-
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import "@testing-library/jest-dom";
+import ReviewDashboard, {
+  itemActionPath,
+  PAGE_SIZE,
+  queueUrl,
+} from "@/components/ReviewDashboard/ReviewDashboard";
 import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
 
-/** A route's own answer (__tests__/fixtures/route-responses.json), as fetch resolves it. */
-function answer(name: RouteFixtureName) {
-  const [status, body] = routeAnswer(name);
-  return { ok: status < 400, status, json: async () => body };
+const fetchMock = jest.fn();
+beforeAll(() => {
+  global.fetch = fetchMock as unknown as typeof fetch;
+});
+beforeEach(() => fetchMock.mockReset());
+
+function reply(name: string, edit?: (body: Record<string, unknown>) => void) {
+  const [status, body] = routeAnswer(name as RouteFixtureName);
+  const copy = JSON.parse(JSON.stringify(body)) as Record<string, unknown>;
+  edit?.(copy);
+  return {
+    ok: status < 400,
+    status,
+    json: async () => copy,
+    headers: new Headers({ "content-type": "application/json" }),
+  } as unknown as Response;
 }
-const NONE = "GET /api/moderation/review — none";
-const ONE = "GET /api/moderation/review — one pending escalation";
+/** Answer by route: the queue's reads with `queue`, an item's PATCH with `patch`, … */
+function serve(map: {
+  queue: () => Response;
+  patch?: () => Response;
+  assist?: () => Response;
+}) {
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (String(url).includes("/assist")) return map.assist!();
+    if ((init?.method ?? "GET") === "PATCH") return map.patch!();
+    return map.queue();
+  });
+}
+const t = (key: string, v?: Record<string, string | number>) =>
+  renderMessage(`screens.review_dashboard.${key}`, v);
 const TWO = "GET /api/moderation/review — a pending and a claimed escalation";
-const PENDING = "GET /api/moderation/review?status=pending — the pending escalation";
-const CLAIMED = "GET /api/moderation/review — the escalation claimed";
-const ACT = "PATCH /api/moderation/review/[id] —";
+const named = (body: Record<string, unknown>) => {
+  for (const item of body.items as Record<string, unknown>[]) {
+    item.target = { email: "tia@example.com", role: "Member", erased: false };
+    if (item.claimedBy)
+      item.claimer = { email: "mo@example.com", role: "Moderator", erased: false };
+  }
+};
 
-function fetchMock() {
-  return global.fetch as unknown as jest.Mock;
-}
-function patchCall() {
-  return fetchMock().mock.calls.find(
-    (c) => c[1] && (c[1] as RequestInit).method === "PATCH"
-  );
-}
-function lastCall() {
-  const calls = fetchMock().mock.calls;
-  return calls[calls.length - 1];
-}
-
-beforeEach(() => {
-  global.fetch = jest.fn() as unknown as typeof fetch;
-});
-afterEach(() => {
-  jest.clearAllMocks();
-});
-
-describe("ReviewDashboard — states", () => {
-  it("shows the loading state", () => {
-    fetchMock().mockReturnValueOnce(new Promise(() => {}));
+describe("ReviewDashboard", () => {
+  it("[SF-admin-149] reads a page of the queue, with Refresh and its read time", async () => {
+    serve({ queue: () => reply(TWO) });
     render(<ReviewDashboard />);
-    expect(screen.getByTestId("rd-loading")).toBeDefined();
+    expect(screen.getByText(/^Reading Review queue/)).toBeDefined();
+    expect(await screen.findByTestId("rd-item-review-1")).toBeDefined();
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(queueUrl("all", 0));
+    expect(queueUrl("all", 0)).toContain(`limit=${PAGE_SIZE}`);
+    expect(screen.getByText(/Read at/)).toBeDefined();
   });
 
-  it("shows the empty state when there are no items", async () => {
-    fetchMock().mockResolvedValueOnce(answer(NONE));
+  it("a queue that cannot be read is said — never 'No items in the review queue'", async () => {
+    serve({ queue: () => reply("GET /api/moderation/review — the store failing") });
     render(<ReviewDashboard />);
-    await waitFor(() => expect(screen.getByTestId("rd-empty")).toBeDefined());
-  });
-
-  it("shows an error when the queue cannot be loaded", async () => {
-    fetchMock().mockResolvedValueOnce(
-      answer("GET /api/moderation/review — the store failing")
-    );
-    render(<ReviewDashboard />);
-    await waitFor(() => expect(screen.getByTestId("rd-error")).toBeDefined());
-  });
-
-  it("renders the decision context (confidence, trajectory, timeline)", async () => {
-    fetchMock().mockResolvedValueOnce(answer(ONE));
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-item-review-1"));
-    expect(screen.getByTestId("rd-confidence-review-1")).toBeDefined();
-    // SEC-017 (TASK-203): the bar's width is set on its style object, never as a style attribute
-    // in the markup (the policy refuses those) — 52%, from the item's confidence.
-    const fill = screen.getByTestId("rd-confidence-fill");
-    await waitFor(() => expect(fill.style.width).toBe("52%"));
-    expect(screen.getByTestId("rd-trajectory-review-1")).toBeDefined();
-    expect(screen.getByTestId("rd-timeline-review-1")).toBeDefined();
-    expect(screen.getByTestId("rd-step-review-1-0")).toBeDefined();
-    // TASK-209: the Guardian's reasons and factors, recorded as catalog keys, in the words a
-    // moderator always read; a chain step recorded before the keys, as such, its text disclosed.
-    expect(screen.getByTestId("rd-reasoning-review-1").textContent).toBe(
-      "Confidence 0.52 below threshold 0.6 for child (under 13) — escalating for human review."
-    );
-    expect(screen.getByText("translation-content: severity reduced by 1")).toBeDefined();
-    const step = screen.getByTestId("rd-step-review-1-0");
-    expect(step.textContent).toContain("A reason recorded before reasons were coded.");
-    expect(step.textContent).toContain("ran the classifier");
-  });
-});
-
-describe("ReviewDashboard — claim / release", () => {
-  it("claims a pending item", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(answer(ONE))
-      .mockResolvedValueOnce(answer(`${ACT} claimed`))
-      .mockResolvedValueOnce(answer(CLAIMED));
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-claim-review-1"));
-    fireEvent.click(screen.getByTestId("rd-claim-review-1"));
-
-    await waitFor(() => {
-      const call = patchCall();
-      expect(call).toBeDefined();
-      expect(JSON.parse((call![1] as RequestInit).body as string).action).toBe("claim");
-    });
-  });
-
-  it("releases a claimed item", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(answer(CLAIMED))
-      .mockResolvedValueOnce(answer(`${ACT} released`))
-      .mockResolvedValueOnce(answer(ONE));
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-release-review-1"));
-    fireEvent.click(screen.getByTestId("rd-release-review-1"));
-
-    await waitFor(() => {
-      const call = patchCall();
-      expect(JSON.parse((call![1] as RequestInit).body as string).action).toBe("unclaim");
-    });
-  });
-
-  it("surfaces a PATCH failure as an error", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(answer(ONE))
-      .mockResolvedValueOnce(answer(`${ACT} refused (claimed by another reviewer)`));
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-claim-review-1"));
-    fireEvent.click(screen.getByTestId("rd-claim-review-1"));
-
     await waitFor(() =>
-      expect(screen.getByTestId("rd-error").textContent).toContain(
-        (
-          routeAnswer(`${ACT} refused (claimed by another reviewer)`)[1] as {
-            message: string;
-          }
-        ).message
+      expect(document.querySelector("[data-read-failed='true']")).not.toBeNull()
+    );
+    expect(screen.queryByText(t("no_items_in_the_review"))).toBeNull();
+  });
+
+  it("[SF-admin-149] pages: Next asks for the next page; the range is said", async () => {
+    serve({ queue: () => reply(TWO, (b) => (b.hasMore = true)) });
+    render(<ReviewDashboard />);
+    await screen.findByTestId("rd-item-review-1");
+    expect(document.querySelector("[data-page-range]")).toHaveTextContent("1–2");
+    fireEvent.click(screen.getByRole("button", { name: t("next_page") }));
+    await waitFor(() =>
+      expect((fetchMock.mock.calls.at(-1) as [string])[0]).toBe(
+        queueUrl("all", PAGE_SIZE)
       )
     );
   });
-});
 
-describe("ReviewDashboard — resolve", () => {
-  it("resolves with uphold + notes", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(answer(CLAIMED))
-      .mockResolvedValueOnce(answer(`${ACT} resolved, upheld`))
-      .mockResolvedValueOnce(answer(NONE));
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-resolve-open-review-1"));
-    fireEvent.click(screen.getByTestId("rd-resolve-open-review-1"));
-    fireEvent.change(screen.getByTestId("rd-notes"), {
-      target: { value: "Looks correct." },
-    });
-    fireEvent.click(screen.getByTestId("rd-resolve-submit"));
-
-    await waitFor(() => {
-      const body = JSON.parse((patchCall()![1] as RequestInit).body as string);
-      expect(body.action).toBe("resolve");
-      expect(body.decision).toBe("uphold");
-      expect(body.reviewerNotes).toBe("Looks correct.");
-    });
+  it("[SF-admin-140] an item names its account by address and its decision by kind — no hex id without Show details", async () => {
+    serve({ queue: () => reply(TWO, named) });
+    const { container } = render(<ReviewDashboard />);
+    const card = await screen.findByTestId("rd-item-review-1");
+    expect(card).toHaveTextContent("tia@example.com");
+    expect(card).toHaveTextContent(t("decision_of", { action: t("action_escalate") }));
+    expect(container.textContent).not.toContain("11111111-1111-4111-8111-111111111111");
   });
 
-  it("requires reviewer notes", async () => {
-    fetchMock().mockResolvedValueOnce(answer(CLAIMED));
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-resolve-open-review-1"));
-    fireEvent.click(screen.getByTestId("rd-resolve-open-review-1"));
-    fireEvent.click(screen.getByTestId("rd-resolve-submit"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("rd-error").textContent).toContain("notes are required")
-    );
-    expect(patchCall()).toBeUndefined();
-  });
-
-  it("sends modifiedAction when decision is modify", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(answer(CLAIMED))
-      .mockResolvedValueOnce(answer(`${ACT} resolved, modified to a block`))
-      .mockResolvedValueOnce(answer(NONE));
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-resolve-open-review-1"));
-    fireEvent.click(screen.getByTestId("rd-resolve-open-review-1"));
-    fireEvent.change(screen.getByTestId("rd-decision-select"), {
-      target: { value: "modify" },
-    });
-    expect(screen.getByTestId("rd-modify-block")).toBeDefined();
-    fireEvent.change(screen.getByTestId("rd-modified-action"), {
-      target: { value: "block" },
-    });
-    fireEvent.change(screen.getByTestId("rd-notes"), {
-      target: { value: "Downgrade to block." },
-    });
-    fireEvent.click(screen.getByTestId("rd-resolve-submit"));
-
-    await waitFor(() => {
-      const body = JSON.parse((patchCall()![1] as RequestInit).body as string);
-      expect(body.decision).toBe("modify");
-      expect(body.modifiedAction).toBe("block");
-    });
-  });
-});
-
-describe("ReviewDashboard — filter", () => {
-  it("refetches with a status query when the filter changes", async () => {
-    fetchMock().mockResolvedValueOnce(answer(ONE)).mockResolvedValueOnce(answer(PENDING));
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-list"));
-    fireEvent.click(screen.getByTestId("rd-filter-pending"));
-
-    await waitFor(() => expect(String(lastCall()[0])).toContain("?status=pending"));
-  });
-
-  it("never lets a slow earlier filter's response overwrite the newer one", async () => {
-    let releaseAll!: (v: unknown) => void;
-    fetchMock()
-      .mockReturnValueOnce(new Promise((r) => (releaseAll = r)))
-      .mockResolvedValueOnce(answer(PENDING));
-
-    render(<ReviewDashboard />);
-    fireEvent.click(screen.getByTestId("rd-filter-pending"));
-    await waitFor(() => screen.getByTestId("rd-item-review-1"));
-
-    // The slow "all" answer lists the claimed review-2 as well: it must not replace "pending".
-    releaseAll(answer(TWO));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(screen.queryByTestId("rd-item-review-2")).toBeNull();
-    expect(screen.getByTestId("rd-item-review-1")).toBeTruthy();
-  });
-
-  it("never lets a Refresh overtaken by a filter change overwrite the newer list", async () => {
-    let releaseRefresh!: (v: unknown) => void;
-    fetchMock()
-      .mockResolvedValueOnce(answer(ONE))
-      .mockReturnValueOnce(new Promise((r) => (releaseRefresh = r)))
-      .mockResolvedValueOnce(answer(PENDING));
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-item-review-1"));
-    fireEvent.click(screen.getByTestId("rd-refresh"));
-    fireEvent.click(screen.getByTestId("rd-filter-pending"));
-    await waitFor(() => expect(screen.queryByTestId("rd-loading")).toBeNull());
-    await waitFor(() => screen.getByTestId("rd-item-review-1"));
-
-    // The overtaken Refresh's answer lists the claimed review-2 as well: it must not land.
-    releaseRefresh(answer(TWO));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(screen.queryByTestId("rd-item-review-2")).toBeNull();
-    expect(screen.getByTestId("rd-item-review-1")).toBeTruthy();
-  });
-
-  it("shows loading from the click, and a click on the current filter does not refetch", async () => {
-    let releasePending!: (v: unknown) => void;
-    fetchMock()
-      .mockResolvedValueOnce(answer(ONE))
-      .mockReturnValueOnce(new Promise((r) => (releasePending = r)));
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-list"));
-    fireEvent.click(screen.getByTestId("rd-filter-all"));
-    expect(fetchMock()).toHaveBeenCalledTimes(1);
-    expect(screen.queryByTestId("rd-loading")).toBeNull();
-
-    fireEvent.click(screen.getByTestId("rd-filter-pending"));
-    expect(screen.getByTestId("rd-loading")).toBeTruthy();
-    releasePending(answer("GET /api/moderation/review?status=pending — none"));
-    await waitFor(() => screen.getByTestId("rd-empty"));
-  });
-});
-
-describe("ReviewDashboard — AI assist", () => {
-  it("fetches and shows an advisory suggestion", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(answer(CLAIMED))
-      .mockResolvedValueOnce(
-        answer("POST /api/moderation/review/[id]/assist — a suggestion")
-      );
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-assist-btn-review-1"));
-    fireEvent.click(screen.getByTestId("rd-assist-btn-review-1"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("rd-assist-banner-review-1").textContent).toContain(
-        "Historical context"
-      )
-    );
-    expect(String(lastCall()[0])).toBe("/api/moderation/review/review-1/assist");
-    expect((lastCall()[1] as RequestInit).method).toBe("POST");
-  });
-
-  it("prefills the resolve decision from the suggestion", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(answer(CLAIMED))
-      .mockResolvedValueOnce(
-        answer("POST /api/moderation/review/[id]/assist — a suggestion")
-      );
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-assist-btn-review-1"));
-    fireEvent.click(screen.getByTestId("rd-assist-btn-review-1"));
-    await waitFor(() => screen.getByTestId("rd-assist-banner-review-1"));
-
-    fireEvent.click(screen.getByTestId("rd-resolve-open-review-1"));
-    const select = screen.getByTestId("rd-decision-select") as HTMLSelectElement;
-    expect(select.value).toBe("overturn");
-  });
-
-  it("shows the no-suggestion state when assist returns null (fail-open)", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(answer(CLAIMED))
-      .mockResolvedValueOnce(
-        answer(
-          "POST /api/moderation/review/[id]/assist — no suggestion (the model unavailable)"
-        )
-      );
-
-    render(<ReviewDashboard />);
-    await waitFor(() => screen.getByTestId("rd-assist-btn-review-1"));
-    fireEvent.click(screen.getByTestId("rd-assist-btn-review-1"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("rd-assist-none-review-1")).toBeDefined()
-    );
-  });
-});
-
-describe("ReviewDashboard — in the console (TASK-210, N-117)", () => {
-  const APPEAL = "GET /api/moderation/review — a pending appeal";
-  const appealId = () =>
-    (routeAnswer(APPEAL)[1] as { items: { id: string }[] }).items[0].id;
-
-  it("claims an appeal through the appeals route (its own, ADR-024)", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(answer(APPEAL))
-      .mockResolvedValueOnce(answer("PATCH /api/moderation/appeals/[id] — claimed"))
-      .mockResolvedValueOnce(answer(APPEAL));
-    render(<ReviewDashboard variant="dark" />);
-    const id = appealId();
-    fireEvent.click(await screen.findByTestId(`rd-claim-${id}`));
-    await waitFor(() => expect(patchCall()).toBeDefined());
-    expect(patchCall()![0]).toBe(`/api/moderation/appeals/${encodeURIComponent(id)}`);
-    expect(JSON.parse(String((patchCall()![1] as RequestInit).body))).toEqual({
-      action: "claim",
-    });
-  });
-
-  it("claims an escalation through the review route", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(answer(ONE))
-      .mockResolvedValueOnce(answer(`${ACT} claimed`))
-      .mockResolvedValueOnce(answer(CLAIMED));
-    render(<ReviewDashboard />);
-    fireEvent.click(await screen.findByTestId("rd-claim-review-1"));
-    await waitFor(() => expect(patchCall()).toBeDefined());
-    expect(patchCall()![0]).toBe("/api/moderation/review/review-1");
-  });
-
-  it("shows an appeal's reason, and every code by the catalog's words", async () => {
-    fetchMock().mockResolvedValueOnce(answer(APPEAL));
-    render(<ReviewDashboard />);
-    const id = appealId();
-    const card = await screen.findByTestId(`rd-item-${id}`);
-    expect(screen.getByTestId(`rd-appeal-reason-${id}`).textContent).toContain(
-      "sufficiently long"
-    );
-    // The source, priority and status badges, the trigger and the action: the catalog's words,
-    // never their codes ("appeal", "normal", "pending", "classifier", "block").
-    expect(card.textContent).toMatch(/^AppealNormalPendingDecision /);
-    expect(card.textContent).toContain("Classifier");
-    expect(card.textContent).toContain("Action: Block");
-  });
-
-  it("names each resolve control by its label (WCAG 1.3.1)", async () => {
-    fetchMock().mockResolvedValueOnce(answer(CLAIMED));
-    render(<ReviewDashboard />);
-    fireEvent.click(await screen.findByTestId("rd-resolve-open-review-1"));
-    expect(screen.getByLabelText("Decision")).toBe(
-      screen.getByTestId("rd-decision-select")
-    );
-    expect(screen.getByLabelText("Reviewer notes")).toBe(screen.getByTestId("rd-notes"));
-    fireEvent.change(screen.getByTestId("rd-decision-select"), {
-      target: { value: "modify" },
-    });
-    expect(screen.getByLabelText("Modified action")).toBe(
-      screen.getByTestId("rd-modified-action")
-    );
-  });
-
-  it("a code the catalog does not know reads as itself, never a missing key", async () => {
-    // The route's own answer, its item's codes as a newer server's might be.
-    const [status, body] = routeAnswer(ONE) as [
-      number,
-      { items: Record<string, unknown>[] },
-    ];
-    body.items[0].source = "future_source";
-    body.items[0].priority = "urgent";
-    fetchMock().mockResolvedValueOnce({ ok: true, status, json: async () => body });
+  it("[SF-admin-146] an item says how long it has waited and when an open escalation is acted on", async () => {
+    serve({ queue: () => reply(TWO) });
     render(<ReviewDashboard />);
     const card = await screen.findByTestId("rd-item-review-1");
-    expect(card.textContent).toContain("future_source");
-    expect(card.textContent).toContain("urgent");
-    expect(card.textContent).not.toContain("screens.review_dashboard");
+    expect(card).toHaveTextContent(t("waiting_since"));
+    // The fixture's escalation is long past its due time: overdue.
+    expect(card.querySelector("[data-due='overdue']")).not.toBeNull();
+  });
+
+  it("[SF-admin-141] a claim is shown; only its holder may resolve or release it", async () => {
+    serve({
+      queue: () =>
+        reply(TWO, (b) => {
+          named(b);
+          (b.items as Record<string, unknown>[])[1]!.claimedByViewer = false;
+        }),
+    });
+    render(<ReviewDashboard />);
+    const theirs = await screen.findByTestId("rd-item-review-2");
+    expect(theirs).toHaveTextContent(/Claimed by mo@example\.com/);
+    expect(within(theirs).queryByRole("button", { name: t("resolve") })).toBeNull();
+    expect(within(theirs).queryByRole("button", { name: t("release") })).toBeNull();
+  });
+
+  it("[SF-admin-142, 143, 148] resolving: each decision explained, confirmed with notes said at their field, and what happened is kept", async () => {
+    serve({
+      queue: () => reply(TWO),
+      patch: () => reply("PATCH /api/moderation/review/[id] — resolved, upheld"),
+    });
+    render(<ReviewDashboard />);
+    const mine = await screen.findByTestId("rd-item-review-2");
+    fireEvent.click(within(mine).getByRole("button", { name: t("resolve") }));
+    const decision = within(mine).getByLabelText(t("decision"));
+    expect(decision).toHaveAccessibleDescription(t("decision_help_uphold"));
+    fireEvent.change(decision, { target: { value: "overturn" } });
+    expect(decision).toHaveAccessibleDescription(t("decision_help_overturn"));
+    fireEvent.click(within(mine).getByRole("button", { name: t("review_decision") }));
+    const confirm = within(mine).getByRole("alertdialog");
+    expect(confirm).toHaveFocus();
+    fireEvent.click(within(confirm).getByRole("button", { name: t("submit_decision") }));
+    // Too short: said at the notes, not in a banner at the top.
+    expect(within(confirm).getByLabelText(t("reviewer_notes"))).toHaveAttribute(
+      "aria-invalid",
+      "true"
+    );
+    expect(
+      fetchMock.mock.calls.filter(
+        (c) => (c[1] as RequestInit | undefined)?.method === "PATCH"
+      )
+    ).toHaveLength(0);
+    fireEvent.change(within(confirm).getByLabelText(t("reviewer_notes")), {
+      target: { value: "A quoted headline." },
+    });
+    fireEvent.click(within(confirm).getByRole("button", { name: t("submit_decision") }));
+    const done = await screen.findByText(/Overturned the decision/);
+    expect(done.closest("[data-outcome]")).toHaveAttribute("data-outcome", "applied");
+    const patch = fetchMock.mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === "PATCH"
+    ) as [string, RequestInit];
+    expect(patch[0]).toBe(itemActionPath({ id: "review-2", source: "escalation" }));
+    expect(JSON.parse(String(patch[1].body))).toEqual({
+      action: "resolve",
+      decision: "overturn",
+      reviewerNotes: "A quoted headline.",
+    });
+  });
+
+  it("[SF-admin-142] a claim says what happened; [SF-admin-143] a refusal is said on its item", async () => {
+    serve({
+      queue: () => reply(TWO),
+      patch: () =>
+        reply(
+          "PATCH /api/moderation/review/[id] — refused (claimed by another reviewer)"
+        ),
+    });
+    render(<ReviewDashboard />);
+    const card = await screen.findByTestId("rd-item-review-1");
+    fireEvent.click(within(card).getByRole("button", { name: t("claim") }));
+    await waitFor(() =>
+      expect(card.querySelector("[data-outcome='refused']")).not.toBeNull()
+    );
+  });
+
+  it("[SF-admin-145] a refused suggestion says why; [SF-admin-144] categories by name", async () => {
+    serve({
+      queue: () =>
+        reply(TWO, (b) => {
+          const m = (
+            b.items as {
+              moderationResult: { classifierOutput?: Record<string, unknown> };
+            }[]
+          )[0]!.moderationResult;
+          m.classifierOutput = {
+            ...(m.classifierOutput ?? {}),
+            categories: ["self_harm"],
+            severity: "high",
+          };
+        }),
+      assist: () => reply("POST /api/admin/agents/suspend — refused (rate limited)"),
+    });
+    render(<ReviewDashboard />);
+    const card = await screen.findByTestId("rd-item-review-1");
+    expect(card).toHaveTextContent("Self-harm");
+    expect(card).not.toHaveTextContent("self_harm");
+    expect(card).toHaveTextContent(/Severity: High/);
+    fireEvent.click(within(card).getByRole("button", { name: t("get_ai_suggestion") }));
+    expect(await within(card).findByText(/^No suggestion: /)).toBeDefined();
+  });
+
+  it("a status filter reads from the first page; Previous goes back a page", async () => {
+    serve({ queue: () => reply(TWO, (b) => (b.hasMore = true)) });
+    render(<ReviewDashboard />);
+    await screen.findByTestId("rd-item-review-1");
+    fireEvent.click(screen.getByRole("button", { name: t("next_page") }));
+    await waitFor(() =>
+      expect((fetchMock.mock.calls.at(-1) as [string])[0]).toBe(
+        queueUrl("all", PAGE_SIZE)
+      )
+    );
+    await screen.findByTestId("rd-item-review-1");
+    fireEvent.click(screen.getByRole("button", { name: t("previous_page") }));
+    await waitFor(() =>
+      expect((fetchMock.mock.calls.at(-1) as [string])[0]).toBe(queueUrl("all", 0))
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("filter_claimed") }));
+    await waitFor(() =>
+      expect((fetchMock.mock.calls.at(-1) as [string])[0]).toBe(queueUrl("claimed", 0))
+    );
+    expect(screen.getByRole("button", { name: t("filter_claimed") })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+  });
+
+  it("releasing one's claim says so, kept until dismissed; a refusal on an item is dismissed too", async () => {
+    serve({
+      queue: () => reply(TWO),
+      patch: () => reply("PATCH /api/moderation/review/[id] — released"),
+    });
+    render(<ReviewDashboard />);
+    const mine = await screen.findByTestId("rd-item-review-2");
+    fireEvent.click(within(mine).getByRole("button", { name: t("release") }));
+    const done = await screen.findByText(/^Released /);
+    const kept = done.closest("[data-outcome]") as HTMLElement;
+    fireEvent.click(within(kept).getByRole("button", { name: /Dismiss/ }));
+    await waitFor(() => expect(screen.queryByText(/^Released /)).toBeNull());
+    const patch = fetchMock.mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === "PATCH"
+    ) as [string, RequestInit];
+    expect(JSON.parse(String(patch[1].body))).toEqual({ action: "unclaim" });
+
+    serve({
+      queue: () => reply(TWO),
+      patch: () =>
+        reply(
+          "PATCH /api/moderation/review/[id] — refused (claimed by another reviewer)"
+        ),
+    });
+    const card = screen.getByTestId("rd-item-review-1");
+    fireEvent.click(within(card).getByRole("button", { name: t("claim") }));
+    await waitFor(() =>
+      expect(card.querySelector("[data-outcome='refused']")).not.toBeNull()
+    );
+    const refused = card.querySelector("[data-outcome='refused']") as HTMLElement;
+    fireEvent.click(within(refused).getByRole("button", { name: /Dismiss/ }));
+    await waitFor(() =>
+      expect(card.querySelector("[data-outcome='refused']")).toBeNull()
+    );
+  });
+
+  it("Modify asks the action it becomes; the form and its confirm step can each be cancelled", async () => {
+    serve({
+      queue: () => reply(TWO),
+      patch: () =>
+        reply("PATCH /api/moderation/review/[id] — resolved, modified to a block"),
+    });
+    render(<ReviewDashboard />);
+    const mine = await screen.findByTestId("rd-item-review-2");
+    fireEvent.click(within(mine).getByRole("button", { name: t("resolve") }));
+    fireEvent.click(within(mine).getByRole("button", { name: t("cancel") }));
+    expect(within(mine).queryByLabelText(t("decision"))).toBeNull();
+    fireEvent.click(within(mine).getByRole("button", { name: t("resolve") }));
+    fireEvent.change(within(mine).getByLabelText(t("decision")), {
+      target: { value: "modify" },
+    });
+    fireEvent.change(within(mine).getByLabelText(t("modified_action")), {
+      target: { value: "block" },
+    });
+    fireEvent.click(within(mine).getByRole("button", { name: t("review_decision") }));
+    fireEvent.click(
+      within(within(mine).getByRole("alertdialog")).getByRole("button", {
+        name: t("cancel"),
+      })
+    );
+    expect(within(mine).queryByRole("alertdialog")).toBeNull();
+    fireEvent.click(within(mine).getByRole("button", { name: t("review_decision") }));
+    const confirm = within(mine).getByRole("alertdialog");
+    fireEvent.change(within(confirm).getByLabelText(t("reviewer_notes")), {
+      target: { value: "A block fits better." },
+    });
+    fireEvent.click(within(confirm).getByRole("button", { name: t("submit_decision") }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          (c) => (c[1] as RequestInit | undefined)?.method === "PATCH"
+        )
+      ).toBe(true)
+    );
+    const patch = fetchMock.mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === "PATCH"
+    ) as [string, RequestInit];
+    expect(JSON.parse(String(patch[1].body))).toMatchObject({
+      action: "resolve",
+      decision: "modify",
+      modifiedAction: "block",
+    });
+  });
+
+  it("a resolved item says its decision, what it became, who decided and when, and the notes", async () => {
+    serve({
+      queue: () =>
+        reply(TWO, (b) => {
+          const items = b.items as Record<string, unknown>[];
+          Object.assign(items[1]!, {
+            status: "resolved",
+            decision: "modify",
+            modifiedAction: "block",
+            resolvedBy: "00000000-0000-4000-9000-887b6c240009",
+            resolver: { email: "mo@example.com", role: "Moderator", erased: false },
+            resolvedAt: "2026-01-02T00:00:00.000Z",
+            reviewerNotes: "A block fits better.",
+          });
+          Object.assign(items[0]!, { status: "resolved", decision: null });
+        }),
+    });
+    render(<ReviewDashboard />);
+    const done = await screen.findByTestId("rd-item-review-2");
+    expect(within(done).getByTestId("rd-decision-review-2")).toHaveTextContent(
+      t("decision_line", { decision: t("decision_modify") })
+    );
+    expect(done).toHaveTextContent(/Changed to:/);
+    expect(done).toHaveTextContent("mo@example.com");
+    expect(done).toHaveTextContent("A block fits better.");
+    const other = screen.getByTestId("rd-item-review-1");
+    expect(within(other).getByTestId("rd-decision-review-1")).toHaveTextContent(
+      t("decision_line", { decision: t("decision_unknown") })
+    );
+    expect(other).toHaveTextContent(t("decided_by_platform"));
+  });
+
+  it("[SF-admin-147] no light-theme boxes on the dark console", async () => {
+    serve({ queue: () => reply(TWO) });
+    const { container } = render(<ReviewDashboard />);
+    await screen.findByTestId("rd-item-review-1");
+    expect(container.innerHTML).not.toMatch(
+      /bg-(?:red|blue|amber|gray|green)-(?:50|100)\b/
+    );
   });
 });

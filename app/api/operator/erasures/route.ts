@@ -149,6 +149,9 @@ const GET_RESPONSE: ResponseSchema = {
           tenantId: {
             type: "string",
           },
+          tenantName: {
+            type: ["null", "string"],
+          },
           tenantSlug: {
             type: "string",
           },

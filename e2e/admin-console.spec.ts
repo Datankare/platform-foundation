@@ -397,10 +397,17 @@ test("4. an erasure stuck on an unverifiable identity is shown, and an attestati
   await expect(item.locator("[data-pool-unverified='true']")).toBeVisible();
   await expect(item).toContainText(`Requested by ${ADMIN_A.email}`);
   await shot(page, "09-erasures");
+  // The erased account by a short reference and its date — its whole id only with Show details
+  // (TASK-221, SF-admin-090).
+  await expect(item).toContainText(`Erased account ${ERASED.slice(0, 8)}…`);
+  await expect(item).not.toContainText(ERASED);
   await item.getByRole("button", { name: "Ask for attestation" }).click();
-  await item
-    .getByLabel("Note (3–500 characters, kept in the audit record)")
-    .fill("absent from both pools, checked by the E2E walk");
+  // Asked in the one confirm step: the kind of reason, and the note the record keeps (SF-admin-091).
+  const ask = item.getByRole("alertdialog");
+  await expect(ask).toBeFocused();
+  await checkA11y(page);
+  await ask.getByLabel("Why it counts as erased").selectOption({ index: 1 });
+  await ask.getByLabel("Reason").fill("absent from both pools, checked by the E2E walk");
   const asked = page.waitForResponse(
     (r) =>
       r
@@ -408,14 +415,13 @@ test("4. an erasure stuck on an unverifiable identity is shown, and an attestati
         .includes(`/api/operator/tenants/${TENANT}/erasures/${ERASED}/attestation`) &&
       r.request().method() === "POST"
   );
-  await item.getByRole("button", { name: "Ask for attestation" }).click();
+  await ask.getByRole("button", { name: "Ask for attestation" }).click();
   expect((await asked).status()).toBe(201);
+  // Asked: held for a second operator — never "done".
   await expect(
-    page.getByText(
-      `Attestation asked for account ${ERASED}. A second operator must approve it.`
-    )
+    page.locator("[data-outcome='held']").filter({ hasText: "Ask for attestation of" })
   ).toBeVisible();
-  await expect(item).toContainText(`Attestation asked by ${ADMIN_B.email}`);
+  await expect(item).toContainText("Attestation asked by you");
   await expect(item).toContainText("a different operator must approve it");
   await fitsWidth(page);
   await shot(page, "10-erasures-asked");
@@ -1180,5 +1186,158 @@ test("13. governance screens at 390 px: each fits; the audit log filtered by kin
     await checkA11y(phone);
     await shot(phone, name);
   }
+  await context.close();
+});
+
+/**
+ * The operator and moderation screens (TASK-221): open a section by its address, its read awaited
+ * (the section registry's own read, or the one its view makes first).
+ */
+async function openSection(page: Page, id: string, read: string): Promise<void> {
+  await room(page, 4);
+  const answered = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === read && r.request().method() === "GET"
+  );
+  await page.goto(`/admin?section=${id}`);
+  expect((await answered).status()).toBe(200);
+  await expect(page.locator("#admin-section-heading")).toBeVisible();
+}
+
+test("14. operator and moderation screens at 1280 px: each fits and passes the scan; jobs and tenants open in their panels, every change confirmed first (SF-admin-100, 112, E-87 to E-89)", async ({
+  page,
+}) => {
+  await openConsole(page, ADMIN_A);
+
+  // Jobs: a job opens its panel; a run is confirmed — one that removes records cannot be undone.
+  await openSection(page, "jobs", "/api/operator/jobs");
+  await fitsWidth(page);
+  await checkA11y(page);
+  await shot(page, "53-jobs");
+  await page.getByRole("button", { name: "Open Erasure purge" }).click();
+  await expect(page.getByRole("heading", { name: "Erasure purge" })).toBeFocused();
+  await page.getByRole("button", { name: "Run now", exact: true }).click();
+  const purge = page.getByRole("alertdialog", { name: "Run Erasure purge now?" });
+  await expect(purge).toBeFocused();
+  await expect(purge).toHaveAttribute("data-risk", "irreversible");
+  await checkA11y(page);
+  await shot(page, "54-jobs-run-confirm");
+  await purge.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Open Expire strikes" }).click();
+  await page.getByRole("button", { name: "Run now", exact: true }).click();
+  const run = page.getByRole("alertdialog", { name: "Run Expire strikes now?" });
+  const ran = page.waitForResponse(
+    (r) =>
+      r.url().includes("/api/operator/jobs/schedules/") &&
+      r.url().endsWith("/run") &&
+      r.request().method() === "POST"
+  );
+  await run.getByRole("button", { name: "Run now", exact: true }).click();
+  expect((await ran).status()).toBe(200);
+  await expect(
+    page.locator("[data-outcome='applied']").filter({ hasText: "Expire strikes ran" })
+  ).toBeVisible();
+  await fitsWidth(page);
+
+  // Tenants: a tenant opens in its own panel; its settings and held changes are read there.
+  await openSection(page, "tenants", "/api/operator/tenants");
+  await fitsWidth(page);
+  await checkA11y(page);
+  await shot(page, "55-tenants");
+  await page.getByRole("button", { name: "Purge due tenants" }).click();
+  const purgeDue = page.getByRole("alertdialog", {
+    name: "Purge every deleted tenant whose grace period has passed?",
+  });
+  await expect(purgeDue).toHaveAttribute("data-risk", "irreversible");
+  await purgeDue.getByRole("button", { name: "Cancel" }).click();
+  // The home tenant (the harness's own), so its settings' read is named.
+  await page.locator(`[data-tenant-open='${TENANT}']`).click();
+  await expect(page.locator("[data-detail-panel] h3")).toBeFocused();
+  await checkA11y(page);
+  await shot(page, "56-tenant-panel");
+  await room(page, 4);
+  const settings = page.waitForResponse(
+    (r) =>
+      r.url().includes(`/api/operator/tenants/${TENANT}/config`) &&
+      r.request().method() === "GET"
+  );
+  await page
+    .getByRole("group", { name: /^Parts of / })
+    .getByRole("button", { name: "Settings", exact: true })
+    .click();
+  expect((await settings).status()).toBeLessThan(500);
+  await page.waitForLoadState("networkidle");
+  await fitsWidth(page);
+  await checkA11y(page);
+  await shot(page, "57-tenant-settings");
+  await page
+    .getByRole("group", { name: /^Parts of / })
+    .getByRole("button", { name: "Agent kill switch", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Suspend every agent…" }).click();
+  await expect(page.getByRole("alertdialog")).toBeFocused();
+  await checkA11y(page);
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Close" }).click();
+
+  // Erasures, the kill switch, the tenant's own settings and the review queue: each fits and scans.
+  for (const [id, read, name] of [
+    ["erasures", "/api/operator/erasures", "58-erasures"],
+    ["tenant", "/api/admin/tenant", "59-tenant"],
+    ["moderation", "/api/moderation/review", "60-moderation"],
+  ] as const) {
+    await openSection(page, id, read);
+    await page.waitForLoadState("networkidle");
+    await fitsWidth(page);
+    await checkA11y(page);
+    await shot(page, name);
+  }
+  await room(page, 3);
+  await page.goto("/admin?section=kill-switch");
+  await page.getByRole("button", { name: "Suspend every agent…" }).click();
+  await expect(page.getByRole("alertdialog")).toBeFocused();
+  await fitsWidth(page);
+  await checkA11y(page);
+  await shot(page, "61-kill-switch-confirm");
+});
+
+test("15. operator and moderation screens at 390 px: each fits and passes the scan, a panel takes the list's place", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const phone = await context.newPage();
+  await room(phone, 10);
+  await openConsole(phone, ADMIN_B);
+  for (const [id, read, name] of [
+    ["jobs", "/api/operator/jobs", "62-jobs-390"],
+    ["tenants", "/api/operator/tenants", "63-tenants-390"],
+    ["erasures", "/api/operator/erasures", "64-erasures-390"],
+    ["tenant", "/api/admin/tenant", "65-tenant-390"],
+    ["moderation", "/api/moderation/review", "66-moderation-390"],
+  ] as const) {
+    await openSection(phone, id, read);
+    await phone.waitForLoadState("networkidle");
+    await fitsWidth(phone);
+    await checkA11y(phone);
+    await shot(phone, name);
+    if (id === "jobs") {
+      await phone.getByRole("button", { name: "Open Erasure purge" }).click();
+      await expect(phone.getByRole("heading", { name: "Erasure purge" })).toBeFocused();
+      await fitsWidth(phone);
+      await shot(phone, "62b-job-panel-390");
+    }
+    if (id === "tenants") {
+      await phone.locator("[data-tenant-open]").first().click();
+      await fitsWidth(phone);
+      await checkA11y(phone);
+      await shot(phone, "63b-tenant-panel-390");
+    }
+  }
+  await room(phone, 3);
+  await phone.goto("/admin?section=kill-switch");
+  await phone.getByRole("button", { name: "Suspend every agent…" }).click();
+  await fitsWidth(phone);
+  await checkA11y(phone);
+  await shot(phone, "67-kill-switch-390");
   await context.close();
 });

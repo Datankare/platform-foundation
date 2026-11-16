@@ -10,6 +10,11 @@
  *                 person marks each (./effects/[id], TASK-215, audit B-12)
  *   deadLetters   dead-lettered jobs, newest first, with the platform's own wording of why
  *
+ * Each dead job and each unresolved call names its tenant by name (`tenantName`, null for the
+ * platform or a tenant no longer in the directory) — the console showed the tenant's id
+ * (TASK-221, SF-admin-102). Every recurring job says whether running it removes records for good
+ * (`deletesData`): the console confirms such a run as one that cannot be undone.
+ *
  * Read-only. Changing a schedule, running one now, replaying or discarding a dead job are the
  * routes below this one.
  */
@@ -20,6 +25,8 @@ import { internalError } from "@/platform/errors";
 import { describeSchedules, listDeadLetters } from "@/platform/jobs/operator";
 import { listUnresolvedEffects } from "@/platform/agents/effect-settlement";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { getTenantDirectory } from "@/platform/tenancy/directory";
+import { logger } from "@/lib/logger";
 import { type ResponseSchema, SHOWN } from "@/platform/errors/response-schema";
 
 const GET_RESPONSE: ResponseSchema = {
@@ -30,6 +37,7 @@ const GET_RESPONSE: ResponseSchema = {
       items: {
         type: "object",
         properties: {
+          tenantName: { type: ["null", "string"] },
           attempts: {
             type: "number",
           },
@@ -74,6 +82,7 @@ const GET_RESPONSE: ResponseSchema = {
       items: {
         type: "object",
         properties: {
+          deletesData: { type: "boolean" },
           description: SHOWN,
           enabled: {
             type: "boolean",
@@ -165,6 +174,7 @@ const GET_RESPONSE: ResponseSchema = {
       items: {
         type: "object",
         properties: {
+          tenantName: { type: ["null", "string"] },
           attempts: {
             type: "number",
           },
@@ -207,8 +217,34 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
       listDeadLetters(),
       listUnresolvedEffects(),
     ]);
-    return NextResponse.json({ schedules, deadLetters, unresolvedEffects });
+    const names = await tenantNames();
+    const named = <T extends { tenantId?: string | null }>(row: T) => ({
+      ...row,
+      tenantName: row.tenantId ? (names.get(row.tenantId.toLowerCase()) ?? null) : null,
+    });
+    return NextResponse.json({
+      schedules,
+      deadLetters: deadLetters.map(named),
+      unresolvedEffects: unresolvedEffects.map(named),
+    });
   } catch (error) {
     return internalError(error, { request, context: "Jobs view failed" });
   }
 }, GET_RESPONSE);
+
+/**
+ * Every tenant's name, by id (the directory operators read). A read that fails names no tenant —
+ * each row then says its tenant is not known — and never fails the view.
+ */
+async function tenantNames(): Promise<ReadonlyMap<string, string>> {
+  try {
+    const tenants = await getTenantDirectory().listTenants();
+    return new Map(tenants.map((t) => [t.id.toLowerCase(), t.name]));
+  } catch (error) {
+    logger.warn("Tenant names could not be read for the Jobs view", {
+      error: error instanceof Error ? error.message : String(error),
+      route: "api/operator/jobs",
+    });
+    return new Map();
+  }
+}

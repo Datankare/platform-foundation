@@ -315,6 +315,7 @@ import { POST as mfaSetupPOST } from "@/app/api/auth/mfa/setup/route";
 import { POST as mfaVerifyPOST } from "@/app/api/auth/mfa/verify/route";
 import { POST as runNowPOST } from "@/app/api/operator/jobs/schedules/[kind]/run/route";
 import { POST as deadJobPOST } from "@/app/api/operator/jobs/dead/[id]/route";
+import { POST as effectPOST } from "@/app/api/operator/jobs/effects/[id]/route";
 import { clearConfigCache } from "@/platform/auth/platform-config";
 import { POST as decisionPOST } from "@/app/api/admin/approvals/[id]/route";
 import {
@@ -1845,6 +1846,7 @@ async function jobsHistory(): Promise<InMemoryJobStore> {
   return store;
 }
 
+const UNRESOLVED_EFFECT = "eeeeeeee-0000-4000-8000-000000000001";
 const JOB_KINDS = new Set([
   "moderation.escalation-reaper",
   "config.expire-approvals",
@@ -1882,6 +1884,41 @@ const JOBS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
       mockAudit.down = true;
       return record(await runNowOf("test.optout"));
     },
+  "POST /api/operator/jobs/schedules/[kind]/run — ran": async () => {
+    await jobsHistory();
+    // The run's worker and its time differ with each run: fixed, as the jobs' own fixtures are.
+    const f = await recordStable(await runNowOf("test.optout"));
+    const report = (f.body as { result?: { report?: Record<string, unknown> } }).result
+      ?.report;
+    if (report) report.workerId = "fixture";
+    return f;
+  },
+  // An external call of unknown outcome, settled by an operator (the ledger as the route reads it).
+  "POST /api/operator/jobs/effects/[id] — took effect": async () => {
+    rows((sql) => {
+      if (
+        /^select tenant_id, status, operation_id, effect_key from effect_ledger/.test(sql)
+      )
+        return [
+          {
+            tenant_id: T.acme,
+            status: "indeterminate",
+            operation_id: "op-1",
+            effect_key: "send-mail:1",
+          },
+        ];
+      if (/^update effect_ledger set status/.test(sql)) return [{}];
+      return undefined;
+    });
+    return record(
+      await effectPOST(
+        req(`/api/operator/jobs/effects/${UNRESOLVED_EFFECT}`, "POST", "super_admin", {
+          outcome: "took_effect",
+        }),
+        { params: Promise.resolve({ id: UNRESOLVED_EFFECT }) }
+      )
+    );
+  },
   "POST /api/operator/jobs/dead/[id] — replayed": async () =>
     recordStable(await onDead("replay")),
   "POST /api/operator/jobs/dead/[id] — discarded": async () =>
@@ -2343,7 +2380,7 @@ const REVIEW: Readonly<Record<string, () => Promise<RouteFixture>>> = {
   },
   "GET /api/moderation/review — the store failing": async () => {
     jest
-      .spyOn(getReviewQueueStore(), "query")
+      .spyOn(getReviewQueueStore(), "page")
       .mockRejectedValueOnce(new Error("review queue unavailable"));
     return reviewList();
   },
@@ -3033,6 +3070,23 @@ const TENANCY: Readonly<Record<string, () => Promise<RouteFixture>>> = {
   },
   "POST /api/operator/purge — none due": async () => {
     await tenancyWorld();
+    return record(await purgePOST(op("/api/operator/purge", "POST")));
+  },
+  // Gone is past its purge date: purged, its rows counted.
+  "POST /api/operator/purge — one purged": async () => {
+    await tenancyWorld();
+    const world = fakeData().answer;
+    fakeData().answer = ((sql: string, values: readonly unknown[]) => {
+      if (
+        /^select id from tenants where status = 'deleted' and purged_at is null/.test(sql)
+      )
+        return [{ id: T.gone }];
+      if (/tenant_purge\(/.test(sql)) return [{ deleted: "12" }];
+      return (world as (q: string, v: readonly unknown[]) => unknown[] | undefined)(
+        sql,
+        values
+      );
+    }) as never;
     return record(await purgePOST(op("/api/operator/purge", "POST")));
   },
   "GET /api/operator/readiness — this deployment": async () => {

@@ -198,6 +198,18 @@ export class InMemoryReviewQueueStore implements ReviewQueueStore {
   }
 
   async query(options?: ReviewQueryOptions): Promise<readonly ReviewQueueItem[]> {
+    return this.filtered(options);
+  }
+
+  async page(options: ReviewQueryOptions): Promise<readonly ReviewQueueItem[]> {
+    const offset = options.offset && options.offset > 0 ? options.offset : 0;
+    return this.filtered({ ...options, limit: undefined }).slice(
+      offset,
+      options.limit && options.limit > 0 ? offset + options.limit : undefined
+    );
+  }
+
+  private filtered(options?: ReviewQueryOptions): ReviewQueueItem[] {
     let filtered = [...this.items];
 
     if (options?.status) {
@@ -515,9 +527,21 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
 
   async query(options?: ReviewQueryOptions): Promise<readonly ReviewQueueItem[]> {
     try {
-      const { rows } = await withTenantTx((tx) =>
-        tx.query<ReviewQueueRow>(
-          `select id, source, priority, status, moderation_result, target_user_id, request_id,
+      return await this.select(options ?? {});
+    } catch {
+      return [];
+    }
+  }
+
+  async page(options: ReviewQueryOptions): Promise<readonly ReviewQueueItem[]> {
+    // No catch: a read that fails is said as one (TASK-221), never an empty queue.
+    return this.select(options);
+  }
+
+  private async select(options: ReviewQueryOptions): Promise<ReviewQueueItem[]> {
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<ReviewQueueRow>(
+        `select id, source, priority, status, moderation_result, target_user_id, request_id,
                   explanation_chain, appeal_reason, original_decision_id, claimed_by,
                   claimed_at, resolved_by, resolved_at, decision, reviewer_notes, notes_shown,
                   modified_action, previous_account_status, related_strike_id, created_at,
@@ -530,24 +554,22 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
               and ($5::text is null or claimed_by = $5::text)
               and ($6::timestamptz is null or created_at >= $6::timestamptz)
               and ($7::timestamptz is null or created_at < $7::timestamptz)
-            order by created_at asc
-            limit $8::integer`,
-          [
-            options?.status || null,
-            options?.source || null,
-            options?.priority || null,
-            options?.targetUserId || null,
-            options?.claimedBy || null,
-            options?.since || null,
-            options?.before || null,
-            options?.limit && options.limit > 0 ? options.limit : null,
-          ]
-        )
-      );
-      return rows.map(mapRowToItem);
-    } catch {
-      return [];
-    }
+            order by created_at asc, id asc
+            limit $8::integer offset $9::integer`,
+        [
+          options?.status || null,
+          options?.source || null,
+          options?.priority || null,
+          options?.targetUserId || null,
+          options?.claimedBy || null,
+          options?.since || null,
+          options?.before || null,
+          options?.limit && options.limit > 0 ? options.limit : null,
+          options?.offset && options.offset > 0 ? options.offset : 0,
+        ]
+      )
+    );
+    return rows.map(mapRowToItem);
   }
 
   async getStats(): Promise<ReviewQueueStats> {

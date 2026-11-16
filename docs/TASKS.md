@@ -7,6 +7,193 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-221 — The admin console rebuilt on shared parts, pass 3 of 3: the operator and moderation screens (Tenant, Tenants, Jobs, Erasures, the kill switch, the review queue, staff two-step enrolment) and axe on /admin
+
+| Field        | Detail                                                                                                            |
+| ------------ | ----------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-221                                                                                                          |
+| **Type**     | Usability and correctness — the admin console's operator and moderation screens                                   |
+| **Severity** | Important (E-87 to E-89, SF-admin-100 to 102, 110 to 112, 140 to 142, 150), with 34 Low and 5 Nit screen findings |
+| **Phase**    | Phase 5                                                                                                           |
+| **Target**   | v6.0.0 (RC)                                                                                                       |
+| **Status**   | Fixed on develop (batch 56d-3)                                                                                    |
+| **Logged**   | 2026-11-13 (the 2026-11-12 screen review, `SF-admin-nnn`; second-wave status S7, E-87 to E-89 and E-91)           |
+
+Batch 56d-3, in both repositories (Playform: its TASK-5023). The last of TASK-216's three passes:
+every admin screen now uses the shared parts (`components/admin/ui/`), and the guard's known list
+is empty — its type takes no entry, and a test refuses one
+(`__tests__/admin-shared-components-guard.test.ts`).
+
+**What was wrong.** The operator and moderation screens acted on one click where a change could
+not be taken back (purge a tenant, remove its address, approve its deletion, run a job that
+deletes data, replay or discard a dead job, decide a tenant's held change); edited every tenant
+setting as free text whatever its type and offered Save on every key whatever its tier; opened a
+tenant's settings and kill switch at the bottom of the page; showed tenants, erased accounts,
+withdrawn holds, review decisions and accounts by hex id; said one status line that the next
+action replaced; read a failed read as "none" (a tenant's held changes; the review queue, whose
+store answered `[]` when it could not read); offered Resolve and Release on items another
+moderator held; let staff two-step enrolment's confirm reject unhandled; and the Tenant screen
+scrolled sideways by 469 px on a phone.
+
+**What it is now.** Each screen reads through the panel state, lists in the shared table, says
+each change's outcome in the one outcome display (kept until dismissed, a list per section),
+asks before every consequential or irreversible change in the shared confirm step (which says
+what happens to people, and asks why where the record keeps it), gates each control on the
+permission its route checks, names every code through the shared labels, and opens a row's
+detail at the row. A tenant opens in its own panel (in place of the list) for its state, its
+addresses, its settings and their held changes (the Approvals card and confirm step), its
+export and its kill switch. The review queue pages, names its people by address, shows each
+claim and when an open escalation is due, and offers Resolve and Release only to the claimant.
+New shared parts: `ui/download.ts` (a file fetched through the call path, never saved when it
+stopped part-way), `ui/Stored.tsx` (a stored record's evidence, a secret to copy), and
+`views/TenantSettings.tsx` (one tenant-settings list for the tenant's administrators and the
+operators, on Platform config's typed editor).
+
+**Findings fixed** (the test is `tenancy-panels`, `jobs-panels`, `admin-operator-screens`,
+`agent-kill-switch-panel`, `review-dashboard` or `mfa-enrollment` unless named):
+
+| Finding          | Was                                                                                                    | Now                                                                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E-87 to E-89     | Purge due, remove an address, approve or reject a deletion, a tenant's held-change decision: one click | Each in the confirm step, saying what happens to the tenant's people; a purge cannot be undone and names the tenants due                                               |
+| E-91             | Save and Use default on every tenant setting                                                           | Offered only with the setting's tier permission (`config_manage_standard` / `config_manage_safety`, the route's own rule); disabled otherwise, naming it               |
+| SF-090           | The erased account and its tenant by full id                                                           | A short reference and the day it was erased; the tenant by name (`GET /api/operator/erasures` adds `tenantName`); the whole id only with "Show details"                |
+| SF-091           | The attestation's confirmation unfocused, its button "Confirm"                                         | The shared confirm step: focus in and back, Escape, the button naming the action; asking takes the kind of reason and the note in the step; approving cannot be undone |
+| SF-092           | "Erased " with no date; "Store mail-list"                                                              | "Erased"; each store by name                                                                                                                                           |
+| SF-093           | "see single-owner dual control"                                                                        | What to do, in the sentence                                                                                                                                            |
+| SF-100           | Run now on one click, data-deleting jobs included                                                      | Confirmed; a job that removes records (`schedule.deletesData`) cannot be undone and asks why — recorded with the run                                                   |
+| SF-101           | One status line for two sections, replaced by the next action                                          | An outcome list per section, kept until dismissed                                                                                                                      |
+| SF-102           | Dead jobs' tenant by UUID                                                                              | By name (`GET /api/operator/jobs` adds `tenantName`), the platform, or "a tenant no longer listed"                                                                     |
+| SF-103           | Replay on one click                                                                                    | Confirmed, with its reason (recorded)                                                                                                                                  |
+| SF-104           | Their own `call()` showed `body.message ?? body.code`; "The request was refused" for no answer         | `adminCall`: the catalogue's sentence for the code, or the network sentence                                                                                            |
+| SF-105           | The reason form at the card's top, its minimum unstated, Escape lost focus                             | The job's panel at its row; the confirm step's one reason field, its minimum said before the mistake; focus back                                                       |
+| SF-106           | An interval out of range: a grey button                                                                | A field error with the bounds                                                                                                                                          |
+| SF-107           | The owner and the opt-out key as codes                                                                 | "The platform" or the module by name; the opt-out setting by name                                                                                                      |
+| SF-108           | The discard confirmation above the list, unfocused                                                     | The confirm step in the job's panel: focused, cannot be undone, a reason required                                                                                      |
+| SF-110           | Every tenant setting edited as free text, JSON guessed                                                 | Platform config's typed editor (on/off, a number in its range, one of a list by name, a list checked), confirmed now → after with the record's comment                 |
+| SF-111           | The operator's held list: only the kind of change                                                      | The Approvals card (before and after, who asked, why, when) and its confirm step (`HoldCard`, `decideHeld`)                                                            |
+| SF-112           | Settings and the kill switch at the page's bottom; nothing while settings load                         | The tenant's own panel in place of the list, its heading focused, "Reading…" while its settings are read, Close back to the row; the list fits a phone                 |
+| SF-113           | "…: done." without who or how many                                                                     | The address made an administrator, each tenant purged by name and its rows                                                                                             |
+| SF-114           | The tenant by UUID; the deletion's requester unshown                                                   | The requester by address (`pendingDeletion.requester`), "you" for one's own, and Approve disabled on it (`byViewer`)                                                   |
+| SF-115           | A failed read of the held changes shown as none                                                        | The panel state: a failed read said, with Try again                                                                                                                    |
+| SF-116           | Export a plain link: no progress; a refusal saved as the file                                          | Fetched through the call path: "Exporting…", then the file saved, or the refusal said; a stream that stopped part-way is not saved                                     |
+| SF-117           | Suspend, Resume, Restore, Delete asked only "Reason"                                                   | Each confirm step says what happens to the tenant's people, then asks why                                                                                              |
+| SF-118           | "active", "remove", "add address" in lower case                                                        | "Active", "Remove", "Add an address"                                                                                                                                   |
+| SF-119           | Readiness: no checking state, no time, an unknown check raw                                            | "Checking…", "Checked at 10:42", each check by name                                                                                                                    |
+| SF-125           | Withdrawn holds listed by UUID                                                                         | Said as what they are (changes to the trusted agents list that waited for approval), their references only with "Show details" (owner's question 2)                    |
+| SF-126           | `body.message ?? body.error ?? body.code`                                                              | `adminCall`: the catalogue's sentence                                                                                                                                  |
+| SF-127           | Editing the reason wiped the result                                                                    | The reason is in the confirm step; outcomes stay until dismissed                                                                                                       |
+| SF-140           | "Decision 9b1… · account 3f2a…"                                                                        | The account by address (`target`), the decision by its kind; the ids only with "Show details"                                                                          |
+| SF-141           | No claim shown; Resolve and Release on another's item; no resolution shown                             | Who claimed and when; Resolve and Release only for the claimant (`claimedByViewer`); who decided, when, and the notes or the platform's note                           |
+| SF-142           | Nothing said after Claim, Release or Resolve                                                           | An outcome naming the item                                                                                                                                             |
+| SF-143           | One banner at the top; "Notes are required" there                                                      | A refusal on its item; the notes' error at the field                                                                                                                   |
+| SF-144           | Categories, severity, phases as codes                                                                  | Names                                                                                                                                                                  |
+| SF-145           | A refused suggestion: "No suggestion available right now"                                              | "No suggestion: " and the refusal's sentence                                                                                                                           |
+| SF-146           | No age, no due time                                                                                    | "In the queue since"; an open escalation's due time (`dueAt`, the SLA), or overdue                                                                                     |
+| SF-147           | Light boxes on the dark console                                                                        | The console's tokens                                                                                                                                                   |
+| SF-148           | Uphold, overturn, modify unexplained                                                                   | Each explained as it is chosen, and in its confirm step                                                                                                                |
+| SF-149           | Up to 200 items at once                                                                                | Pages of 25 (`offset`, `hasMore`), with Previous and Next                                                                                                              |
+| SF-150           | `verify` had no catch                                                                                  | `adminCall`: no answer is said, the button works again                                                                                                                 |
+| SF-151           | No sign-out before finishing; Enter did nothing; no `main`                                             | Sign out at every step; the code is a form; the page is `main`                                                                                                         |
+| SF-152           | "software-token MFA", "user pool"; two names for one thing                                             | Plain words; "Two-step verification" here and at sign-in                                                                                                               |
+| axe on /admin    | No scan on the console                                                                                 | Journeys 14 (1280 px) and 15 (390 px) scan every operator and moderation screen and their open panels and confirm steps; jsdom scans in `admin-operator-screens`       |
+| Re-derived dates | Jobs `when()` ISO text cut to 19 characters; Tenancy `slice(0, 10)`                                    | `admin-format` (the table's `datetime`, `formatDate`)                                                                                                                  |
+| Tenant at 390 px | The Tenant screen scrolled sideways by 469 px (handed over from 56d-2)                                 | The shared table and detail panel; the walk asserts no sideways scroll on every section at 1280 and 390 px                                                             |
+
+**Found while fixing** (each tested, each failing without its fix):
+
+- The review queue's store answered `[]` when it could not read (`query`, fail-soft for the
+  moderation pipeline, P11), so the review screen said "No items in the review queue" during an
+  outage. The screen now reads `ReviewQueueStore.page`, which throws, and the route answers 503
+  `service.unavailable` (`review-queue-page`, `moderation-review-routes`, the store contract).
+- `jobKindLabel` named a job by its description (`screens.jobs.kinds`, a sentence): each job now
+  has a short name (`screens.admin_console.labels.jobs`; a consuming app's own job in its
+  catalogue, `screens.app.jobs`), held for every declared job (`job-names`).
+- The jobs routes asked no reason for a replay or a discard, though the confirmation registry
+  required one: the run, replay and discard routes now take an optional `reason`, recorded with
+  the action (`jobs-operator-routes`; audit details declared).
+
+**Route changes** (each new field declared in its route's response schema, fixtures from the real
+handlers): `GET /api/moderation/review` — paged (`offset`, `limit`: 25 by default, at most 200;
+`hasMore`), `target`, `claimer`, `resolver` (by address), `claimedByViewer`, `dueAt`, and 503 when
+the queue cannot be read; `GET /api/operator/jobs` — `tenantName`, `deletesData`;
+`GET /api/operator/erasures` — `tenantName`; `GET /api/operator/tenants` —
+`pendingDeletion.requester`, `pendingDeletion.byViewer`; `POST /api/operator/jobs/schedules/[kind]/run`
+and `POST /api/operator/jobs/dead/[id]` — an optional `reason`. Nothing is removed.
+
+**Owner's questions** (built on the most conservative reading):
+
+1. _A data-deleting run's reason_ is required by the screen; the run route accepts a run with no
+   reason (it is recorded without one) so that no other caller breaks. Requiring it at the route
+   too would be a stricter, separate change.
+2. _Withdrawn holds (SF-admin-125)._ The kill switch's answer carries only their ids; they are
+   said as changes to the trusted agents list waiting for approval, with their references behind
+   "Show details". Naming each by its requester and date would need the withdrawal to return them.
+3. _Approving a tenant's deletion_ is marked as consequential, not "cannot be undone": the tenant
+   can be restored until its grace period ends; the step says that every row is purged after it.
+4. _The review queue's order_ is the store's (the database store: oldest first; the in-memory
+   store: priority first). Paging made the database store's order stable (`created_at, id`).
+
+**Design check**
+
+- **Reach:** the console's operator and moderation screens, two new shared parts and one shared
+  view, the confirmation registry and labels, five routes' answers (growing compatibly, the review
+  queue's 503 aside), `ReviewQueueStore.page`, the jobs' schedule declaration, the shared catalogue
+  and Playform's app catalogue. No migration, no new setting, no new route.
+- **Races:** a change's answer reads the section again; a decision another operator or moderator
+  made meanwhile is refused by its route and said on its item; the purge's "due" list is read at
+  the click, and the route decides what is due.
+- **Dependencies down:** every read through the panel state (a failed read, with Try again —
+  never an empty list); the directory unreadable → each job's tenant "not known", the view still
+  shown; an export that stops part-way is not saved; no answer to a change → "Not done".
+- **Erasure leftovers:** the reasons a run, replay or discard records are about a job, not an
+  account (listed with why in `audit-details-schema`); nothing else is stored.
+- **Screens × responses:** every call through `adminCall` or a shared caller of it
+  (`runOperatorAction` added; `refusal-coverage` counts it); 172 refusal gaps left the baseline.
+  Every step of the rebuilt screens is driven by a screen test fed a route's own answer (three
+  answers added: a run now that ran, an external call settled, a purge that purged), so the
+  coverage ratchet holds (first measured below it: functions 93.54 % against 94.11 %).
+- **Journeys touched:** `e2e/admin-console.spec.ts` journeys 14 (1280 px) and 15 (390 px), each
+  one sign-in; `e2e/moderation.spec.ts` follows the queue's Refresh and its resolve step. Every
+  wait names its method.
+- **Weakens a tenant's protection?** No. Every control is display only — each route still checks
+  its permission, its tier and its two-operator rule; the new fields name only what the caller
+  already reads (its tenants, its accounts by address).
+- _Accessibility._ The shared parts' (TASK-216); the MFA page is a `main`; axe on every screen.
+- _Credits._ As TASK-216: the **WAI-ARIA Authoring Practices Guide** (W3C WAI; Alert Dialog,
+  Table patterns) and **WCAG 2.2** (W3C; 1.3.1, 1.4.1, 2.4.3, 3.3.1, 3.3.2, 4.1.3).
+
+**Threat model**
+
+- **Boundary:** the console's operator and moderation screens ↔ the routes they read and send to
+  (the tenants, jobs, erasures and review routes, the kill switch, MFA enrolment).
+- **Actors that exist today:** (1) an operator (`platform_operate`) — who could already send every
+  one of these requests by hand; (2) an operator who asked for a deletion or an attestation and
+  would like to approve it; (3) a moderator (`can_moderate`) acting on an item another holds;
+  (4) a staff member enrolling a second step. No other actor is given anything.
+- **Bypasses:** none added. A disabled Approve or Resolve is display only — the deletion,
+  attestation and review routes still refuse the requester and a non-claimant; the tenant settings
+  route still checks the tier.
+- **Forgeries:** a reason is text, bounded (500), declared, and never markup; the review route's
+  people are named in the tenant's own transaction (row-level security).
+- **Legitimate flows:** suspend, resume, restore, delete and decide a deletion; addresses; an
+  administrator made; settings changed and reset; held changes decided; export; purge; a job run,
+  its interval changed, a dead job replayed or discarded, an external call marked; an attestation
+  asked and decided; the kill switch; a review item claimed, released and resolved; enrolment.
+  Each is a screen test or a journey.
+- **Agreed before code:** the owner's brief for batch 56d-3 (group A3 of the screen review), and
+  the 2026-11-12 screen review's fixes.
+
+**Self-review**
+
+- **Consumers checked:** every importer of the converted screens (the section views map, the
+  section console, the admin page), of `HeldActionsPanel` (its card and decision now exported),
+  of `PlatformConfigPanel` (its editor exported), of `jobKindLabel` and of `ReviewQueueStore`
+  (both stores, the contract, the route fixtures); Playform's live journeys of the console and
+  of moderation.
+- **Hostile re-read:** the review route's 503 is new — a caller that read an empty list as "none"
+  now gets a refusal (named in the release notes and the migration guide); the run route reads a
+  body only when one is sent; the guard's empty list is typed so that no entry compiles.
+
 ### TASK-220 — The admin console rebuilt on shared parts, pass 2 of 3: the governance screens (Approvals, Platform config, Dual control, Trusted agents, Roles to Capability map) and the catalogue's developer wording
 
 | Field        | Detail                                                                                                 |
@@ -16,7 +203,7 @@ Security-specific items live in SECURITY_DEBT.md.
 | **Severity** | Important (E-56, E-66, SF-admin-030, 050, 053, 070, 080 to 082), with 30 Low and 4 Nit screen findings |
 | **Phase**    | Phase 5                                                                                                |
 | **Target**   | v6.0.0 (RC)                                                                                            |
-| **Status**   | Fixed on develop (batch 56d-2); pass 56d-3 converts the operator and moderation screens                |
+| **Status**   | Fixed on develop (batch 56d-2); pass 56d-3 (TASK-221) converted the operator and moderation screens    |
 | **Logged**   | 2026-11-13 (the 2026-11-12 screen review, `SF-admin-nnn`; second-wave status S7, E-56 and E-66)        |
 
 Batch 56d-2, in both repositories (Playform: its TASK-5022). Pass 2 of TASK-216's three: every
@@ -206,15 +393,15 @@ features); `GET /api/admin/approvals` — `unreadable`, and 503 as above. Nothin
 
 ### TASK-216 — The admin console rebuilt on shared parts, pass 1 of 3: the parts, a guard, and the console's core (shell, command bar, Users)
 
-| Field        | Detail                                                                                                           |
-| ------------ | ---------------------------------------------------------------------------------------------------------------- |
-| **ID**       | TASK-216                                                                                                         |
-| **Type**     | Usability and correctness — the admin console's screens                                                          |
-| **Severity** | High (E-1, E-2, E-4), with 3 Important, 22 Low and 2 Nit screen findings on the core                             |
-| **Phase**    | Phase 5                                                                                                          |
-| **Target**   | v6.0.0 (RC)                                                                                                      |
-| **Status**   | Fixed on develop (batch 56d-1); pass 56d-2 (TASK-220) converted the governance screens; 56d-3 converts the rest  |
-| **Logged**   | 2026-11-13 (the 2026-11-12 screen review: 105 admin findings `SF-admin-nnn`; second-wave status S7, E-1/E-2/E-4) |
+| Field        | Detail                                                                                                            |
+| ------------ | ----------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-216                                                                                                          |
+| **Type**     | Usability and correctness — the admin console's screens                                                           |
+| **Severity** | High (E-1, E-2, E-4), with 3 Important, 22 Low and 2 Nit screen findings on the core                              |
+| **Phase**    | Phase 5                                                                                                           |
+| **Target**   | v6.0.0 (RC)                                                                                                       |
+| **Status**   | Fixed on develop (batch 56d-1); pass 56d-2 (TASK-220) converted the governance screens; 56d-3 (TASK-221) the rest |
+| **Logged**   | 2026-11-13 (the 2026-11-12 screen review: 105 admin findings `SF-admin-nnn`; second-wave status S7, E-1/E-2/E-4)  |
 
 Batch 56d-1, in both repositories (Playform: its TASK-5017). The owner uses this console and
 said plainly that it is not user-friendly: tables wider than the window, hex ids where a

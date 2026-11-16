@@ -62,6 +62,14 @@ import { newOutcomeId } from "@/components/admin/ui/Outcome";
  * details" (TASK-220: Roles' stored names, a capability's address, an audit entry's ids, …).
  */
 const DETAIL_SECTIONS: ReadonlySet<AdminSection> = new Set<AdminSection>([
+  // The operator and moderation screens (TASK-221): a tenant's id, a job's kind, an erased
+  // account's whole id, a withdrawn hold's reference, a decision's and an account's ids.
+  "tenant",
+  "tenants",
+  "jobs",
+  "erasures",
+  "kill-switch",
+  "moderation",
   "roles",
   "entitlements",
   "per-account",
@@ -312,7 +320,7 @@ export function SectionConsole({
       )}
 
       {/* The review queue reads and acts on its own routes (can_moderate, TASK-210). */}
-      {section === "moderation" && <ReviewDashboard variant="dark" />}
+      {section === "moderation" && <ReviewDashboard showIds={showIds} />}
 
       {View &&
         (endpoint === null ? (

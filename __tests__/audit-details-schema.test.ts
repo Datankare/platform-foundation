@@ -574,6 +574,13 @@ const TEXT_WITHOUT_SUBJECT: Readonly<Record<string, string>> = {
     "an operator's reason for deleting a tenant: about a tenant, not an account (its accounts are erased with it)",
   "admin_action:tenant_restored reason":
     "an operator's reason for restoring a tenant: about a tenant, not an account",
+  // TASK-221: the reason the operators' Jobs screen asks for a run now, a replay or a discard.
+  "admin_action:job_run_now reason":
+    "an operator's reason for running a job now: about a job, not an account",
+  "admin_action:job_replayed reason":
+    "an operator's reason for replaying a failed job: about a job, not an account",
+  "admin_action:job_discarded reason":
+    "an operator's reason for discarding a failed job: about a job, not an account",
   "admin_action:agents_emergency_suspended reason":
     "why agents were suspended: about agents, written by an admin — an agent is no account",
   "admin_action:approval_run_conflict reason":
