@@ -53,6 +53,10 @@ export function safeReturnPath(
   }
   if (url.origin !== new URL(origin).origin) return null;
   const path = url.pathname;
+  // Dot segments normalise away: "/.//evil.example" and "/a/..//evil.example" resolve to the path
+  // "//evil.example", which a browser follows to another site (found by this module's property
+  // test, batch 56e-2; Playform's agent pages refused the same since TASK-194 round 2, N1).
+  if (path.startsWith("//") || path.startsWith("/\\")) return null;
   if (path === "/auth" || path.startsWith("/auth/") || path.startsWith("/api/"))
     return null;
   return `${path}${url.search}${url.hash}`;

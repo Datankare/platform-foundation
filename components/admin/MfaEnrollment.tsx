@@ -11,7 +11,8 @@
  *
  * The otpauth:// URI is drawn as a QR code in the browser (TASK-180) — nothing about the secret
  * leaves the page beyond the setup call. The key and the URI text are the "can't scan" fallback,
- * hidden until asked for so the secret is not on screen by default.
+ * hidden until asked for so the secret is not on screen by default: the one part
+ * (components/app/ui/AuthenticatorKey.tsx) the account page's own enrolment uses too (TASK-224).
  *
  * What the review found and how each is done (SF-admin-150 to 152): every call goes through the
  * one call helper, so a request that never gets an answer is said (the confirm rejected unhandled
@@ -22,12 +23,11 @@
  * @module components/admin
  */
 
-import React, { useMemo, useState } from "react";
-import qrcode from "qrcode-generator";
+import React, { useState } from "react";
 import { renderMessage } from "@/platform/errors/messages";
 import { adminCall } from "@/components/admin/ui/admin-call";
 import { Field, TextInput } from "@/components/admin/ui/Field";
-import { SecretText } from "@/components/admin/ui/Stored";
+import { AuthenticatorKey } from "@/components/app/ui/AuthenticatorKey";
 import {
   OutcomeList,
   outcome,
@@ -38,44 +38,6 @@ import { BUTTON, TEXT } from "@/components/admin/ui/tokens";
 
 const t = (key: string) => renderMessage(`screens.mfa.${key}`);
 
-/** One SVG path for a QR code's dark modules (no markup injection), or null if it cannot encode. */
-function qrPath(text: string): { size: number; d: string } | null {
-  try {
-    const qr = qrcode(0, "M");
-    qr.addData(text);
-    qr.make();
-    const n = qr.getModuleCount();
-    const quiet = 4;
-    let d = "";
-    for (let r = 0; r < n; r++) {
-      for (let c = 0; c < n; c++) {
-        if (qr.isDark(r, c)) d += `M${c + quiet} ${r + quiet}h1v1h-1z`;
-      }
-    }
-    return { size: n + 2 * quiet, d };
-  } catch {
-    return null;
-  }
-}
-
-function QrCode({ text }: { readonly text: string }) {
-  const qr = useMemo(() => qrPath(text), [text]);
-  if (!qr) return <p className="text-sm text-amber-300">{t("qr_failed")}</p>;
-  return (
-    <svg
-      role="img"
-      aria-label={t("qr_label")}
-      viewBox={`0 0 ${qr.size} ${qr.size}`}
-      width={200}
-      height={200}
-      shapeRendering="crispEdges"
-      className="self-center rounded bg-white"
-    >
-      <path d={qr.d} fill="#000" />
-    </svg>
-  );
-}
-
 type Step =
   { kind: "start" } | { kind: "code"; secret: string; uri?: string } | { kind: "done" };
 
@@ -85,7 +47,6 @@ export default function MfaEnrollment({ onSignOut }: { readonly onSignOut: () =>
   const [problem, setProblem] = useState<string | null>(null);
   const [outcomes, setOutcomes] = useState<OutcomeEntry[]>([]);
   const [busy, setBusy] = useState(false);
-  const [showKey, setShowKey] = useState(false);
   const say = (entry: OutcomeEntry) => setOutcomes([entry]);
 
   const start = async () => {
@@ -106,7 +67,6 @@ export default function MfaEnrollment({ onSignOut }: { readonly onSignOut: () =>
         ? { uri: answer.body.qrCodeUri }
         : {}),
     });
-    setShowKey(false);
   };
 
   const verify = async () => {
@@ -158,33 +118,10 @@ export default function MfaEnrollment({ onSignOut }: { readonly onSignOut: () =>
             void verify();
           }}
         >
-          {step.uri && (
-            <>
-              <p className="text-sm">{t("scan")}</p>
-              <QrCode text={step.uri} />
-            </>
-          )}
-          <button
-            type="button"
-            aria-expanded={showKey}
-            aria-controls="mfa-key"
-            onClick={() => setShowKey((v) => !v)}
-            className={`self-start text-sm ${BUTTON.link}`}
-          >
-            {showKey ? t("hide_key") : t("show_key")}
-          </button>
-          {showKey && (
-            <div id="mfa-key" className="flex flex-col gap-2">
-              <p className="text-sm">
-                {t("add_key")} <SecretText value={step.secret} />
-              </p>
-              {step.uri && (
-                <p className={`text-xs ${TEXT.faint}`}>
-                  {t("or_open")} <SecretText value={step.uri} />
-                </p>
-              )}
-            </div>
-          )}
+          <AuthenticatorKey
+            secret={step.secret}
+            {...(step.uri ? { uri: step.uri } : {})}
+          />
           <Field label={t("code_label")} help={t("code_help")} error={problem}>
             {(control) => (
               <TextInput

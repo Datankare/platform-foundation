@@ -32,6 +32,9 @@
     "/platform/assurance/unwired-security.ts",
     "/platform/modules/app-modules.ts",
     "/platform/modules/app-home.tsx",
+    "/platform/modules/app-account.tsx",
+    "/app-screens.app.json",
+    "/auth-screens.app.json",
     "/platform/modules/app-manifest.json",
     "/platform/modules/__tests__/app-modules.test.ts"
   ]

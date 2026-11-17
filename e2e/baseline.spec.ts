@@ -19,7 +19,8 @@ test.describe("Platform baseline", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await signInPage(page);
     await page.goto("/");
-    const submit = page.getByRole("button", { name: "Submit and translate" });
+    // Named by its visible words since TASK-224 (SF-app-017: a name that differed from the text).
+    const submit = page.getByRole("button", { name: "Translate & Speak" });
     await expect(submit).toBeVisible({ timeout: 30000 });
     const card = submit.locator(
       "xpath=ancestor::div[contains(@class, 'rounded-2xl')][1]"

@@ -16,6 +16,7 @@ const replace = jest.fn();
 const push = jest.fn();
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace, push, refresh: jest.fn() }),
+  usePathname: () => "/",
 }));
 const signOut = jest.fn<Promise<boolean>, []>();
 jest.mock("@/platform/auth/context", () => ({
@@ -51,6 +52,21 @@ describe("the home screen's Sign out", () => {
     });
     await waitFor(() => expect(signOut).toHaveBeenCalledTimes(1));
     expect(replace.mock.calls.map((c) => c[0])).toEqual(to);
+  });
+
+  it("signOut rejecting (SF-app-002): no unhandled rejection, and the page stays", async () => {
+    signOut.mockRejectedValue(new Error("offline"));
+    const unhandled = jest.fn();
+    process.on("unhandledRejection", unhandled);
+    render(<HomeClient />);
+    await act(async () => {
+      screen.getByRole("button", { name: "Sign out" }).click();
+    });
+    await waitFor(() => expect(signOut).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 0));
+    process.off("unhandledRejection", unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
   });
 });
 

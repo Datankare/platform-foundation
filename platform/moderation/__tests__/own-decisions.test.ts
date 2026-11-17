@@ -30,10 +30,13 @@ import {
   setModerationStore,
 } from "../store";
 import {
+  DECISION_REASONS,
+  decisionReason,
   listOwnDecisions,
   MAX_APPEAL_REASON_CHARS,
   OWN_DECISIONS_LIMIT,
 } from "../review-service";
+import { renderMessage } from "@/platform/errors/messages";
 import type { ModerationAuditRecord, ModerationResult } from "../types";
 import type { ReviewQueueItem } from "../review-types";
 
@@ -113,6 +116,8 @@ describe("listOwnDecisions (TASK-210)", () => {
       decidedAt: "2026-01-01T00:00:00.000Z",
       contentType: "generation",
       appealableUntil: "2026-01-04T00:00:00.000Z",
+      // The kind of reason, never the screened text (SF-app-060).
+      reason: decisionReason(audit({ trajectoryId: "old" })),
       appeal: null,
     });
     expect(own).toMatchObject({
@@ -210,5 +215,70 @@ describe("listOwnDecisions (TASK-210)", () => {
     const read = jest.spyOn(queue, "query");
     expect((await listOwnDecisions(ME)).decisions).toEqual([]);
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe("decisionReason (TASK-224, SF-app-060)", () => {
+  it("the first category the screening flagged that the platform names", () => {
+    expect(
+      decisionReason({ categoriesFlagged: ["hate"], triggeredBy: "classifier" })
+    ).toBe("hate");
+    expect(
+      decisionReason({
+        categoriesFlagged: ["brand_new", "violence"],
+        triggeredBy: "classifier",
+      })
+    ).toBe("violence");
+  });
+
+  it("every category the classifier can record has its reason — self-harm and dangerous too", () => {
+    // The classifier's own list (prompts/safety/classify-v1.ts): a record holds only these.
+    for (const category of [
+      "harassment",
+      "sexual",
+      "violence",
+      "self-harm",
+      "hate",
+      "dangerous",
+    ]) {
+      const reason = decisionReason({
+        categoriesFlagged: [category],
+        triggeredBy: "classifier",
+      });
+      expect(reason).not.toBe("other");
+      expect(DECISION_REASONS).toContain(reason);
+    }
+    expect(
+      decisionReason({ categoriesFlagged: ["self-harm"], triggeredBy: "classifier" })
+    ).toBe("self_harm");
+    // An inherited property name is no category.
+    expect(
+      decisionReason({ categoriesFlagged: ["toString"], triggeredBy: "classifier" })
+    ).toBe("other");
+  });
+
+  it("no named category: what decided it — a word list, the age rating — else other", () => {
+    expect(decisionReason({ categoriesFlagged: [], triggeredBy: "blocklist" })).toBe(
+      "blocked_words"
+    );
+    expect(decisionReason({ categoriesFlagged: [], triggeredBy: "content-rating" })).toBe(
+      "age_rating"
+    );
+    expect(decisionReason({ categoriesFlagged: [], triggeredBy: "classifier" })).toBe(
+      "other"
+    );
+    expect(
+      decisionReason({
+        categoriesFlagged: undefined as unknown as string[],
+        triggeredBy: "context",
+      })
+    ).toBe("other");
+  });
+
+  it("every reason the route can send is said in plain words on the account page", () => {
+    for (const reason of DECISION_REASONS) {
+      const key = `screens.account.decisions.reason.${reason}`;
+      expect(renderMessage(key)).not.toBe(key);
+    }
   });
 });

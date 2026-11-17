@@ -10,9 +10,11 @@
  */
 
 import React from "react";
+import "@testing-library/jest-dom";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AppealForm from "@/components/AppealForm/AppealForm";
 import { routeAnswer, type RouteFixtureName } from "@/__tests__/fixtures/route-responses";
+import { renderMessage } from "@/platform/errors/messages";
 
 const LONG_REASON = "This is a sufficiently long and detailed appeal reason.";
 
@@ -83,9 +85,11 @@ describe("AppealForm", () => {
     fireEvent.change(screen.getByTestId("af-reason"), { target: { value: LONG_REASON } });
     fireEvent.click(screen.getByTestId("af-submit"));
 
+    // The error is the field's, tied to it and announced (SF-app-061).
     await waitFor(() =>
-      expect(screen.getByTestId("af-error").textContent).toContain("already pending")
+      expect(screen.getByRole("alert").textContent).toContain("already pending")
     );
+    expect(screen.getByTestId("af-reason")).toHaveAttribute("aria-invalid", "true");
     expect(screen.queryByTestId("af-success")).toBeNull();
   });
 
@@ -96,7 +100,11 @@ describe("AppealForm", () => {
     fireEvent.change(screen.getByTestId("af-reason"), { target: { value: LONG_REASON } });
     fireEvent.click(screen.getByTestId("af-submit"));
 
-    await waitFor(() => expect(screen.getByTestId("af-error")).toBeDefined());
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        renderMessage("screens.refusal.network")
+      )
+    );
   });
 });
 
@@ -125,5 +133,27 @@ describe("AppealForm on a page with several decisions (TASK-210)", () => {
       "Your appeal has been submitted. A moderator will review it."
     );
     expect(done.textContent).not.toMatch(/notified/);
+  });
+});
+
+describe("AppealForm in the app's dark look (TASK-224, SF-app-061)", () => {
+  it("no light box: the success and error boxes are the app's tones", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      answer("POST /api/moderation/appeals — submitted")
+    );
+    const { container } = render(<AppealForm originalDecisionId="traj-1" />);
+    fireEvent.change(screen.getByTestId("af-reason"), { target: { value: LONG_REASON } });
+    fireEvent.click(screen.getByTestId("af-submit"));
+    await waitFor(() => expect(screen.getByTestId("af-success")).toBeDefined());
+    expect(container.innerHTML).not.toMatch(/bg-(?:green|red)-50\b|bg-white\b/);
+  });
+
+  it("the count is the field's help, read with it", () => {
+    render(<AppealForm originalDecisionId="traj-1" minReasonLength={20} />);
+    const field = screen.getByTestId("af-reason");
+    const counter = screen.getByTestId("af-counter");
+    expect(field.getAttribute("aria-describedby") ?? "").toContain(
+      counter.parentElement?.id ?? "missing"
+    );
   });
 });

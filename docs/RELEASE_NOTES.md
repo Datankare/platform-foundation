@@ -86,6 +86,39 @@ candidate" rows.
   setting. Consumer steps: the "Sign-in screens (TASK-222)" row of
   [MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md).
 
+- **The signed-in app on shared parts (TASK-224).** Every user page (home, account, assistant)
+  is in one frame, `components/app/ui/AppShell.tsx`: one dark header (Home, Assistant, Your
+  account, Sign out — or Sign in for a guest), Skip to content, one `main`, one announced wait;
+  a signed-out visitor goes to sign-in and comes back to the page, its query too. New pages:
+  `app/not-found.tsx`, `app/error.tsx`, `app/global-error.tsx` (the app's words, the way home).
+  A guard (`__tests__/app-shared-components-guard.test.ts`) keeps every user screen on the parts;
+  an app lists its own screens in `app-screens.app.json`. Also: the assistant's answers shown
+  formatted (a safe Markdown subset, never HTML) and the visit's last five kept; a blocked item
+  says why (`GET /api/moderation/appeals` adds `reason` to each decision) and gives a reference;
+  a restricted account's standing and a rate limit's wait in words; the input's counter
+  announced only near the limit; `AdaptiveInput` and `AppealForm` lose their `variant` prop (the
+  app is always dark). No migration, no setting. Consumer steps: the "App screens (TASK-224)"
+  row of [MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md).
+
+- **Axe measures a still page; the return path refuses more (TASK-226).** `checkA11y`
+  (`e2e/helpers/a11y.ts`) waits until no CSS transition or animation runs before axe measures,
+  and fails, naming them, when the page does not come to rest within 5 s (an option,
+  `settleTimeoutMs`); a guard keeps every browser audit on it. `safeReturnPath` refuses a path
+  that resolves to `//host` (`/.//host`, `/%2e%2e//host`), an open redirect in 56e-1 on develop.
+  No migration, no setting. Consumer steps: the "Accessibility audits (TASK-226)" row of
+  [MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md).
+
+- **The one account page (TASK-225).** `/account` now lets a person change their password,
+  turn two-step verification on or off, download a copy of their data and delete their account
+  — each asked first, through the routes that already existed and the platform's one erasure
+  path. New route: `GET /api/account/security` (the caller's own `mfaEnabled` — `null` when the
+  provider did not say — and how the session signed in). Export and delete now store an account not yet
+  stored before serving it (they answered "no permission" to a new account), and
+  `GET /api/moderation/appeals` answers no decisions to one (it answered `account.not_found`, which
+  signs a page out). An app adds its own sections to the
+  page through the consumer seam `platform/modules/app-account.tsx` (Playform puts its profile
+  there). No migration, no setting. Consumer steps: the "Account page (TASK-225)" row.
+
 - **A test run's per-worker databases (TASK-223).** A run stopped before its teardown left its
   per-worker database copies, which a later run counted as its own. Each copy is now marked with
   its run and owner process; the next run's setup drops a killed run's (its owner gone, nobody

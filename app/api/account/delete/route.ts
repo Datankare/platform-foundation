@@ -18,6 +18,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireActor, requirePermission } from "@/platform/auth/middleware";
+import { storeOwnAccount } from "@/platform/auth/own-account";
 import { softDeleteUser } from "@/platform/auth/gdpr-deletion";
 import { clearSessionCookies } from "@/platform/auth/auth-response";
 import { apiError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
@@ -57,6 +58,13 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     actorId: actor.id,
   });
   if (perAccount) return perAccount;
+  // An account reaches its own data before any guarded request has stored it (TASK-225: the
+  // account page can be the first page after sign-up): its row is made here, as a guarded
+  // request makes it (TASK-117), so its permission is its role's — never "no permission" for an
+  // account not yet stored. An erased identity stays erased; a store that cannot answer refuses.
+  const own = await storeOwnAccount(actor.user);
+  if (own === "erased") return apiError("account.not_found", { request });
+  if (own === "unavailable") return apiError("account.not_provisioned", { request });
   const permitted = await requirePermission(actor.user.sub, "can_delete_account");
   if (permitted.error) return permitted.error;
 

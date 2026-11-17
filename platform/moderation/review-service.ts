@@ -35,8 +35,14 @@ import type {
   ReviewStatus,
   ReviewUpdateExpectation,
 } from "./review-types";
-import type { AccountStatus, ModerationResult, ModerationAction } from "./types";
+import type {
+  AccountStatus,
+  ModerationAuditRecord,
+  ModerationResult,
+  ModerationAction,
+} from "./types";
 import type { ExplanationChain } from "@/platform/rag/types";
+import type { SafetyCategory } from "@/prompts/safety/classify-v1";
 import { sameId } from "@/platform/auth/same-id";
 
 // ---------------------------------------------------------------------------
@@ -587,6 +593,12 @@ export interface OwnDecision {
   readonly contentType: string;
   /** The last moment an appeal is accepted (the decision plus the appeal window). */
   readonly appealableUntil: string;
+  /**
+   * Why it was blocked, as a kind (TASK-224, SF-app-060): the first category the screening
+   * flagged (a DECISION_REASONS code), or what decided it when no category was recorded — never
+   * the screened text, which the platform does not keep (only its hash).
+   */
+  readonly reason: DecisionReason;
   /** Its appeal, when one was filed: where it stands, and the decision on it once resolved. */
   readonly appeal: {
     readonly status: ReviewStatus;
@@ -595,6 +607,52 @@ export interface OwnDecision {
     readonly modifiedAction?: ModerationAction;
     readonly resolvedAt?: string;
   } | null;
+}
+
+/**
+ * The kinds of reason a person is told their content was blocked for (TASK-224, SF-app-060): the
+ * safety classifier's categories (prompts/safety/classify-v1.ts, ADR-016 — the only categories a
+ * record holds), a match on the blocked word list, a block for the account's age rating, and
+ * "other" for anything the platform does not name. The account page names each in plain words
+ * (screens.account.decisions.reason.*).
+ */
+export const DECISION_REASONS = [
+  "harassment",
+  "sexual",
+  "violence",
+  "self_harm",
+  "hate",
+  "dangerous",
+  "blocked_words",
+  "age_rating",
+  "other",
+] as const;
+export type DecisionReason = (typeof DECISION_REASONS)[number];
+
+/**
+ * Each classifier category's reason. Typed by the classifier's own list, so a category added
+ * there fails the build until it is named here.
+ */
+export const CATEGORY_REASON: Readonly<Record<SafetyCategory, DecisionReason>> = {
+  harassment: "harassment",
+  sexual: "sexual",
+  violence: "violence",
+  "self-harm": "self_harm",
+  hate: "hate",
+  dangerous: "dangerous",
+};
+
+/** The reason a block is shown with: its first known category, else what decided it. */
+export function decisionReason(
+  record: Pick<ModerationAuditRecord, "categoriesFlagged" | "triggeredBy">
+): DecisionReason {
+  for (const category of record.categoriesFlagged ?? []) {
+    if (Object.prototype.hasOwnProperty.call(CATEGORY_REASON, category))
+      return CATEGORY_REASON[category as SafetyCategory];
+  }
+  if (record.triggeredBy === "blocklist") return "blocked_words";
+  if (record.triggeredBy === "content-rating") return "age_rating";
+  return "other";
 }
 
 /** A user's own blocked decisions and the rules an appeal is held to. */
@@ -617,6 +675,27 @@ const instant = (iso: string): number => {
  * verified account, never an id from a request. Throws when a store cannot be read (the route
  * answers 503); never another user's row.
  */
+/**
+ * The decisions of a signed-in account that has no row yet (TASK-224): none — its row is made by
+ * its first guarded request (platform/auth/account-status-guard.ts, TASK-117), and a decision is
+ * recorded only against a row. The rules an appeal is held to are the platform's, as for any
+ * account. The account page's first read can come before any guarded request (sign-in back to
+ * /account, E-113): refusing it `account.not_found` read as an erased account and signed the
+ * person out.
+ */
+export async function noOwnDecisions(): Promise<OwnDecisions> {
+  const [appealWindowHours, minReasonLength] = await Promise.all([
+    loadAppealWindowHours(),
+    loadMinReasonLength(),
+  ]);
+  return {
+    decisions: [],
+    appealWindowHours,
+    minReasonLength,
+    maxReasonLength: MAX_APPEAL_REASON_CHARS,
+  };
+}
+
 export async function listOwnDecisions(userId: string): Promise<OwnDecisions> {
   const [appealWindowHours, minReasonLength] = await Promise.all([
     loadAppealWindowHours(),
@@ -680,6 +759,7 @@ export async function listOwnDecisions(userId: string): Promise<OwnDecisions> {
         decidedAt: r.timestamp,
         contentType: r.contentType,
         appealableUntil: new Date(instant(r.timestamp) + windowMs).toISOString(),
+        reason: decisionReason(r),
         appeal: a
           ? {
               status: a.status,

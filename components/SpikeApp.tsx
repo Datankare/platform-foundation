@@ -3,8 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { Translation } from "@/types";
 import { canSubmitText, getCharState, canClearText } from "@/lib/inputValidation";
-import { apiFetch } from "@/platform/auth/api-fetch";
-import { readRefusal } from "@/platform/errors/refusal";
+import { adminCall } from "@/components/admin/ui/admin-call";
 import { AppealLink, offersAppeal } from "@/components/refusal/RefusalNotice";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { languageName } from "@/components/language-name";
@@ -14,6 +13,8 @@ const msg = (key: string, values?: MessageValues) =>
   renderMessage(`screens.app.spike.${key}`, values);
 
 const MAX_CHARS = 100;
+/** How many characters left before the count is announced (SF-app-018). */
+export const NEAR_LIMIT = 10;
 
 interface SpeechRecognitionEvent extends Event {
   results: SpeechRecognitionResultList;
@@ -46,6 +47,34 @@ declare global {
     SpeechRecognition?: SpeechRecognitionConstructor;
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
   }
+}
+
+/**
+ * Play a base64 MP3 clip. Whatever stops it — the browser's error, or `play()` refused (autoplay
+ * blocked, no audio device: it rejects) — calls `onFail` once, so the screen says so and the
+ * button is free again (SF-app-021: a refused play was not caught, and the playing state stuck).
+ */
+export function startClip(
+  base64: string,
+  on: { readonly onEnd: () => void; readonly onFail: () => void }
+): HTMLAudioElement {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: "audio/mp3" });
+  const audio = new Audio(URL.createObjectURL(blob));
+  let failed = false;
+  const fail = () => {
+    if (failed) return;
+    failed = true;
+    on.onFail();
+  };
+  audio.onended = on.onEnd;
+  audio.onerror = fail;
+  void Promise.resolve()
+    .then(() => audio.play())
+    .catch(fail);
+  return audio;
 }
 
 export interface SpikeAppProps {
@@ -131,34 +160,28 @@ export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
     setError("");
     setTranslations([]);
 
-    try {
-      const response = await apiFetch("/api/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: text.trim() }),
-      });
-
-      // A refusal is shown by its code, through the shared handler (TASK-181; TASK-194 added
-      // auth.permission_denied — the feature permission).
-      if (!response.ok) {
-        const refusal = await readRefusal(response);
-        setError(refusal.message);
-        setAppealable(!isGuest && offersAppeal(refusal));
-        return;
-      }
-      const data = await response.json();
-
-      if (!data.success) {
-        setError(data.error || msg("something_went_wrong"));
-      } else {
-        setTranslations(data.translations || []);
-      }
-    } catch {
-      /* justified */
-      // API error — shown to user via setError
-      setError(msg("network_error_please_check_your"));
-    } finally {
-      setIsLoading(false);
+    // The one call path (components/admin/ui/admin-call.ts): a refusal is shown by its code,
+    // through the shared handler (TASK-181; TASK-194 added auth.permission_denied — the feature
+    // permission); no answer at all is the network sentence; it never throws.
+    const answer = await adminCall("/api/process", {
+      method: "POST",
+      json: { text: text.trim() },
+    });
+    setIsLoading(false);
+    if (!answer.ok) {
+      setError(answer.refusal.message);
+      setAppealable(!isGuest && offersAppeal(answer.refusal));
+      return;
+    }
+    // The server's own text is never shown: the catalogue's sentence is (SF-app-020).
+    if (answer.body.success !== true) {
+      setError(msg("something_went_wrong"));
+    } else {
+      setTranslations(
+        Array.isArray(answer.body.translations)
+          ? (answer.body.translations as Translation[])
+          : []
+      );
     }
   };
 
@@ -170,33 +193,30 @@ export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
       }
     });
 
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: "audio/mp3" });
-    const audio = new Audio(URL.createObjectURL(blob));
+    const audio = startClip(base64, {
+      onEnd: () => setPlayingIndex(null),
+      onFail: () => {
+        setPlayingIndex(null);
+        setError(msg("audio_playback_failed"));
+      },
+    });
     audioRefs.current[index] = audio;
     setPlayingIndex(index);
-
-    audio.onended = () => setPlayingIndex(null);
-    audio.onerror = () => {
-      setPlayingIndex(null);
-      setError(msg("audio_playback_failed"));
-    };
-    audio.play();
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-4">
+    // Inside the app's frame (components/app/ui/AppShell.tsx), which holds the page's one main
+    // landmark: this is a section of it.
+    <section aria-labelledby="spike-title" className="flex justify-center">
       <div className="w-full max-w-xl">
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-white tracking-tight mb-1">
+          <h1
+            id="spike-title"
+            className="text-4xl font-bold text-white tracking-tight mb-1"
+          >
             {msg("brand_first")}
             <span className="text-blue-400">{msg("brand_second")}</span>
           </h1>
-          <p className="text-slate-400 text-sm tracking-widest uppercase">
-            {msg("platform_validation_spike_v0_1")}
-          </p>
         </div>
 
         <div className="bg-slate-800/60 backdrop-blur border border-slate-700 rounded-2xl p-6 mb-4 shadow-xl">
@@ -216,25 +236,31 @@ export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
               placeholder={msg("type_something_or_use_voice")}
               rows={3}
               aria-label={msg("text_input")}
-              aria-describedby="char-counter char-status"
+              aria-describedby={isOverLimit ? "char-counter char-status" : "char-counter"}
               className={`w-full bg-slate-900/80 text-white placeholder-slate-500 rounded-xl px-4 py-3 text-base resize-none border focus:outline-none focus:ring-2 transition-all ${
                 isOverLimit
                   ? "border-red-500 focus:ring-red-500"
                   : "border-slate-600 focus:ring-blue-500"
               }`}
             />
+            {/* The count is shown on every keystroke and announced only near the limit
+                (SF-app-018): a live region read on every key talked over the typing. */}
             <span
               id="char-counter"
-              aria-live="polite"
               className={`absolute bottom-3 right-3 text-xs font-mono ${
                 isOverLimit
                   ? "text-red-400 font-bold"
                   : charsLeft <= 20
                     ? "text-amber-400"
-                    : "text-slate-500"
+                    : "text-slate-400"
               }`}
             >
               {charsLeft}
+            </span>
+            <span role="status" className="sr-only" data-testid="char-announcement">
+              {charsLeft <= NEAR_LIMIT && !isOverLimit
+                ? msg("characters_left", { count: charsLeft })
+                : ""}
             </span>
           </div>
 
@@ -253,7 +279,6 @@ export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
           <div className="flex flex-wrap gap-3">
             <button
               onClick={isRecording ? stopRecording : startRecording}
-              aria-label={isRecording ? msg("stop_recording") : msg("start_voice_input")}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800 ${
                 isRecording
                   ? "bg-red-500 hover:bg-red-600 text-white focus:ring-red-500 animate-pulse"
@@ -269,7 +294,6 @@ export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
             <button
               onClick={handleClear}
               disabled={!canClear}
-              aria-label={msg("clear_input")}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800 ${
                 !canClear
                   ? "bg-slate-700 cursor-not-allowed text-slate-500 opacity-40"
@@ -283,7 +307,6 @@ export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
             <button
               onClick={handleSubmit}
               disabled={!canSubmit}
-              aria-label={msg("submit_and_translate")}
               aria-disabled={!canSubmit}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-800 ${
                 !canSubmit
@@ -307,8 +330,8 @@ export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
             </button>
           </div>
 
-          <p className="text-slate-500 text-xs mt-3 text-center">
-            {msg("max_100_characters_sfw_content")}
+          <p className="text-slate-400 text-xs mt-3 text-center">
+            {msg("max_characters_suitable", { max: MAX_CHARS })}
           </p>
         </div>
 
@@ -338,7 +361,7 @@ export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
                   <div className="text-2xl" aria-hidden="true">
                     {t.flag}
                   </div>
-                  <div className="text-slate-500 text-xs mt-0.5">
+                  <div className="text-slate-400 text-xs mt-0.5">
                     {languageName(t.languageCode, t.language)}
                   </div>
                 </div>
@@ -366,11 +389,7 @@ export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
             ))}
           </div>
         )}
-
-        <p className="text-center text-slate-600 text-xs mt-8">
-          {msg("platform_foundation_foundation_as_fabric")}
-        </p>
       </div>
-    </main>
+    </section>
   );
 }

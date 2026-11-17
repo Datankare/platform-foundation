@@ -5,6 +5,7 @@
  * TASK-181 — the shared refusal handler (platform/errors/refusal.ts) and its components
  * (components/refusal/): one decision per code, rendered the same way on every screen.
  */
+import { accountStatusLabel, waitText } from "@/components/refusal/refusal-words";
 import React from "react";
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -159,7 +160,9 @@ describe("RefusalNotice", () => {
         onSignOut={onSignOut}
       />
     );
-    expect(screen.getByText("Account status: suspended")).toBeInTheDocument();
+    // The standing by name, not its stored code (SF-app-062).
+    expect(screen.getByText("Your account's standing: Suspended.")).toBeInTheDocument();
+    expect(screen.queryByText(/status: suspended/)).toBeNull();
     fireEvent.click(screen.getByText("Sign out"));
     expect(onSignOut).toHaveBeenCalled();
   });
@@ -183,7 +186,8 @@ describe("RefusalNotice", () => {
     const { rerender } = render(
       <RefusalNotice refusal={handleRefusal("auth.required")} />
     );
-    expect(screen.getByText("Sign in").getAttribute("href")).toBe("/auth");
+    // Sign-in comes back to the page (E-113).
+    expect(screen.getByText("Sign in").getAttribute("href")).toBe("/auth?redirect=%2F");
     rerender(<RefusalNotice refusal={handleRefusal("guest.allowance_exhausted")} />);
     expect(screen.getByText("Create an account")).toBeInTheDocument();
   });
@@ -202,12 +206,55 @@ describe("RefusalNotice", () => {
       />
     );
     expect(screen.getByText("This service is not available here")).toBeInTheDocument();
+    // On its own, a whole page: its main landmark.
+    expect(screen.getByRole("main")).toBeInTheDocument();
     rerender(
       <RefusalNotice refusal={handleRefusal("tenant.missing", { message: "Gone." })} />
     );
     expect(screen.getByRole("heading")).toHaveTextContent(
       "This service is not available here"
     );
+    // Inside a page that has one already: no second main landmark (SF-app-063).
+    expect(screen.queryByRole("main")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent("Gone.");
+  });
+
+  it("a long wait is said in hours and minutes, never as thousands of seconds (SF-app-062)", () => {
+    const { rerender } = render(
+      <RefusalNotice
+        refusal={handleRefusal("rate.limited", { params: { retryAfterSeconds: 3600 } })}
+      />
+    );
+    expect(screen.getByText("You can try again in 1 hour.")).toBeInTheDocument();
+    rerender(
+      <RefusalNotice
+        refusal={handleRefusal("rate.limited", { params: { retryAfterSeconds: 5430 } })}
+      />
+    );
+    expect(
+      screen.getByText("You can try again in 1 hour and 31 minutes.")
+    ).toBeInTheDocument();
+  });
+});
+
+describe("refusal words (TASK-224, SF-app-062)", () => {
+  it("waitText: seconds, then whole minutes rounded up, then hours and minutes", () => {
+    expect(waitText(0)).toBe("1 second");
+    expect(waitText(1)).toBe("1 second");
+    expect(waitText(59)).toBe("59 seconds");
+    expect(waitText(60)).toBe("1 minute");
+    expect(waitText(61)).toBe("2 minutes");
+    expect(waitText(3599)).toBe("1 hour");
+    expect(waitText(3600)).toBe("1 hour");
+    expect(waitText(7200)).toBe("2 hours");
+    expect(waitText(3660)).toBe("1 hour and 1 minute");
+  });
+
+  it("accountStatusLabel: every standing by name; an unknown one is never shown raw", () => {
+    expect(accountStatusLabel("restricted")).toBe("Restricted");
+    expect(accountStatusLabel("banned")).toBe("Banned");
+    expect(accountStatusLabel("warned")).toBe("Warned");
+    expect(accountStatusLabel("some_new_state")).toBe("Limited");
   });
 });
 

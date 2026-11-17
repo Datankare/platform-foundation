@@ -160,8 +160,12 @@ describe("core/module boundary (ADR-054 D3)", () => {
         .map((e) => e.from)
         .filter((f) => !isTestFile(f))
     );
-    expect([...rootsImportingModules].sort()).toEqual(
-      [...MANIFEST.compositionRoots].sort()
-    );
+    // Every core file that imports a module is a composition root. A root may import none — PF's
+    // account seam (platform/modules/app-account.tsx, TASK-225) adds no section of its own, where
+    // Playform's composes its profile — so the roots are a ceiling, not a list each must use.
+    expect(
+      [...rootsImportingModules].filter((f) => !MANIFEST.compositionRoots.includes(f))
+    ).toEqual([]);
+    expect(rootsImportingModules.size).toBeGreaterThan(0);
   });
 });

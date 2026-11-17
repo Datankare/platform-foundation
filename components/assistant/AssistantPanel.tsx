@@ -19,6 +19,11 @@
  *     offers "Try again". A refusal mid-answer (output withheld, the model declining) links to no
  *     decision: the user's own content was not blocked.
  *
+ * The answer's Markdown is shown as formatting, never as HTML (./AnswerText.tsx, SF-app-030), and
+ * asking again keeps the earlier questions and answers of this visit, newest first, up to
+ * EARLIER_KEPT (SF-app-031) — in the page's memory only: nothing is written to the browser's
+ * storage (the retention register keeps none there), and leaving the page forgets them.
+ *
  * Every string is the catalog's (messages/en.json, screens.assistant).
  */
 
@@ -27,6 +32,18 @@ import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { STREAM_MAX_PROMPT_CHARACTERS } from "@/platform/ai/stream-policy";
 import { RefusalNotice } from "@/components/refusal/RefusalNotice";
 import { useRealtimeStream } from "@/hooks/useRealtimeStream";
+import { AnswerText } from "./AnswerText";
+
+/** How many earlier questions and answers of this visit the page keeps. */
+export const EARLIER_KEPT = 5;
+
+interface Earlier {
+  readonly id: number;
+  readonly question: string;
+  readonly answer: string;
+  /** Stopped, cut off or refused part-way: what is kept is not the whole answer. */
+  readonly incomplete: boolean;
+}
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.assistant.${key}`, values);
@@ -50,18 +67,30 @@ export default function AssistantPanel() {
     reset,
   } = useRealtimeStream();
   const [asked, setAsked] = useState("");
+  const [earlier, setEarlier] = useState<readonly Earlier[]>([]);
 
   const ask = useCallback(() => {
     const prompt = question.trim();
     if (!prompt || isStreaming) return;
+    // The answer on screen moves to "Earlier", so asking again loses nothing (SF-app-031).
+    if (asked !== "" && text !== "") {
+      const kept: Earlier = {
+        id: Date.now(),
+        question: asked,
+        answer: text,
+        incomplete: stopped || Boolean(truncated) || Boolean(refusal),
+      };
+      setEarlier((list) => [kept, ...list].slice(0, EARLIER_KEPT));
+    }
     setAsked(prompt);
     startStream(prompt);
-  }, [question, isStreaming, startStream]);
+  }, [question, isStreaming, startStream, asked, text, stopped, truncated, refusal]);
 
   const clear = useCallback(() => {
     reset();
     setQuestion("");
     setAsked("");
+    setEarlier([]);
   }, [reset]);
 
   const onSubmit = (e: React.FormEvent) => {
@@ -123,7 +152,7 @@ export default function AssistantPanel() {
                 {t("ask")}
               </button>
             )}
-            {(hasAnswer || question !== "") && (
+            {(hasAnswer || question !== "" || earlier.length > 0) && (
               <button
                 type="button"
                 onClick={clear}
@@ -152,13 +181,8 @@ export default function AssistantPanel() {
               {t("thinking")}
             </p>
           )}
-          <div
-            data-testid="assistant-answer"
-            aria-live="polite"
-            aria-busy={isStreaming}
-            className="whitespace-pre-wrap break-words text-sm text-gray-100"
-          >
-            {text}
+          <div data-testid="assistant-answer" aria-live="polite" aria-busy={isStreaming}>
+            <AnswerText text={text} />
           </div>
           {stopped && !isStreaming && (
             <p role="status" className={`${INFO} mt-3`}>
@@ -179,6 +203,34 @@ export default function AssistantPanel() {
               />
             </div>
           )}
+        </section>
+      )}
+
+      {earlier.length > 0 && (
+        <section
+          aria-labelledby="assistant-earlier"
+          className="rounded-2xl border border-gray-800 bg-[#111827] p-4 sm:p-6"
+          data-testid="assistant-earlier"
+        >
+          <h2 id="assistant-earlier" className="mb-3 text-lg font-semibold text-white">
+            {t("earlier_title")}
+          </h2>
+          <ol className="space-y-4">
+            {earlier.map((e) => (
+              <li
+                key={e.id}
+                className="border-t border-gray-800 pt-3 first:border-0 first:pt-0"
+              >
+                <p className="mb-2 break-words text-xs text-gray-400">
+                  {t("asked", { question: e.question })}
+                </p>
+                <AnswerText text={e.answer} />
+                {e.incomplete && (
+                  <p className="mt-2 text-xs text-gray-400">{t("earlier_incomplete")}</p>
+                )}
+              </li>
+            ))}
+          </ol>
         </section>
       )}
     </div>

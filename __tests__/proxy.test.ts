@@ -62,6 +62,16 @@ describe("proxy", () => {
     );
   });
 
+  it("remembers the page's query too: an authorization request keeps its handle (E-113)", () => {
+    const res = proxy(req("/agent/authorize?request=h-1&return=%2Fx"));
+    expect(res.status).toBe(307);
+    const location = new URL(res.headers.get("location") ?? "");
+    expect(location.pathname).toBe("/auth");
+    expect(location.searchParams.get("redirect")).toBe(
+      "/agent/authorize?request=h-1&return=%2Fx"
+    );
+  });
+
   it("serves a page with a session", () => {
     expect(
       proxy(req("/profile", { cookie: true })).headers.get("x-middleware-next")

@@ -497,6 +497,13 @@ const ROUTES: readonly RouteCase[] = [
     valid: () => fc.record({ originalDecisionId: aUuid(), appealReason: text(10, 200) }),
   },
   {
+    // How the account signs in (TASK-225): any signed-in account, its own state only.
+    path: "account/security",
+    method: "GET",
+    load: R("account/security"),
+    permission: "signed-in",
+  },
+  {
     path: "account/export",
     method: "GET",
     load: R("account/export"),

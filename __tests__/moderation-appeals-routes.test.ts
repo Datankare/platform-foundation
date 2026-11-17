@@ -41,6 +41,12 @@ jest.mock("@/platform/auth/audit", () => ({
 
 jest.mock("@/platform/moderation/review-service", () => ({
   listOwnDecisions: jest.fn(),
+  noOwnDecisions: jest.fn(async () => ({
+    decisions: [],
+    appealWindowHours: 720,
+    minReasonLength: 20,
+    maxReasonLength: 2000,
+  })),
   submitAppeal: jest.fn(),
   claimItem: jest.fn(),
   unclaimItem: jest.fn(),
@@ -135,7 +141,9 @@ beforeEach(() => {
   fakeData().answer = (sql) =>
     sql.startsWith("select id from users where cognito_sub")
       ? [{ id: "u-app" }]
-      : undefined;
+      : sql.startsWith("select id, deleted_at is not null as deleted from users")
+        ? [{ id: "u-app", deleted: false }]
+        : undefined;
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -182,14 +190,31 @@ describe("GET /api/moderation/appeals", () => {
     expect(listOwnDecisions).toHaveBeenCalledWith("u-app");
   });
 
-  it("[hostile:role] a caller with no session, or no account, reads nothing", async () => {
+  it("[hostile:role] a caller with no session, or an erased account, reads nothing", async () => {
     const anonymous = await GET(getReq("anonymous"));
     expect(anonymous.status).toBe(401);
-    fakeData().answer = () => [];
-    const unmatched = await GET(getReq("free"));
-    expect(unmatched.status).toBe(403);
-    expect((await unmatched.json()).code).toBe("account.not_found");
+    fakeData().answer = () => [{ id: "u-app", deleted: true }];
+    const erased = await GET(getReq("free"));
+    expect(erased.status).toBe(403);
+    expect((await erased.json()).code).toBe("account.not_found");
     expect(listOwnDecisions).not.toHaveBeenCalled();
+  });
+
+  it("an account whose row is not made yet has no decisions — never 'account not found', which signs out (TASK-224)", async () => {
+    fakeData().answer = () => [];
+    const res = await GET(getReq("free"));
+    expect(res.status).toBe(200);
+    expect((await res.json()).decisions).toEqual([]);
+    expect(listOwnDecisions).not.toHaveBeenCalled();
+  });
+
+  it("[hostile:store-down] a lookup that cannot be read is unavailable, never an empty list", async () => {
+    fakeData().answer = () => {
+      throw new Error("down");
+    };
+    const res = await GET(getReq("free"));
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("service.unavailable");
   });
 
   it("[hostile:role] a restricted account still reads its decisions (it is what it appeals)", async () => {
@@ -217,8 +242,8 @@ describe("GET /api/moderation/appeals", () => {
     // The subject's row answers with its id spelled in capitals: the service is given that row's
     // id, and matches records and appeals by sameId (proved in own-decisions.test.ts).
     fakeData().answer = (sql) =>
-      sql.startsWith("select id from users where cognito_sub")
-        ? [{ id: "U-APP" }]
+      sql.startsWith("select id, deleted_at is not null as deleted from users")
+        ? [{ id: "U-APP", deleted: false }]
         : undefined;
     (listOwnDecisions as jest.Mock).mockResolvedValue(OWN);
     const res = await GET(getReq());

@@ -2723,6 +2723,7 @@
           "decidedAt": "2026-01-01T00:00:00.000Z",
           "contentType": "generation",
           "appealableUntil": "2026-01-04T00:00:00.000Z",
+          "reason": "harassment",
           "appeal": null
         }
       ],
@@ -2740,6 +2741,7 @@
           "decidedAt": "2025-12-28T00:00:00.000Z",
           "contentType": "generation",
           "appealableUntil": "2025-12-31T00:00:00.000Z",
+          "reason": "harassment",
           "appeal": null
         }
       ],
@@ -2757,6 +2759,7 @@
           "decidedAt": "2026-01-01T00:00:00.000Z",
           "contentType": "generation",
           "appealableUntil": "2026-01-04T00:00:00.000Z",
+          "reason": "harassment",
           "appeal": {
             "status": "pending",
             "submittedAt": "2026-01-01T00:00:00.000Z"
@@ -2777,6 +2780,7 @@
           "decidedAt": "2026-01-01T00:00:00.000Z",
           "contentType": "generation",
           "appealableUntil": "2026-01-04T00:00:00.000Z",
+          "reason": "harassment",
           "appeal": {
             "status": "claimed",
             "submittedAt": "2026-01-01T00:00:00.000Z"
@@ -2797,6 +2801,7 @@
           "decidedAt": "2026-01-01T00:00:00.000Z",
           "contentType": "generation",
           "appealableUntil": "2026-01-04T00:00:00.000Z",
+          "reason": "harassment",
           "appeal": {
             "status": "resolved",
             "submittedAt": "2026-01-01T00:00:00.000Z",
@@ -3026,6 +3031,37 @@
       "success": true
     }
   },
+  "GET /api/account/security — signed in, two-step verification on": {
+    "status": 200,
+    "body": {
+      "mfaEnabled": true,
+      "signInMethod": "password"
+    }
+  },
+  "GET /api/account/security — signed in, two-step verification off": {
+    "status": 200,
+    "body": {
+      "mfaEnabled": false,
+      "signInMethod": "password"
+    }
+  },
+  "GET /api/account/security — a single sign-on session, the provider not saying": {
+    "status": 200,
+    "body": {
+      "mfaEnabled": null,
+      "signInMethod": "sso"
+    }
+  },
+  "GET /api/account/security — signed out": {
+    "status": 401,
+    "body": {
+      "code": "auth.required",
+      "message": "Sign in to continue.",
+      "params": {},
+      "success": false,
+      "error": "Sign in to continue."
+    }
+  },
   "GET /api/auth/session — signed out": {
     "status": 200,
     "body": {
@@ -3226,6 +3262,91 @@
     }
   },
   "POST /api/auth/mfa/verify — refused (the code is wrong)": {
+    "status": 400,
+    "body": {
+      "code": "auth.code_invalid",
+      "message": "That code is not correct.",
+      "params": {},
+      "success": false,
+      "error": "That code is not correct."
+    }
+  },
+  "GET /api/account/export — the copy": {
+    "status": 200,
+    "body": {
+      "exportedAt": "2026-01-01T00:00:00.000Z",
+      "profile": {
+        "email": "free@example.test"
+      }
+    }
+  },
+  "GET /api/account/export — refused (too large)": {
+    "status": 413,
+    "body": {
+      "code": "account.export_too_large",
+      "message": "Your account holds more than 100,000 records, more than one download can carry. Nothing was cut off — contact support for your full copy.",
+      "params": {
+        "limit": 100000
+      },
+      "success": false,
+      "error": "Your account holds more than 100,000 records, more than one download can carry. Nothing was cut off — contact support for your full copy."
+    }
+  },
+  "POST /api/account/delete — deleted": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "identityDeleted": true
+    }
+  },
+  "POST /api/account/delete — deleted, its sign-in still being removed": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "identityDeleted": false
+    }
+  },
+  "POST /api/account/delete — refused (the audit could not be written)": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "audit"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "POST /api/auth/mfa/setup — refused (proof needed first)": {
+    "status": 403,
+    "body": {
+      "code": "auth.step_up_required",
+      "message": "To change two-step verification, confirm it is you: enter your password and a current code from your authenticator app. If you sign in only through your organization's single sign-on and have no password here, ask an administrator to reset two-step verification for you.",
+      "params": {},
+      "success": false,
+      "error": "To change two-step verification, confirm it is you: enter your password and a current code from your authenticator app. If you sign in only through your organization's single sign-on and have no password here, ask an administrator to reset two-step verification for you."
+    }
+  },
+  "POST /api/auth/mfa/disable — turned off": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "mfaEnabled": false,
+      "csrfToken": "csrf-token-of-the-session"
+    }
+  },
+  "POST /api/auth/mfa/disable — refused (the password is wrong)": {
+    "status": 401,
+    "body": {
+      "code": "auth.invalid_credentials",
+      "message": "Email or password is incorrect.",
+      "params": {},
+      "success": false,
+      "error": "Email or password is incorrect."
+    }
+  },
+  "POST /api/auth/confirm-forgot-password — refused (the code is wrong)": {
     "status": 400,
     "body": {
       "code": "auth.code_invalid",

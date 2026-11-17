@@ -178,6 +178,33 @@ jest.mock("@/platform/data", () => {
   };
 });
 
+// The account's data beneath its export and deletion routes (TASK-225): a producer sets what the
+// platform's export and erasure answer; otherwise their own.
+const mockAccountData: {
+  exportUserData?: (...a: unknown[]) => Promise<unknown>;
+  softDeleteUser?: (...a: unknown[]) => Promise<unknown>;
+} = {};
+jest.mock("@/platform/auth/data-export", () => {
+  const actual = jest.requireActual("@/platform/auth/data-export");
+  return {
+    ...actual,
+    exportUserData: (...a: unknown[]) =>
+      mockAccountData.exportUserData
+        ? mockAccountData.exportUserData(...a)
+        : actual.exportUserData(...a),
+  };
+});
+jest.mock("@/platform/auth/gdpr-deletion", () => {
+  const actual = jest.requireActual("@/platform/auth/gdpr-deletion");
+  return {
+    ...actual,
+    softDeleteUser: (...a: unknown[]) =>
+      mockAccountData.softDeleteUser
+        ? mockAccountData.softDeleteUser(...a)
+        : actual.softDeleteUser(...a),
+  };
+});
+
 // The model beneath the AI routes: a producer sets what it answers (TASK-207); otherwise the
 // platform's own orchestrator.
 const mockModel: { complete?: (...a: unknown[]) => Promise<unknown> } = {};
@@ -304,6 +331,11 @@ import {
   GET as authSessionGET,
   POST as authSessionPOST,
 } from "@/app/api/auth/session/route";
+import { GET as accountSecurityGET } from "@/app/api/account/security/route";
+import { GET as accountExportGET } from "@/app/api/account/export/route";
+import { POST as accountDeletePOST } from "@/app/api/account/delete/route";
+import { POST as mfaDisablePOST } from "@/app/api/auth/mfa/disable/route";
+import { EXPORT_TOO_LARGE } from "@/platform/auth/data-export";
 import { POST as migratePOST } from "@/app/api/auth/session/migrate/route";
 import { POST as signOutEverywherePOST } from "@/app/api/auth/sign-out-everywhere/route";
 import { sessionHeadersFor, startTestSession } from "@/__tests__/helpers/session";
@@ -1795,6 +1827,45 @@ const SESSION: Readonly<Record<string, () => Promise<RouteFixture>>> = {
       )
     );
   },
+  // TASK-224: what the account page and the authorization page read (the test identities' own
+  // verifier, as every user route here; a test identity has a second factor unless named
+  // otherwise).
+  "GET /api/account/security — signed in, two-step verification on": async () =>
+    record(await accountSecurityGET(req("/api/account/security", "GET", "free"))),
+  "GET /api/account/security — signed in, two-step verification off": async () =>
+    record(
+      await accountSecurityGET(
+        req("/api/account/security", "GET", "password_only_super_admin")
+      )
+    ),
+  "GET /api/account/security — a single sign-on session, the provider not saying":
+    async () => {
+      // How this session signed in, and an identity provider whose answer did not say whether a
+      // factor exists: the verifier's own answer for such a session (the route reads nothing else).
+      const middleware = jest.requireMock<{ requireAuth: unknown }>(
+        "@/platform/auth/middleware"
+      );
+      const real = middleware.requireAuth;
+      const caller = CALLERS.free;
+      middleware.requireAuth = async () => ({
+        user: { sub: caller.sub, email: `${caller.name}@test` },
+        session: {
+          ...(await jest
+            .requireActual("@/__tests__/helpers/session")
+            .liveTestSession(caller.sub, { token: "test" })),
+          method: "sso",
+        },
+      });
+      try {
+        return record(
+          await accountSecurityGET(req("/api/account/security", "GET", "free"))
+        );
+      } finally {
+        middleware.requireAuth = real;
+      }
+    },
+  "GET /api/account/security — signed out": async () =>
+    record(await accountSecurityGET(rawReq("/api/account/security", "GET"))),
   "GET /api/auth/session — signed out": async () =>
     record(await authSessionGET(rawReq("/api/auth/session", "GET"))),
   "GET /api/auth/session — signed in": async () => record(await sessionAs("user")),
@@ -1846,6 +1917,166 @@ const mfaVerify = (code: string) =>
   mfaVerifyPOST(
     req("/api/auth/mfa/verify", "POST", "password_only_super_admin", { code })
   );
+
+/**
+ * The account page's own caller: the free role's permissions, an identity of its own so the
+ * sessions its producers open are no other producer's (sign out everywhere counts them).
+ */
+const ACCOUNT_OWNER = identityFor("free", { name: "account_page_owner" });
+
+/**
+ * A producer's answer with the account's data answered by `set` (then the platform's own again),
+ * the caller the account page's own test identity: its account resolved as the session's verifier resolves
+ * it (requireActor answers the identity's own user actor; its permissions are the role's real
+ * ones, checked by the route's own requirePermission).
+ */
+async function withAccountData(
+  set: typeof mockAccountData,
+  run: () => Promise<Response>
+): Promise<RouteFixture> {
+  Object.assign(mockAccountData, set);
+  const middleware = jest.requireMock<{ requireActor: unknown }>(
+    "@/platform/auth/middleware"
+  );
+  const realActor = middleware.requireActor;
+  const free = ACCOUNT_OWNER;
+  middleware.requireActor = async () => ({
+    actor: {
+      kind: "user",
+      id: free.userId,
+      user: { sub: free.sub, email: `${free.name}@test`, mfaEnabled: free.mfaEnabled },
+    },
+    session: await jest
+      .requireActual("@/__tests__/helpers/session")
+      .liveTestSession(free.sub, { token: "test" }),
+  });
+  try {
+    return await record(await run());
+  } finally {
+    middleware.requireActor = realActor;
+    delete mockAccountData.exportUserData;
+    delete mockAccountData.softDeleteUser;
+  }
+}
+
+/**
+ * The account page's own calls (TASK-225, E-126): its copy of the data, its deletion, two-step
+ * verification turned off with the step-up, a set-up that asks for proof first, and a password
+ * reset refused — each through its real route and guard, the stores beneath answered.
+ */
+const ACCOUNT_PAGE: Readonly<Record<string, () => Promise<RouteFixture>>> = {
+  "GET /api/account/export — the copy": () =>
+    withAccountData(
+      {
+        exportUserData: async () => ({
+          data: {
+            exportedAt: "2026-01-01T00:00:00.000Z",
+            profile: { email: "free@example.test" },
+          },
+          errors: [],
+        }),
+      },
+      () => accountExportGET(req("/api/account/export", "GET", ACCOUNT_OWNER))
+    ),
+  "GET /api/account/export — refused (too large)": () =>
+    withAccountData(
+      { exportUserData: async () => ({ data: {}, errors: [EXPORT_TOO_LARGE] }) },
+      () => accountExportGET(req("/api/account/export", "GET", ACCOUNT_OWNER))
+    ),
+  "POST /api/account/delete — deleted": () =>
+    withAccountData(
+      {
+        softDeleteUser: async () => ({ success: true, errors: [], externalPending: [] }),
+      },
+      () =>
+        accountDeletePOST(
+          req("/api/account/delete", "POST", ACCOUNT_OWNER, { confirm: "DELETE" })
+        )
+    ),
+  "POST /api/account/delete — deleted, its sign-in still being removed": () =>
+    withAccountData(
+      {
+        softDeleteUser: async () => ({
+          success: true,
+          errors: [],
+          externalPending: ["identity-provider"],
+        }),
+      },
+      () =>
+        accountDeletePOST(
+          req("/api/account/delete", "POST", ACCOUNT_OWNER, { confirm: "DELETE" })
+        )
+    ),
+  "POST /api/account/delete — refused (the audit could not be written)": () =>
+    withAccountData(
+      {
+        softDeleteUser: async () => ({ success: false, errors: ["audit unavailable"] }),
+      },
+      () =>
+        accountDeletePOST(
+          req("/api/account/delete", "POST", ACCOUNT_OWNER, { confirm: "DELETE" })
+        )
+    ),
+  "POST /api/auth/mfa/setup — refused (proof needed first)": async () =>
+    // A caller who may already have a factor: the set-up asks for the step-up (audit C-3).
+    record(await mfaSetupPOST(req("/api/auth/mfa/setup", "POST", ACCOUNT_OWNER))),
+  "POST /api/auth/mfa/disable — turned off": async () => {
+    rows(() => []);
+    provider({
+      confirmCurrentFactor: async () => ({ success: true }),
+      disableMfa: async () => ({ success: true }),
+    } as Partial<AuthProvider>);
+    return record(
+      await mfaDisablePOST(
+        req("/api/auth/mfa/disable", "POST", ACCOUNT_OWNER, {
+          password: "the-password",
+          currentCode: "123456",
+        })
+      )
+    );
+  },
+  "POST /api/auth/mfa/disable — refused (the password is wrong)": async () => {
+    rows(() => []);
+    provider({
+      confirmCurrentFactor: async () => ({
+        success: false,
+        error: "Incorrect username or password.",
+        errorCode: "auth.invalid_credentials",
+      }),
+    } as Partial<AuthProvider>);
+    return record(
+      await mfaDisablePOST(
+        req("/api/auth/mfa/disable", "POST", ACCOUNT_OWNER, {
+          password: "wrong",
+          currentCode: "123456",
+        })
+      )
+    );
+  },
+  "POST /api/auth/confirm-forgot-password — refused (the code is wrong)": async () => {
+    provider({
+      confirmForgotPassword: async () => ({
+        success: false,
+        error: "Invalid verification code provided, please try again.",
+        errorCode: "auth.code_invalid",
+      }),
+    } as Partial<AuthProvider>);
+    return record(
+      await confirmForgotPOST(
+        rawReq(
+          "/api/auth/confirm-forgot-password",
+          "POST",
+          {},
+          {
+            email: "someone@example.test",
+            code: "000000",
+            newPassword: "Correct-Horse-Battery-9",
+          }
+        )
+      )
+    );
+  },
+};
 
 const MFA: Readonly<Record<string, () => Promise<RouteFixture>>> = {
   "POST /api/auth/mfa/setup — the secret and its URI": async () => {
@@ -4070,6 +4301,7 @@ const PRODUCERS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
   ...SESSION,
   ...STREAM,
   ...MFA,
+  ...ACCOUNT_PAGE,
   ...JOBS,
   ...DUAL_CONTROL,
   ...DECISIONS,

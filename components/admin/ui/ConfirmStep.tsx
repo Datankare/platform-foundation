@@ -5,7 +5,8 @@
  * (TASK-216, SCREEN-FINDINGS P4 and P5)
  *
  * What it asks, and how gravely, comes from the confirmation registry — a screen passes the
- * action's id and the words that name this instance of it (whose role, from what, to what):
+ * action's id and the words that name this instance of it (whose role, from what, to what). The
+ * dialog itself is the one shared with the user's screens (./ConfirmDialog.tsx, TASK-224):
  *
  *   - it is an alertdialog that takes focus when it opens and gives it back to where it came
  *     from when it closes; Escape is Cancel;
@@ -18,7 +19,7 @@
  * @module components/admin/ui
  */
 
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import {
   confirmationFor,
@@ -27,7 +28,7 @@ import {
   type Confirmation,
 } from "./confirmation-registry";
 import { Field, Select, TextArea } from "./Field";
-import { BUTTON } from "./tokens";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.admin_console.confirm.${key}`, values);
@@ -95,28 +96,10 @@ export function ConfirmStep({
   readonly onCancel: () => void;
 }) {
   const confirmation = confirmationFor(action, input, heldTool);
-  const irreversible = confirmation.risk === "irreversible";
-  const consequence = consequenceText(confirmation);
-  const titleId = useId();
-  const bodyId = useId();
-  const box = useRef<HTMLDivElement>(null);
   const reasonBox = useRef<HTMLTextAreaElement>(null);
   const [reason, setReason] = useState("");
   const [choice, setChoice] = useState(choices?.[0]?.value ?? "");
   const [problem, setProblem] = useState<string | null>(null);
-
-  // Focus in when it opens, and back to where it came from when it closes. The opener is read
-  // when the step closes (it is the screen's own button, there before and after the step).
-  const opener = useRef(() => returnFocus?.current ?? null);
-  useEffect(() => {
-    const from = document.activeElement as HTMLElement | null;
-    const openerNow = opener.current;
-    box.current?.focus();
-    return () => {
-      const back = openerNow() ?? from;
-      if (back && back.isConnected) back.focus();
-    };
-  }, []);
 
   const confirm = () => {
     const bad = reasonProblem(confirmation, reason);
@@ -128,94 +111,67 @@ export function ConfirmStep({
     onConfirm({ reason: reason.trim(), ...(choices ? { choice } : {}) });
   };
 
+  // The dialog itself — focus in and back, Escape, the words and the buttons — is the one shared
+  // dialog (./ConfirmDialog.tsx); the registry decides how grave it is and what it asks.
   return (
-    <div
-      ref={box}
-      role="alertdialog"
-      aria-labelledby={titleId}
-      aria-describedby={bodyId}
-      tabIndex={-1}
-      data-confirm={action}
-      data-risk={confirmation.risk}
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && !busy) {
-          e.stopPropagation();
-          onCancel();
-        }
-      }}
-      className={`space-y-3 rounded-lg border p-4 text-sm focus:outline-none ${
-        irreversible
-          ? "border-red-700 bg-red-950/40 text-red-100"
-          : "border-blue-700 bg-blue-900/20 text-blue-100"
-      }`}
-    >
-      <p id={titleId} className="font-semibold">
-        {title}
-      </p>
-      <div id={bodyId} className="space-y-2">
-        {irreversible && (
-          <p data-irreversible="true">
-            <strong className="font-semibold">{t("irreversible")}</strong>
-          </p>
-        )}
-        {children}
-        {consequence && <p data-consequence="true">{consequence}</p>}
-      </div>
-      {choices && choices.length > 0 && (
-        <Field label={choiceLabel ?? t("choice_label")}>
-          {(control) => (
-            <Select
-              {...control}
-              value={choice}
-              disabled={busy}
-              onChange={(e) => setChoice(e.target.value)}
+    <ConfirmDialog
+      id={action}
+      risk={confirmation.risk}
+      title={title}
+      consequence={consequenceText(confirmation)}
+      confirmLabel={confirmLabel}
+      busy={busy}
+      {...(returnFocus ? { returnFocus } : {})}
+      onConfirm={confirm}
+      onCancel={onCancel}
+      fields={
+        <>
+          {choices && choices.length > 0 && (
+            <Field label={choiceLabel ?? t("choice_label")}>
+              {(control) => (
+                <Select
+                  {...control}
+                  value={choice}
+                  disabled={busy}
+                  onChange={(e) => setChoice(e.target.value)}
+                >
+                  {choices.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+          )}
+          {confirmation.reason !== "none" && (
+            <Field
+              label={
+                reasonLabel ??
+                t(confirmation.reason === "required" ? "reason_label" : "reason_optional")
+              }
+              help={t("reason_help", { min: REASON_MIN })}
+              error={problem}
             >
-              {choices.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
-                </option>
-              ))}
-            </Select>
+              {(control) => (
+                <TextArea
+                  {...control}
+                  ref={reasonBox}
+                  value={reason}
+                  maxLength={REASON_MAX}
+                  disabled={busy}
+                  onChange={(e) => {
+                    setReason(e.target.value);
+                    if (problem) setProblem(null);
+                  }}
+                />
+              )}
+            </Field>
           )}
-        </Field>
-      )}
-      {confirmation.reason !== "none" && (
-        <Field
-          label={
-            reasonLabel ??
-            t(confirmation.reason === "required" ? "reason_label" : "reason_optional")
-          }
-          help={t("reason_help", { min: REASON_MIN })}
-          error={problem}
-        >
-          {(control) => (
-            <TextArea
-              {...control}
-              ref={reasonBox}
-              value={reason}
-              maxLength={REASON_MAX}
-              disabled={busy}
-              onChange={(e) => {
-                setReason(e.target.value);
-                if (problem) setProblem(null);
-              }}
-            />
-          )}
-        </Field>
-      )}
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className={irreversible ? BUTTON.danger : BUTTON.primary}
-          disabled={busy}
-          onClick={confirm}
-        >
-          {busy ? t("working") : confirmLabel}
-        </button>
-        <button type="button" className={BUTTON.quiet} disabled={busy} onClick={onCancel}>
-          {t("cancel")}
-        </button>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {children}
+    </ConfirmDialog>
   );
 }

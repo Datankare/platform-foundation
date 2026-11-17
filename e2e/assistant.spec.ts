@@ -116,12 +116,14 @@ test("2. a question the screening blocks: the route's refusal, with the way to i
   await alert.getByRole("link", { name: APPEAL_LINK }).click();
   await page.waitForURL("**/account");
   expect((await decisions).status()).toBe(200);
-  await expect(
-    page
-      .getByRole("region", { name: "Decisions about your content" })
-      .getByRole("listitem")
-      .first()
-  ).toBeVisible();
+  const decision = page
+    .getByRole("region", { name: "Decisions about your content" })
+    .getByRole("listitem")
+    .first();
+  await expect(decision).toBeVisible();
+  // Why it was blocked, and which decision (SF-app-060): the person does not appeal blind.
+  await expect(decision).toContainText("Blocked because:");
+  await expect(decision).toContainText(/Reference [0-9A-Z]{8}/);
 });
 
 test("3. an ordinary question: the screen shows what the route answered", async ({

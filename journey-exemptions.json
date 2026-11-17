@@ -1,9 +1,7 @@
 {
   "_comment": "TASK-198 D-21: the pages and API routes with no e2e test or live journey, and why (__tests__/journey-coverage.test.ts). A ratchet: it may only shrink — an exemption no longer needed fails until removed (UPDATE_JOURNEY_EXEMPTIONS=1 npx jest __tests__/journey-coverage.test.ts), and a reviewer reads an added one as a gate loosened (REVIEW.md rule 8). Per repository — not synced.",
-  "count": 17,
+  "count": 15,
   "exemptions": {
-    "/api/account/delete": "account and identity flow with no journey yet (sign-up, verification, reset, MFA, SSO, export, delete, age) — pending the S7/S8 account journeys",
-    "/api/account/export": "account and identity flow with no journey yet (sign-up, verification, reset, MFA, SSO, export, delete, age) — pending the S7/S8 account journeys",
     "/api/agent/capabilities": "agent page or route with no journey yet — pending the S7/S8 agent journeys",
     "/api/auth/confirm-forgot-password": "account and identity flow with no journey yet (sign-up, verification, reset, MFA, SSO, export, delete, age) — pending the S7/S8 account journeys",
     "/api/auth/mfa-challenge": "account and identity flow with no journey yet (sign-up, verification, reset, MFA, SSO, export, delete, age) — pending the S7/S8 account journeys",

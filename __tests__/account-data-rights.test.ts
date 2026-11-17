@@ -65,6 +65,11 @@ jest.mock("@/platform/auth/config", () => ({
   registerAuthProvider: jest.fn(),
 }));
 jest.mock("@/platform/auth/auth-init", () => ({ initAuth: jest.fn() }));
+const mockProvision = jest.fn();
+jest.mock("@/platform/auth/user-provisioning", () => ({
+  ...jest.requireActual("@/platform/auth/user-provisioning"),
+  provisionAccount: (...args: unknown[]) => mockProvision(...args),
+}));
 
 import { GET as exportGET } from "@/app/api/account/export/route";
 import { POST as deletePOST } from "@/app/api/account/delete/route";
@@ -105,6 +110,42 @@ beforeEach(() => {
   });
   mockSoftDelete.mockResolvedValue({ success: true, errors: [] });
   mockDeleteIdentity.mockResolvedValue({ success: true });
+  mockProvision.mockResolvedValue({
+    outcome: "existing",
+    accountId: CALLERS.free.userId,
+  });
+});
+
+// TASK-225: the account page can be a new account's first page — its row is made first (as a
+// guarded request makes it, TASK-117), so its permission is its role's.
+describe.each([
+  ["GET /api/account/export", () => exportAs("free"), () => mockExport],
+  ["POST /api/account/delete", () => deleteAs("free"), () => mockSoftDelete],
+] as const)("%s for an account not yet stored (TASK-225)", (_name, call, served) => {
+  it("its row is made, then it is served", async () => {
+    mockProvision.mockResolvedValue({
+      outcome: "created",
+      accountId: CALLERS.free.userId,
+    });
+    expect((await call()).status).toBe(200);
+    expect(mockProvision).toHaveBeenCalledTimes(1);
+    expect(served()).toHaveBeenCalled();
+  });
+
+  it("[hostile:erased] an erased identity is not stored again: account.not_found, nothing served", async () => {
+    mockProvision.mockResolvedValue({ outcome: "erased" });
+    const res = await call();
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("account.not_found");
+    expect(served()).not.toHaveBeenCalled();
+  });
+
+  it("[hostile:store-down] a store that cannot answer refuses (retryable), nothing served", async () => {
+    mockProvision.mockResolvedValue({ outcome: "failed" });
+    const res = await call();
+    expect((await res.json()).code).toBe("account.not_provisioned");
+    expect(served()).not.toHaveBeenCalled();
+  });
 });
 
 // hostile:id-spelling n/a: neither route reads an account id from the request: the account is the

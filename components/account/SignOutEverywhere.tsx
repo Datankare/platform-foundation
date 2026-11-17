@@ -16,6 +16,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/platform/auth/context";
 import { renderMessage } from "@/platform/errors/messages";
+import { signInPath } from "@/platform/auth/return-path";
 
 const t = (key: string) => renderMessage(`screens.account.sessions.${key}`);
 
@@ -33,7 +34,8 @@ export default function SignOutEverywhere() {
 
   const act = async () => {
     setStep("working");
-    if (await signOutEverywhere()) router.replace("/auth");
+    // Plain sign-in: every session ended, this one too — nothing here to come back to.
+    if (await signOutEverywhere()) router.replace(signInPath());
     else setStep("failed");
   };
 

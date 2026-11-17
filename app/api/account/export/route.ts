@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireActor, requirePermission } from "@/platform/auth/middleware";
+import { storeOwnAccount } from "@/platform/auth/own-account";
 import {
   ACCOUNT_EXPORT_SCHEMA,
   EXPORT_TOO_LARGE,
@@ -39,6 +40,13 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     actorId: actor.id,
   });
   if (perAccount) return perAccount;
+  // An account reaches its own data before any guarded request has stored it (TASK-225: the
+  // account page can be the first page after sign-up): its row is made here, as a guarded
+  // request makes it (TASK-117), so its permission is its role's — never "no permission" for an
+  // account not yet stored. An erased identity stays erased; a store that cannot answer refuses.
+  const own = await storeOwnAccount(actor.user);
+  if (own === "erased") return apiError("account.not_found", { request });
+  if (own === "unavailable") return apiError("account.not_provisioned", { request });
   const permitted = await requirePermission(actor.user.sub, "can_export_data");
   if (permitted.error) return permitted.error;
 

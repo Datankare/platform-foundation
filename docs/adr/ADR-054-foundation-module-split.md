@@ -108,8 +108,10 @@ the core's `platform/observability/provider-health.ts`. Declared dependencies: `
 routes, components, tests, kits, kit manifest and migrations, the composition roots and the shared
 directory (`platform/voice`). `scripts/module-manifest.cjs` is its only reader; `eslint.config.mjs`
 generates one `import/no-restricted-paths` zone per module from it: the core may import no module
-code, test or kit; a module may import itself and its dependencies; `app-modules.ts` and the home
-seam `app-home.tsx` (`app/HomeClient.tsx` renders it; PF's shows the translation demo) are exempt.
+code, test or kit; a module may import itself and its dependencies; `app-modules.ts`, the home
+seam `app-home.tsx` (`app/HomeClient.tsx` renders it; PF's shows the translation demo) and the
+account seam `app-account.tsx` (the app's own sections of `/account`; PF's adds none — TASK-225)
+are exempt.
 `__tests__/module-lint.test.ts` lints fixtures through ESLint's API (aliases, relative, type-only,
 `export … from`, `require`, dynamic `import()`); `__tests__/module-boundary.test.ts` walks every
 import in the tree (with `jest.mock` / `requireActual`) and requires zero crossings in production

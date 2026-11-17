@@ -14,6 +14,7 @@ import React from "react";
 import { renderMessage } from "@/platform/errors/messages";
 import type { Refusal } from "@/platform/errors/refusal";
 import { useSignInHref } from "@/components/auth/useSignInHref";
+import { accountStatusLabel, waitText } from "@/components/refusal/refusal-words";
 import { BUTTON } from "./tokens";
 
 export function RefusalExtras({ refusal }: { readonly refusal: Refusal }) {
@@ -24,7 +25,7 @@ export function RefusalExtras({ refusal }: { readonly refusal: Refusal }) {
     return (
       <p data-refusal-kind={kind}>
         {renderMessage("screens.refusal.retry_after", {
-          seconds: refusal.retryAfterSeconds,
+          wait: waitText(refusal.retryAfterSeconds),
         })}
       </p>
     );
@@ -32,7 +33,7 @@ export function RefusalExtras({ refusal }: { readonly refusal: Refusal }) {
     return (
       <p data-refusal-kind={kind}>
         {renderMessage("screens.refusal.account_status", {
-          status: refusal.accountStatus,
+          status: accountStatusLabel(refusal.accountStatus),
         })}
       </p>
     );

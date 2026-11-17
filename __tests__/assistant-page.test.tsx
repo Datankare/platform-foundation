@@ -32,7 +32,10 @@ Object.assign(globalThis, { ReadableStream, TextDecoder, TextEncoder });
 
 const replace = jest.fn();
 const push = jest.fn();
-jest.mock("next/navigation", () => ({ useRouter: () => ({ replace, push }) }));
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ replace, push }),
+  usePathname: () => window.location.pathname,
+}));
 
 const mockAuth = {
   user: null as { email: string } | null,
@@ -51,6 +54,7 @@ jest.mock("@/platform/modules/app-home", () => ({
 }));
 
 import AssistantClient from "@/app/assistant/AssistantClient";
+import { EARLIER_KEPT } from "@/components/assistant/AssistantPanel";
 import AssistantPage, { metadata } from "@/app/assistant/page";
 import HomeClient from "@/app/HomeClient";
 
@@ -153,11 +157,13 @@ describe("the assistant page (TASK-211)", () => {
     expect(AssistantPage().type).toBe(AssistantClient);
   });
 
-  it("signed out: sent to sign-in, nothing shown or sent", () => {
-    const { container } = render(<AssistantClient />);
-    expect(replace).toHaveBeenCalledWith("/auth");
-    expect(container).toBeEmptyDOMElement();
+  it("signed out: sent to sign-in and back here (E-113), nothing shown or sent", () => {
+    window.history.replaceState(null, "", "/assistant");
+    render(<AssistantClient />);
+    expect(replace).toHaveBeenCalledWith("/auth?redirect=%2Fassistant");
+    expect(screen.queryByLabelText("Your question")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+    window.history.replaceState(null, "", "/");
   });
 
   it("loading: says so, and decides nothing yet", () => {
@@ -172,10 +178,10 @@ describe("the assistant page (TASK-211)", () => {
     render(<AssistantClient />);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Assistant");
     expect(screen.getByText(t("guest"))).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute(
-      "href",
-      "/auth"
-    );
+    // Sign-in comes back here (E-113): the page's own link and the header's.
+    expect(
+      within(screen.getByRole("main")).getByRole("link", { name: "Sign in" })
+    ).toHaveAttribute("href", "/auth?redirect=%2Fassistant");
     expect(screen.queryByLabelText("Your question")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -184,10 +190,13 @@ describe("the assistant page (TASK-211)", () => {
     signedIn();
     fetchMock.mockImplementation(async () => reply("POST /api/stream — an answer"));
     render(<AssistantClient />);
-    expect(screen.getByRole("link", { name: "← Back to home" })).toHaveAttribute(
-      "href",
-      "/"
-    );
+    // The app's one header is the way home (SF-app-001): no link of the page's own.
+    expect(
+      within(screen.getByRole("navigation", { name: "The app" })).getByRole("link", {
+        name: "Home",
+      })
+    ).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("link", { name: "← Back to home" })).toBeNull();
     expect(askButton()).toBeDisabled();
     fireEvent.change(box(), { target: { value: QUESTION } });
     expect(askButton()).toBeEnabled();
@@ -215,6 +224,32 @@ describe("the assistant page (TASK-211)", () => {
     // page holds no token to send.
     expect(init.credentials).toBe("same-origin");
     expect(new Headers(init.headers).get("authorization")).toBeNull();
+  });
+
+  it("the answer is shown formatted (Markdown), not as typed marks (SF-app-030)", async () => {
+    signedIn();
+    const text = "**Light** splits into colours:\n\n- red\n- violet";
+    const events =
+      `data: ${JSON.stringify({ text, done: false })}\n\n` +
+      `data: ${JSON.stringify({ text: "", done: true, stopReason: "end_turn" })}\n\n` +
+      "data: [DONE]\n\n";
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(events));
+          controller.close();
+        },
+      }),
+    }));
+    render(<AssistantClient />);
+    askQuestion(QUESTION);
+    const answer = await screen.findByTestId("assistant-answer");
+    await waitFor(() => expect(within(answer).getAllByRole("listitem")).toHaveLength(2));
+    expect(answer.querySelector("strong")).toHaveTextContent("Light");
+    expect(answer).not.toHaveTextContent("**");
+    expect(answer).not.toHaveTextContent("- red");
   });
 
   it("Ctrl+Enter asks, as the hint says", async () => {
@@ -319,7 +354,8 @@ describe("the assistant page (TASK-211)", () => {
       messageOf("POST /api/stream — refused (rate limited)")
     );
     expect(alert).toHaveTextContent(
-      renderMessage("screens.refusal.retry_after", { seconds: 30 })
+      // In a person's count (SF-app-062): "30 seconds".
+      renderMessage("screens.refusal.retry_after", { wait: "30 seconds" })
     );
   });
 
@@ -332,9 +368,10 @@ describe("the assistant page (TASK-211)", () => {
     askQuestion();
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(messageOf("POST /api/stream — refused (a guest)"));
+    // Sign-in comes back to this page (E-113).
     expect(within(alert).getByRole("link", { name: "Sign in" })).toHaveAttribute(
       "href",
-      "/auth"
+      "/auth?redirect=%2F"
     );
   });
 
@@ -412,6 +449,49 @@ describe("the assistant page (TASK-211)", () => {
     signedIn();
     render(<AssistantClient />);
     expect(box()).toHaveAttribute("maxLength", "4000");
+  });
+});
+
+describe("asking again keeps what came before (TASK-224, SF-app-031)", () => {
+  it("the answer on screen moves to Earlier; Clear empties both; nothing in the browser's storage", async () => {
+    signedIn();
+    fetchMock.mockImplementation(async () => reply("POST /api/stream — an answer"));
+    render(<AssistantClient />);
+    askQuestion("What is a rainbow?");
+    await waitFor(() =>
+      expect(screen.getByTestId("assistant-answer")).toHaveTextContent(
+        "A rainbow is sunlight split by raindrops."
+      )
+    );
+    expect(screen.queryByTestId("assistant-earlier")).toBeNull();
+    askQuestion("And a double rainbow?");
+    const earlier = await screen.findByTestId("assistant-earlier");
+    expect(
+      within(earlier).getByText(t("asked", { question: "What is a rainbow?" }))
+    ).toBeInTheDocument();
+    expect(
+      within(earlier).getByText("A rainbow is sunlight split by raindrops.")
+    ).toBeInTheDocument();
+    expect(localStorage.length + sessionStorage.length).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: t("clear") }));
+    expect(screen.queryByTestId("assistant-earlier")).toBeNull();
+  });
+
+  it("keeps at most EARLIER_KEPT, newest first", async () => {
+    signedIn();
+    fetchMock.mockImplementation(async () => reply("POST /api/stream — an answer"));
+    render(<AssistantClient />);
+    for (let i = 1; i <= EARLIER_KEPT + 2; i++) {
+      askQuestion(`Question ${i}`);
+      await waitFor(() =>
+        expect(screen.getByTestId("assistant-answer")).toHaveTextContent("A rainbow")
+      );
+    }
+    const items = within(screen.getByTestId("assistant-earlier")).getAllByRole(
+      "listitem"
+    );
+    expect(items).toHaveLength(EARLIER_KEPT);
+    expect(items[0]).toHaveTextContent(`Question ${EARLIER_KEPT + 1}`);
   });
 });
 

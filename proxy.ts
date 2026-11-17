@@ -123,11 +123,14 @@ function route(request: NextRequest, headers: Headers): NextResponse {
     return pass(headers);
   }
 
-  // Page routes — without a session cookie, to sign-in. The session itself is verified when the
-  // page makes its API calls.
+  // Page routes — without a session cookie, to sign-in, asked to come back to this page: its path
+  // and its query (TASK-224, E-113 — an authorization request's handle is in its query; with the
+  // path alone, sign-in came back to a request-less page). The sign-in page checks the value is a
+  // page of this site before following it (platform/auth/return-path.ts). The session itself is
+  // verified when the page makes its API calls.
   if (!presentsSession(request)) {
     const authUrl = new URL("/auth", request.url);
-    authUrl.searchParams.set("redirect", pathname);
+    authUrl.searchParams.set("redirect", `${pathname}${request.nextUrl.search}`);
     return NextResponse.redirect(authUrl);
   }
 

@@ -22,7 +22,11 @@ import { requireAuth } from "@/platform/auth/middleware";
 import { withTenantTx } from "@/platform/data";
 import { getModerationStore } from "@/platform/moderation/store";
 import { getAuditLogForUser } from "@/platform/auth/audit";
-import { listOwnDecisions, submitAppeal } from "@/platform/moderation/review-service";
+import {
+  listOwnDecisions,
+  noOwnDecisions,
+  submitAppeal,
+} from "@/platform/moderation/review-service";
 import { logger, generateRequestId } from "@/lib/logger";
 import type {
   AccountStatus,
@@ -72,6 +76,34 @@ async function resolveUserId(sub: string): Promise<string | null> {
     return rows.length === 1 ? rows[0].id : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Who the caller is, for reading their own decisions (TASK-224): their account; none yet (a
+ * signed-in identity whose row its first guarded request makes — TASK-117); erased (a row closed
+ * by its deletion: `account.not_found`, as before); or not known, the lookup failing — never read
+ * as "none" (a failed read is not an empty list).
+ */
+async function ownAccount(
+  sub: string
+): Promise<
+  | { readonly kind: "account"; readonly id: string }
+  | { readonly kind: "none" | "erased" | "unreadable" }
+> {
+  try {
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<{ id: string; deleted: boolean }>(
+        "select id, deleted_at is not null as deleted from users where cognito_sub = $1",
+        [sub]
+      )
+    );
+    if (rows.length === 0) return { kind: "none" };
+    const live = rows.filter((r) => !r.deleted);
+    if (live.length === 1) return { kind: "account", id: live[0]!.id };
+    return live.length === 0 ? { kind: "erased" } : { kind: "unreadable" };
+  } catch {
+    return { kind: "unreadable" };
   }
 }
 
@@ -171,6 +203,10 @@ const GET_RESPONSE: ResponseSchema = {
           contentType: {
             type: "string",
           },
+          // Why it was blocked, as a kind (TASK-224, SF-app-060) — never the screened text.
+          reason: {
+            type: "string",
+          },
           decidedAt: {
             type: "string",
           },
@@ -195,11 +231,20 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   const auth = await requireAuth(request);
   if (auth.error) return auth.error;
 
-  const userId = await resolveUserId(auth.user.sub);
-  if (!userId) return apiError("account.not_found", { request });
+  const own = await ownAccount(auth.user.sub);
+  if (own.kind === "erased") return apiError("account.not_found", { request });
+  if (own.kind === "unreadable")
+    return apiError("service.unavailable", {
+      params: { service: "moderation" },
+      request,
+    });
 
   try {
-    return NextResponse.json(await listOwnDecisions(userId));
+    // No row yet (its first guarded request makes it): no decisions — never "account not found",
+    // which a page reads as an erased account and signs out (TASK-224: the account page can be
+    // the first page after sign-in, E-113).
+    if (own.kind !== "account") return NextResponse.json(await noOwnDecisions());
+    return NextResponse.json(await listOwnDecisions(own.id));
   } catch (err) {
     logger.error("Own decisions read failed", {
       error: err instanceof Error ? err.message : "Unknown",

@@ -7,19 +7,11 @@
 import React from "react";
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { handleRefusal, type Refusal } from "@/platform/errors/refusal";
+import { handleRefusal } from "@/platform/errors/refusal";
+import { renderMessage } from "@/platform/errors/messages";
 
-const mockRefusal: { current: Refusal | null } = { current: null };
-jest.mock("@/platform/errors/refusal", () => {
-  const actual = jest.requireActual("@/platform/errors/refusal");
-  return {
-    ...actual,
-    // The refusal the platform's own handler makes of the route's code (the body is the route's).
-    readRefusal: async () => mockRefusal.current,
-  };
-});
-
-import SpikeApp, { type SpikeAppProps } from "@/components/SpikeApp";
+import SpikeApp, { startClip, type SpikeAppProps } from "@/components/SpikeApp";
+import { routeAnswer } from "@/__tests__/fixtures/route-responses";
 import {
   canSubmitText,
   getCharState,
@@ -142,11 +134,21 @@ describe("SpikeApp — Component Behavior", () => {
   });
 });
 
+/** A route's own refusal for each code (route-responses.json): the body the screen reads. */
+const REFUSAL_OF: Readonly<Record<string, Parameters<typeof routeAnswer>[0]>> = {
+  "content.rejected": "POST /api/stream — refused (content rejected)",
+  "account.restricted": "POST /api/admin/gdpr — refused (a suspended staff account)",
+  "rate.limited": "POST /api/stream — refused (rate limited)",
+};
+
 describe("SpikeApp — a moderation decision offers its appeal (TASK-210, N-117)", () => {
   const APPEAL = "See this decision and appeal it";
   const refuse = async (code: string, isGuest = false) => {
-    mockRefusal.current = handleRefusal(code);
-    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 422 }) as never;
+    // A route's own refusal with this code (the shared handler words it, TASK-181).
+    const [status, body] = routeAnswer(REFUSAL_OF[code]!);
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ ok: false, status, json: async () => body }) as never;
     render(React.createElement(SpikeApp as React.FC<SpikeAppProps>, { isGuest }));
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "some text" } });
     await act(async () => {
@@ -185,5 +187,89 @@ describe("SpikeApp — a moderation decision offers its appeal (TASK-210, N-117)
     fireEvent.click(screen.getByRole("button", { name: /clear/i }));
     expect(screen.queryByRole("link", { name: APPEAL })).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("SpikeApp — the demo home's words and failures (TASK-224)", () => {
+  const typeAndSend = async (value = "hello") => {
+    fireEvent.change(screen.getByRole("textbox"), { target: { value } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /translate/i }));
+    });
+  };
+
+  it("no internal labels: no spike, version or motto (SF-app-011, E-110), no jargon (SF-app-012)", () => {
+    const { container } = render(
+      React.createElement(SpikeApp as React.FC<SpikeAppProps>)
+    );
+    expect(container.textContent).not.toMatch(
+      /Spike|v0\.1|Foundation as Fabric|Continuous Confidence|SFW/
+    );
+    expect(container.textContent).toContain("suitable for everyone");
+    // A section of the app's frame, never a page of its own.
+    expect(container.querySelector("main")).toBeNull();
+  });
+
+  it("the server's own text is never shown: the catalogue's sentence is (SF-app-020)", async () => {
+    // An answer that is not a translation, whatever text it carries (a refusal's body, answered
+    // as if it were a 200): the screen says its own sentence, never the server's words.
+    const [, body] = routeAnswer("POST /api/stream — refused (content rejected)");
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ ok: true, status: 200, json: async () => body }) as never;
+    render(React.createElement(SpikeApp as React.FC<SpikeAppProps>));
+    await typeAndSend();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      renderMessage("screens.app.spike.something_went_wrong")
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent(
+      String((body as { error?: string }).error)
+    );
+  });
+
+  it("a clip the browser refuses to play: onFail, once (SF-app-021)", async () => {
+    const play = jest.fn().mockRejectedValue(new Error("NotAllowedError"));
+    const OriginalAudio = global.Audio;
+    const made: { onerror?: () => void }[] = [];
+    global.Audio = jest.fn().mockImplementation(() => {
+      const a: {
+        play: jest.Mock;
+        pause: jest.Mock;
+        currentTime: number;
+        onerror?: () => void;
+      } = { play, pause: jest.fn(), currentTime: 0 };
+      made.push(a);
+      return a;
+    }) as never;
+    const createObjectURL = URL.createObjectURL;
+    URL.createObjectURL = jest.fn(() => "blob:x");
+    try {
+      const onFail = jest.fn();
+      startClip("AA==", { onEnd: jest.fn(), onFail });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(play).toHaveBeenCalled();
+      expect(onFail).toHaveBeenCalledTimes(1);
+      made[0]?.onerror?.();
+      expect(onFail).toHaveBeenCalledTimes(1);
+    } finally {
+      global.Audio = OriginalAudio;
+      URL.createObjectURL = createObjectURL;
+    }
+  });
+
+  it("the count is announced only near the limit (SF-app-018)", () => {
+    render(React.createElement(SpikeApp as React.FC<SpikeAppProps>));
+    const said = () => screen.getByTestId("char-announcement");
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "hello" } });
+    expect(said().textContent).toBe("");
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "a".repeat(95) } });
+    expect(said().textContent).toBe("5 characters left.");
+  });
+
+  it("buttons are named by their visible words (WCAG 2.5.3)", () => {
+    render(React.createElement(SpikeApp as React.FC<SpikeAppProps>));
+    expect(screen.getByRole("button", { name: /^Speak$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Clear$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Translate & Speak/ })).toBeInTheDocument();
   });
 });

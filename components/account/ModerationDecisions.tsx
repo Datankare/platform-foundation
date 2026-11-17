@@ -24,7 +24,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import AppealForm from "@/components/AppealForm/AppealForm";
 import { formatDateTime, fullTimestamp } from "@/components/admin/admin-format";
-import { apiFetch } from "@/platform/auth/api-fetch";
+import { adminCall } from "@/components/admin/ui/admin-call";
 import {
   CATALOGS,
   DEFAULT_LOCALE,
@@ -32,7 +32,6 @@ import {
   renderMessage,
   type MessageValues,
 } from "@/platform/errors/messages";
-import { readRefusal } from "@/platform/errors/refusal";
 import type { OwnDecision, OwnDecisions } from "@/platform/moderation/review-service";
 
 /** This screen's text, from the message catalog (ADR-051 D4). */
@@ -50,6 +49,25 @@ function codeKnown(suffix: string): boolean {
 function contentLabel(contentType: string): string {
   const code = contentType.replace(/-/g, "_");
   return t(codeKnown(`content_${code}`) ? `content_${code}` : "content_other");
+}
+
+/**
+ * Why a decision blocked the content, in plain words (SF-app-060); a reason the catalogue does
+ * not name — a newer server's, or none sent — reads as "other".
+ */
+export function reasonLabel(reason: string | undefined): string {
+  return t(reason && codeKnown(`reason.${reason}`) ? `reason.${reason}` : "reason.other");
+}
+
+/** How many characters of a decision's id the person is shown, to name it to support. */
+export const REFERENCE_LENGTH = 8;
+
+/** A decision's short reference: the first characters of its id, in capitals. */
+export function decisionReference(id: string): string {
+  return id
+    .replace(/[^0-9a-z]/gi, "")
+    .slice(0, REFERENCE_LENGTH)
+    .toUpperCase();
 }
 
 /** The line for an appeal's outcome; a decision the catalog does not know reads as decided. */
@@ -73,18 +91,18 @@ type Read =
   | { kind: "error"; message: string }
   | { kind: "ready"; data: OwnDecisions };
 
-/** One read of the user's decisions; never throws (an outage is its refusal's message). */
+/**
+ * One read of the user's decisions, through the one call path; never throws: a refusal is its own
+ * message, no answer the network sentence, and an answer with no list is "unreadable" — never an
+ * empty list (a failed read is not "no decisions").
+ */
 async function readDecisions(): Promise<Read> {
-  try {
-    const res = await apiFetch("/api/moderation/appeals");
-    if (!res.ok) return { kind: "error", message: (await readRefusal(res)).message };
-    const data = (await res.json()) as OwnDecisions;
-    return Array.isArray(data?.decisions)
-      ? { kind: "ready", data }
-      : { kind: "error", message: t("unreadable") };
-  } catch {
-    return { kind: "error", message: t("unreachable") };
-  }
+  const answer = await adminCall("/api/moderation/appeals");
+  if (!answer.ok) return { kind: "error", message: answer.refusal.message };
+  const data = answer.body as unknown as OwnDecisions;
+  return Array.isArray(data?.decisions)
+    ? { kind: "ready", data }
+    : { kind: "error", message: t("unreadable") };
 }
 
 /** A time as the line around it reads it ("9 Nov 2026, 14:05"), its whole UTC value in a tooltip. */
@@ -201,6 +219,16 @@ export default function ModerationDecisions() {
                     {t("blocked_on", { date: formatDateTime(d.decidedAt) })}
                   </p>
                 </div>
+                {/* Why, and which decision (SF-app-060): the person no longer appeals blind. */}
+                <p
+                  className="mt-1 text-sm text-gray-200"
+                  data-testid={`decision-reason-${d.id}`}
+                >
+                  {t("reason_line", { reason: reasonLabel(d.reason) })}
+                </p>
+                <p className="text-xs text-gray-400">
+                  {t("reference", { reference: decisionReference(d.id) })}
+                </p>
                 <div className="mt-1">
                   <Standing d={d} now={now} />
                 </div>
@@ -230,7 +258,6 @@ export default function ModerationDecisions() {
                       originalDecisionId={d.id}
                       minReasonLength={minReasonLength}
                       maxReasonLength={maxReasonLength}
-                      variant="dark"
                       onSubmitted={() => {
                         setOpen(null);
                         setSent(d.id);

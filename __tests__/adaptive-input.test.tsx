@@ -12,8 +12,10 @@
  */
 
 import React from "react";
+import "@testing-library/jest-dom";
 import { render, screen, fireEvent } from "@testing-library/react";
 import AdaptiveInput, {
+  countAnnounced,
   type AdaptiveInputProps,
 } from "@/components/AdaptiveInput/AdaptiveInput";
 import type { ConductorOutput, ActionItem } from "@/platform/input";
@@ -160,13 +162,14 @@ describe("AdaptiveInput — intent bar", () => {
     expect(screen.queryByTestId("intent-bar")).toBeNull();
   });
 
-  it("shows confidence percentage", () => {
+  it("never shows a raw confidence percentage (SF-app-017)", () => {
     renderInput({
       output: makeOutput({
         intent: makeIntent({ confidence: 0.87 }),
       }),
     });
-    expect(screen.getByTestId("intent-confidence").textContent).toBe("87%");
+    expect(screen.queryByTestId("intent-confidence")).toBeNull();
+    expect(screen.getByTestId("intent-bar").textContent).not.toMatch(/\d+%/);
   });
 
   it("hides confidence when 0", () => {
@@ -307,9 +310,29 @@ describe("AdaptiveInput — character counter", () => {
     expect(screen.getByTestId("char-counter").textContent).toContain("0/2500");
   });
 
-  it("has role=status for accessibility", () => {
-    renderInput();
-    expect(screen.getByTestId("char-counter").getAttribute("role")).toBe("status");
+  it("announces the count only near or over the limit, never on every keystroke (SF-app-018)", () => {
+    const { rerender } = renderInput({ text: "hello", maxChars: 100 });
+    const said = () => screen.getByTestId("char-announcement");
+    expect(said()).toHaveAttribute("role", "status");
+    expect(said().textContent).toBe("");
+    rerender(<AdaptiveInput {...defaultProps} text={"a".repeat(91)} maxChars={100} />);
+    expect(said().textContent).toBe("91 of 100 characters used.");
+    rerender(<AdaptiveInput {...defaultProps} text={"a".repeat(120)} maxChars={100} />);
+    expect(said().textContent).toBe("120 of 100 characters used.");
+    // The visible count is not itself announced.
+    expect(
+      screen.getByTestId("char-counter").querySelector("[aria-hidden]")
+    ).not.toBeNull();
+  });
+
+  it("countAnnounced: the last tenth, at least the last ten", () => {
+    expect(countAnnounced(89, 100)).toBe(false);
+    expect(countAnnounced(90, 100)).toBe(true);
+    expect(countAnnounced(2249, 2500)).toBe(false);
+    expect(countAnnounced(2250, 2500)).toBe(true);
+    expect(countAnnounced(19, 30)).toBe(false);
+    expect(countAnnounced(20, 30)).toBe(true);
+    expect(countAnnounced(31, 30)).toBe(true);
   });
 });
 
@@ -417,14 +440,25 @@ describe("AdaptiveInput — slots", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("AdaptiveInput — accessibility", () => {
-  it("mode pills have aria-label", () => {
+  it("mode pills are named by their visible words (SF-app-017, WCAG 2.5.3)", () => {
     renderInput();
-    expect(screen.getByTestId("mode-pill-text").getAttribute("aria-label")).toBe(
-      "Text input mode"
-    );
-    expect(screen.getByTestId("mode-pill-speech").getAttribute("aria-label")).toBe(
-      "Speech input mode"
-    );
+    for (const [mode, name] of [
+      ["text", "Text"],
+      ["speech", "Speech"],
+      ["file", "File"],
+      ["music", "Music"],
+    ]) {
+      const pill = screen.getByTestId(`mode-pill-${mode}`);
+      expect(pill.getAttribute("aria-label")).toBeNull();
+      expect(screen.getByRole("button", { name })).toBe(pill);
+    }
+  });
+
+  it("the mode row wraps, so nothing runs off a phone's width (SF-app-017)", () => {
+    renderInput({ output: makeOutput({ intent: makeIntent() }) });
+    expect(
+      screen.getByRole("group", { name: "Input mode selection" }).className
+    ).toContain("flex-wrap");
   });
 
   it("mode pills group has role=group", () => {
@@ -482,7 +516,7 @@ describe("AdaptiveInput — edge cases", () => {
     expect(counter.textContent).toContain("2501/2500");
     // The span should have the red class
     const span = counter.querySelector("span");
-    expect(span?.className).toContain("text-red-500");
+    expect(span?.className).toContain("text-red-400");
   });
 
   it("shows gray text when character count is within limit", () => {

@@ -28,6 +28,8 @@ import React from "react";
 import Link from "next/link";
 import { renderMessage } from "@/platform/errors/messages";
 import type { Refusal } from "@/platform/errors/refusal";
+import { accountStatusLabel, waitText } from "./refusal-words";
+import { useSignInHref } from "@/components/auth/useSignInHref";
 
 const t = (key: string, values?: Record<string, string | number>) =>
   renderMessage(`screens.refusal.${key}`, values);
@@ -45,7 +47,7 @@ export interface RefusalNoticeProps {
   readonly onRetry?: () => void;
   /** "restricted": offered as "Sign out". */
   readonly onSignOut?: () => void;
-  /** "sign-in": where sign-in is (default /auth). */
+  /** "sign-in": where sign-in is (default: sign-in, then back to this page — E-113). */
   readonly signInHref?: string;
   /**
    * A moderation decision's link to the account page, where it is appealed (default shown):
@@ -58,11 +60,15 @@ export function RefusalNotice({
   refusal,
   onRetry,
   onSignOut,
-  signInHref = "/auth",
+  signInHref,
   offerAppeal = true,
 }: RefusalNoticeProps) {
   const { kind, message } = refusal;
-  if (kind === "tenant-unavailable") return <TenantUnavailable refusal={refusal} />;
+  // Signed in again, back to this page (TASK-224, E-113); an erased account starts afresh.
+  const signInHere = useSignInHref();
+  // Inline, inside a page that has its main landmark already (SF-app-063).
+  if (kind === "tenant-unavailable")
+    return <TenantUnavailable refusal={refusal} nested />;
   if (kind === "consent-wait" || kind === "age-gate" || kind === "held") {
     return (
       <div role="status" className={INFO}>
@@ -75,7 +81,7 @@ export function RefusalNotice({
       <p>{message}</p>
       {kind === "restricted" && refusal.accountStatus && (
         <p className="mt-1 text-red-200">
-          {t("account_status", { status: refusal.accountStatus })}
+          {t("account_status", { status: accountStatusLabel(refusal.accountStatus) })}
         </p>
       )}
       {offerAppeal && offersAppeal(refusal) && <AppealLink />}
@@ -86,7 +92,7 @@ export function RefusalNotice({
       )}
       {kind === "retry-after" && refusal.retryAfterSeconds !== undefined && (
         <p className="mt-1 text-red-200">
-          {t("retry_after", { seconds: refusal.retryAfterSeconds })}
+          {t("retry_after", { wait: waitText(refusal.retryAfterSeconds) })}
         </p>
       )}
       {(kind === "service-unavailable" || kind === "not-provisioned") && onRetry && (
@@ -95,7 +101,10 @@ export function RefusalNotice({
         </button>
       )}
       {(kind === "sign-in" || kind === "signed-out-erased") && (
-        <a className={`${BUTTON} inline-block`} href={signInHref}>
+        <a
+          className={`${BUTTON} inline-block`}
+          href={signInHref ?? (kind === "sign-in" ? signInHere : "/auth")}
+        >
           {refusal.code === "guest.allowance_exhausted"
             ? t("create_account")
             : t("sign_in")}
@@ -133,15 +142,38 @@ export function AppealLink({ className }: { readonly className?: string }) {
   );
 }
 
-/** Full page: the deployment cannot serve this tenant (tenant.suspended / missing / unknown_host). */
-export function TenantUnavailable({ refusal }: { readonly refusal: Refusal }) {
+/**
+ * The deployment cannot serve this tenant (tenant.suspended / missing / unknown_host): a whole
+ * page of its own, or — `nested`, inside a page that has its main landmark already — the same
+ * words in a box (SF-app-063: a second `main` inside the first).
+ */
+export function TenantUnavailable({
+  refusal,
+  nested = false,
+}: {
+  readonly refusal: Refusal;
+  readonly nested?: boolean;
+}) {
+  const message = <p className="max-w-md text-sm text-gray-300">{refusal.message}</p>;
+  if (nested) {
+    return (
+      <div
+        role="alert"
+        className={`${ALERT} space-y-2`}
+        data-refusal-kind="tenant-unavailable"
+      >
+        <h2 className="text-xl font-bold text-white">{t("tenant_title")}</h2>
+        {message}
+      </div>
+    );
+  }
+  // A page of its own: its main landmark (a role on it would hide the landmark), the alert inside.
   return (
-    <main
-      role="alert"
-      className="flex min-h-screen flex-col items-center justify-center gap-3 bg-[#0a0f1e] p-8 text-center"
-    >
-      <h1 className="text-xl font-bold text-white">{t("tenant_title")}</h1>
-      <p className="max-w-md text-sm text-gray-300">{refusal.message}</p>
+    <main className="flex min-h-screen flex-col items-center justify-center bg-[#0a0f1e] p-8 text-center">
+      <div role="alert" className="flex flex-col items-center gap-3">
+        <h1 className="text-xl font-bold text-white">{t("tenant_title")}</h1>
+        {message}
+      </div>
     </main>
   );
 }

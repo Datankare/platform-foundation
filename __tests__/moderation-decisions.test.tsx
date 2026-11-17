@@ -82,8 +82,11 @@ describe("the user's decisions (TASK-210)", () => {
     expect(field).toHaveAttribute("maxlength", "2000");
     fireEvent.change(field, { target: { value: "short" } });
     expect(within(item).getByTestId("af-counter")).toHaveTextContent(
-      "15 more character(s)"
+      "15 more characters needed."
     );
+    // The count is the field's help, tied to it (SF-app-061).
+    const helpId = within(item).getByTestId("af-counter").parentElement?.id ?? "";
+    expect(field.getAttribute("aria-describedby")).toContain(helpId);
     fireEvent.change(field, {
       target: { value: "This is a sufficiently long and detailed appeal reason." },
     });
@@ -155,12 +158,24 @@ describe("the user's decisions (TASK-210)", () => {
     expect(await decision("traj-1")).toBeInTheDocument();
   });
 
-  it("an unreachable server is said so", async () => {
+  it('an unreachable server is said so, never as "no decisions"', async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("network down"));
     render(<ModerationDecisions />);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      renderMessage("screens.account.decisions.unreachable")
+      renderMessage("screens.refusal.network")
     );
+    expect(screen.queryByTestId("decisions-empty")).toBeNull();
+  });
+
+  it("each decision says why it was blocked, and its reference (SF-app-060)", async () => {
+    fetchMock.mockResolvedValueOnce(list("one appealable"));
+    render(<ModerationDecisions />);
+    const item = await decision("traj-1");
+    // The route's own answer: the screening flagged harassment.
+    expect(within(item).getByTestId("decision-reason-traj-1")).toHaveTextContent(
+      "Blocked because: it looked like harassment of a person."
+    );
+    expect(within(item).getByText("Reference TRAJ1")).toBeInTheDocument();
   });
 });
 
@@ -170,6 +185,7 @@ describe("decisionStanding", () => {
     decidedAt: "2026-01-01T00:00:00.000Z",
     contentType: "generation",
     appealableUntil: "2026-01-04T00:00:00.000Z",
+    reason: "other",
     appeal: null,
     ...over,
   });

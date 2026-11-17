@@ -66,9 +66,15 @@ describe("ErrorBoundary", () => {
 
     expect(screen.getByText("Something went wrong")).toBeDefined();
     expect(
-      screen.getByText("An unexpected error occurred. Please refresh the page.")
+      screen.getByText(
+        "An unexpected error stopped this page. Refresh the page, or go to the home page."
+      )
     ).toBeDefined();
     expect(screen.getByText("Refresh page")).toBeDefined();
+    // A way home, not only a refresh (SF-app-004).
+    expect(
+      screen.getByRole("link", { name: "Go to the home page" }).getAttribute("href")
+    ).toBe("/");
   });
 
   it("renders custom fallback when provided", () => {

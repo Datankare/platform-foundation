@@ -7,6 +7,301 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-226 — axe measures a still page; the sign-in return path refuses every form that normalises to another site
+
+| Field        | Detail                                                                                                                        |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-226                                                                                                                      |
+| **Type**     | Test reliability (a flaky e2e audit) and security (an open redirect, CWE-601)                                                 |
+| **Severity** | High (the return path: an open redirect on develop's dev deploy only), Medium (the flaky audit: CI on develop red at Layer 3) |
+| **Phase**    | Phase 5                                                                                                                       |
+| **Target**   | v6.0.0 (RC)                                                                                                                   |
+| **Status**   | Fixed on develop (batch 56e-2)                                                                                                |
+| **Logged**   | 2026-11-16 (CI on develop c4ee517, Continuous Confidence Layer 3; batch 56e-2's property test run)                            |
+
+Batch 56e-2, in both repositories (Playform: its TASK-5027).
+
+| Finding                 | Before                                                                                                                                                                                                                                                                             | After                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Axe during a transition | `checkA11y` ran axe at once. "The reset steps" (`e2e/sign-in-screens.spec.ts`) failed colour contrast at 1280 and 390 px on the submit button (`transition disabled:opacity-40`) measured part way from disabled to enabled (#757982 on #122c77), and passed on retry: a flaky run | `checkA11y` waits until `document.getAnimations()` shows nothing running or pending on two checks in a row, then measures; it fails, naming each running transition or animation, after 5 s; a transition that starts while axe measures makes it wait and measure again (three times at most, then it fails). No rule weakened, retries unchanged |
+| Axe outside the helper  | Nothing kept a spec, walk or live journey from running axe itself                                                                                                                                                                                                                  | `__tests__/a11y-helper-guard.test.ts`: `@axe-core/playwright` only in `e2e/helpers/a11y.ts`; axe's source never injected into a page; `axe-core` only in a jsdom Jest test (which paints nothing); the helper must wait before it measures                                                                                                         |
+| Return path `/.//host`  | `safeReturnPath` checked the value as written, and `/.//evil.example`, `/%2e%2e//evil.example`, `/%09/..//evil.example` resolve to the path `//evil.example`, another site to the next redirect (from 56e-1; on develop's dev deploy only)                                         | The resolved path is checked too: a path that starts `//` or `/\` after the URL parser's normalisation is refused. Fixed cases for every form (dot segments plain and `%2e`, backslashes, tab, newline, carriage return, leading whitespace, scheme-relative) and a generator built from those pieces                                              |
+
+The button itself was sound: white on blue-700 (#1d4ed8, 6.7:1) when enabled, and the disabled
+state is the real `disabled` attribute (axe does not measure a disabled control's contrast).
+Playform's agent pages' own check (`sameOriginPath`) now calls `safeReturnPath` (its TASK-5027).
+
+**Design check**
+
+- **Reach:** `e2e/helpers/a11y.ts`, `e2e/a11y-helper.spec.ts` (new, no server: a transition in
+  flight at audit time; an endless animation failing named), `__tests__/a11y-helper-guard.test.ts`
+  (new), `platform/auth/return-path.ts` (the check) and `__tests__/return-path.test.ts`. No
+  route, migration or setting.
+- **Races:** the race fixed is axe against the browser's transitions; the helper waits for two
+  quiet checks (a state change can start a transition a frame later) and watches for one
+  starting while axe measures.
+- **Dependencies down:** none; a page that never comes to rest fails the audit, said.
+- **Erasure leftovers:** none — nothing is stored.
+- **Screens × responses:** no screen or response changes; the return path's callers (sign-in,
+  single sign-on start and callback, the callback page) keep their tests, each still green.
+- **Journeys touched:** every e2e spec that calls `checkA11y` (each now waits for rest) and the
+  walk; `e2e/a11y-helper.spec.ts` (new). Live journeys run no axe.
+- **Weakens a tenant's protection?** No. The return path refuses more; axe's rules are the same.
+- _Credits._ **OWASP Cheat Sheet Series**, "Unvalidated Redirects and Forwards Cheat Sheet"
+  (OWASP); **URL Standard** (WHATWG), the path parser's dot segments (`.`, `%2e`) and backslashes;
+  **Web Animations**, `Document.getAnimations()` (W3C).
+
+**Threat model**
+
+- **Boundary:** a link to `/auth?redirect=…` (or single sign-on's start) ↔ the page sign-in
+  returns to.
+- **Actors that exist today:** anyone who can send a person a link to the dev deploy's sign-in
+  page (develop holds 56e-1; staging and production do not). The flaky audit has no actor.
+- **Bypasses:** a value that is not a path of this site after the browser's own normalisation is
+  refused; one kept is read again as the same page (the property test checks this).
+- **Forgeries:** a crafted `redirect=` (or `return=`) is the forgery: refused unless it is a
+  page of this site after normalisation; no id or identity is read from it.
+- **Legitimate flows:** pages of this site, their query and fragment, encoded slashes in a path
+  (kept encoded: this site's page) — fixed cases.
+- **Agreed before code:** the owner's brief for batch 56e-2 (the CI failure; the return path).
+
+**Self-review**
+
+- **Consumers checked:** every `checkA11y` caller (the e2e specs, the walk); every
+  `safeReturnPath` caller (sign-in, single sign-on start and callback, the callback page) and
+  Playform's `sameOriginPath`.
+- **Hostile re-read:** without the wait, both proof specs fail (axe reports colour contrast at
+  2.13:1; the endless animation is measured, not refused); without the resolved-path check, 15
+  fixed cases fail whatever the seed.
+
+### TASK-225 — The one account page: change the password, two-step verification on or off, a copy of your data, delete your account; an app's own sections on it
+
+| Field        | Detail                                                                                        |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-225                                                                                      |
+| **Type**     | Feature and correctness — the user's account (GDPR Articles 15 and 17 on the screen)          |
+| **Severity** | Medium (E-126), Low (SF-app-073)                                                              |
+| **Phase**    | Phase 5                                                                                       |
+| **Target**   | v6.0.0 (RC)                                                                                   |
+| **Status**   | Fixed on develop (batch 56e-2)                                                                |
+| **Logged**   | 2026-11-13 (second-wave status S8, E-126; the 2026-11-12 screen review, group B2: SF-app-073) |
+
+Batch 56e-2, in both repositories (Playform: its TASK-5026, which puts its profile on the page).
+
+**What was wrong.** The account page showed only the decisions about a person's content. The
+routes to export and delete an account existed (audit X-15) and no screen called them; the
+password could be changed only by "Forgot password" on the sign-in page; two-step verification
+could be turned on only by staff, in the console. An app's own account screen (Playform's
+profile) was a second page with its own header and no way between the two.
+
+**What it is now.** `/account` is the one account page, in sections, with "On this page" links:
+
+| Finding          | Before                                                                                                                 | After                                                                                                                                                                                                                                                            |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E-126 (password) | Not on the account page                                                                                                | **Change password**: asked first (every device, this one too, is then signed out — the route ends every session); a code to the account's own address; the code and the new password held to the server's rules (`NewPasswordFields`, the policy read)           |
+| E-126 (MFA)      | Staff only, in the console                                                                                             | **Two-step verification** on (QR code, the key behind "Can't scan?", the first code; the password asked when the server wants proof) or off (asked first; password and a current code — the server's step-up); a single sign-on account told why neither applies |
+| E-126 (state)    | No route said whether an account has two-step verification                                                             | `GET /api/account/security` → `{ mfaEnabled: true \| false \| null, signInMethod }` from the session's own verification; `null` shown as "could not tell", never "off"; a failed read said, with Try again                                                       |
+| E-126 (export)   | No screen called `GET /api/account/export`                                                                             | **Download a copy of my data**: through the call path; saved only when it arrived whole; a refusal (too large, ten an hour, a store unreadable) in its own words and nothing saved                                                                               |
+| E-126 (delete)   | No screen called `POST /api/account/delete`                                                                            | **Delete my account**: in red, "cannot be undone", what happens (closed at once, every device signed out, erased after the retention period), a tick that the person understands; the platform's one erasure route; done replaces the page                       |
+| E-126 (new)      | Export and delete answered "no permission" to an account not yet stored (its row is made by its first guarded request) | Both store an account that has no row first, as a guarded request does (`platform/auth/own-account.ts`; an account already stored is left as it is); an erased identity stays erased (`account.not_found`); a store that cannot answer refuses, retryable        |
+| SF-app-073       | Two account pages (`/account`, Playform's `/profile`), no link between                                                 | One page; an app adds its sections through the consumer seam `platform/modules/app-account.tsx` (a composition root, sync-excluded; PF adds none); Playform's `/profile` opens `/account#profile`                                                                |
+
+Every action uses the shared parts: `ConfirmDialog` (now the one dialog of the console's
+`ConfirmStep` and the user's screens), `Field`, `Outcome`, `AuthenticatorKey` (the staff
+enrolment's QR code and key, now one part). Nothing is kept in browser storage: the password and
+codes live in the open form's state only, cleared on close.
+
+**Owner questions (the cautious reading built).**
+
+1. _Change password by a code to the address._ Built: the platform's reset path (a code to the
+   account's own address, then the new password), because no route changes a password by the old
+   one; it signs every device out, which the dialog says first. A "current password" form would
+   need a new route on the identity provider's ChangePassword — a later choice.
+2. _Delete confirmation._ Built: a tick ("I understand that this cannot be undone") and the red
+   button naming the action; no typed address (the route already takes `confirm: "DELETE"`, sent
+   only on the button).
+
+**Design check**
+
+- **Reach:** `app/account/AccountClient.tsx`, `components/account/SignInSecurity.tsx` and
+  `YourData.tsx` (new), `app/api/account/security/route.ts` (new, GET only),
+  `components/admin/ui/ConfirmDialog.tsx` (new; `ConfirmStep` uses it),
+  `components/app/ui/AuthenticatorKey.tsx` (from `MfaEnrollment`), the consumer seam
+  `platform/modules/app-account.tsx`, the catalogue (`screens.account.*`). No migration, no
+  setting.
+- **Races:** a factor change moves the session to a new id; the page takes the new forgery token
+  from the answer (`noteCsrfToken`) and reads the state again. A second tab's change is seen on
+  the next read; the routes decide.
+- **Dependencies down:** the identity provider not saying → "could not tell" (never "off"); the
+  export or delete refused → said, nothing saved or changed; the database down → the routes'
+  503, said.
+- **Erasure leftovers:** none new — the page keeps nothing; deletion is the governed path
+  (`platform/auth/gdpr-deletion.ts`), unchanged.
+- **Screens × responses:** every answer of the five routes the page calls has a fixture
+  (`__tests__/fixtures/route-responses.json`) and a screen test (`account-security`,
+  `account-data`, `account-page`, `account-security-route`).
+- **Journeys touched:** `e2e/app-screens.spec.ts` (new): the page at 1280 and 390 px with axe,
+  each dialog asked first and Cancel sending nothing, the export downloaded whole;
+  `e2e/moderation.spec.ts` step 5: its member, last used there, deletes their account end to end
+  (asked, nothing sent until ticked, the erasure route, the session then serving no one) — on the
+  session the run already holds, as the run's sign-ins are limited per address (`auth:login`).
+- **Weakens a tenant's protection?** No. No route's check changed; the new route reads only the
+  caller's own verification; MFA off still needs password and a current code; deletion and
+  export keep their permissions, limits and audit.
+- _Credits._ **WAI-ARIA Authoring Practices Guide**, "Alert and Message Dialogs Pattern" (W3C
+  WAI); **GDPR** Articles 15 and 17 (the European Union); **NIST SP 800-63B** (NIST; a
+  factor change ends other sessions).
+
+**Threat model**
+
+- **Boundary:** the account page ↔ the account and auth routes, on the cookie session (ADR-057).
+- **Actors that exist today:** (1) the signed-in person; (2) someone at a browser left signed in
+  — they could delete the account or change the password; (3) a script on another site (CSRF).
+- **Bypasses:** none. (2): deletion needs the route's permission and the confirm token, as before
+  — the same as any signed-in request (no step-up exists on deletion today; adding one is the
+  routes' decision, not the screen's); turning MFA off needs the password and a current code;
+  changing the password needs a code from the account's mailbox. (3): every change carries
+  `x-csrf-token` (apiFetch); the new route is a GET that changes nothing.
+- **Forgeries:** the new route answers only the caller's own state; no id is taken from the
+  request.
+- **Legitimate flows:** each section's read, each action's success, refusal and no-answer path —
+  unit-tested; the page and the deletion end to end.
+- **Agreed before code:** the owner's brief for batch 56e-2 (E-126, SF-app-073).
+
+**Self-review**
+
+- **Consumers checked:** every importer of `ConfirmStep` (unchanged API), of `MfaEnrollment`'s
+  QR code (now `AuthenticatorKey`), of the account page (Playform's profile section).
+- **Hostile re-read:** a failed read is never shown as "off" or as empty; the export is never
+  saved in part; Cancel and Escape send nothing (e2e counts requests); nothing in storage.
+- **Not done here:** a step-up on deletion (owner question 2 notes the route takes none today).
+
+### TASK-224 — The signed-in app on shared parts: one header and frame, error and not-found pages, the assistant's answers formatted and kept, the translate screen's words and roles, the decisions' reasons, sign-in back to the page asked for
+
+| Field        | Detail                                                                                                                     |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-224                                                                                                                   |
+| **Type**     | Usability, accessibility and correctness — the user's screens                                                              |
+| **Severity** | High (E-113 app side), Important (SF-app-060), with Low and Nit screen findings, E-110 (app side) and S8 axe               |
+| **Phase**    | Phase 5                                                                                                                    |
+| **Target**   | v6.0.0 (RC)                                                                                                                |
+| **Status**   | Fixed on develop (batch 56e-2)                                                                                             |
+| **Logged**   | 2026-11-13 (the 2026-11-12 screen review, group B2: `SF-app-001` to `004`, `010` to `031`, `060` to `063`; second-wave S8) |
+
+Batch 56e-2, in both repositories (Playform: its TASK-5026 — its translate screen, profile and
+agent pages). The last of the screen batches: after it, every finding of the 2026-11-12 review is
+closed (`.tools/b56e2/FINDINGS-CLOSURE.md` in the batch evidence maps each to its task).
+
+**What was wrong.** Each user screen built its own top: a white bar above the dark home, a "Back
+to home" link on the account and assistant pages; white, unannounced loading pages; the
+framework's English 404 and a render error with only "Refresh page"; a signed-out page sent to
+sign-in forgot where the person was; the assistant showed Markdown as typed and lost the last
+answer on a new question; a blocked item said only "Text you submitted · Blocked 9 Nov"; and more,
+below.
+
+**What it is now.** `components/app/ui/` holds the app's parts, and a guard keeps every user
+screen on them (`__tests__/app-shared-components-guard.test.ts`: no screen writes its own `main`,
+calls `signOut()` or `fetch`, sends to `/auth` by hand, uses `dark:` or a light box; an app lists
+its own screens in `app-screens.app.json`; no known exceptions):
+
+| Part                           | What every page gets                                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AppShell`, `AppHeader`        | One dark header (Home, Assistant, Your account, Sign out; Sign in for a guest; the page marked), Skip to content, one `main`, the announced wait |
+| `useSignedIn`, `useAppSignOut` | Signed out → sign-in and back here, path and query (E-113); sign-out ended on the server first, then sign-in, never an unhandled rejection       |
+| `ProblemPage`                  | Not found, a page that failed, the layout that failed: what happened, Try again where it helps, the way home                                     |
+| `AuthenticatorKey`             | The authenticator's QR code and key (staff enrolment and the account page)                                                                       |
+| `refusal-words.ts`             | An account's standing by name, a wait as a person counts it                                                                                      |
+
+| Finding    | Before                                                                      | After                                                                                                                         |
+| ---------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| SF-app-001 | A white bar above the dark home; Playform's second bar with "Profile"       | One dark header on every page                                                                                                 |
+| SF-app-002 | A failed sign-out rejected unhandled                                        | `useAppSignOut`: caught; a session not ended stays signed in, said by the auth provider (TASK-219)                            |
+| SF-app-003 | White, mostly unannounced loading pages                                     | One dark wait, `role="status"`                                                                                                |
+| SF-app-004 | Next's English 404; a render error with only "Refresh page"                 | `app/not-found.tsx`, `error.tsx`, `global-error.tsx` and the root boundary on `ProblemPage`, with the way home                |
+| SF-app-011 | "Platform Validation Spike · v0.1" and the internal footer on PF's home     | Removed (E-110, app side)                                                                                                     |
+| SF-app-012 | "SFW content only"                                                          | "Up to 100 characters, suitable for everyone"                                                                                 |
+| SF-app-017 | Mode pills overflowed at 390 px; labels differed from the text; a raw "87%" | The row wraps; the visible words are the names; no percentage                                                                 |
+| SF-app-018 | The counter announced on every keystroke                                    | Shown always, announced only near or over the limit                                                                           |
+| SF-app-020 | PF's home showed the server's `data.error`                                  | The catalogue's sentence (the one call path)                                                                                  |
+| SF-app-021 | A refused `audio.play()` was not caught; "playing" stuck                    | `startClip`: any failure resets and says so                                                                                   |
+| SF-app-030 | The assistant's Markdown shown as typed                                     | `AnswerText`: lists, bold, code, headings as React elements — never HTML; a link shown as its words and address (OWASP LLM05) |
+| SF-app-031 | Asking again erased the last answer                                         | The visit's last five, newest first, in the page's memory only (nothing in storage)                                           |
+| SF-app-060 | "Text you submitted · Blocked 9 Nov 2026": not what or why                  | Why in plain words (`OwnDecision.reason`: the classifier's category, the word list, the age rating, or other) and a reference |
+| SF-app-061 | Light success and error boxes on the dark page; the counter tied to nothing | The app's tokens; the count is the field's help, the error the field's (shared `Field`)                                       |
+| SF-app-062 | "Account status: restricted"; "3600 seconds"                                | "Account status: Restricted"; "1 hour"                                                                                        |
+| SF-app-063 | `TenantUnavailable` wrote a second `main` inside a page                     | A box when nested; the page form keeps its own `main`                                                                         |
+| E-113      | `/account`, `/assistant` and the agent pages sent to plain `/auth`          | Back to the page asked for, its query too (the proxy and `useSignedIn`; 56e-1's checked return path)                          |
+| S8 axe     | No axe on `/account`, `/assistant`, the agent pages, not-found              | axe at 1280 and 390 px on each (`e2e/app-screens.spec.ts`; Playform's `e2e/agent-pages.spec.ts`, `e2e/profile.spec.ts`)       |
+
+Playform's translate-screen findings (SF-app-010, 013 to 016, 019, 022), profile (070 to 074),
+authorize (080 to 084) and agent console (090 to 095) are its TASK-5026.
+
+**The route change (SF-app-060).** `GET /api/moderation/appeals` adds `reason` to each decision:
+a `DECISION_REASONS` code from what the record already holds (`categories_flagged`,
+`triggered_by`) — never the screened text, which the platform does not keep (only its hash). The
+classifier's categories map by a table typed by `SafetyCategory`, so a new category fails the
+build until it is named. No migration. The same route's read of a signed-in account that has
+no row yet (its first guarded request makes it) answered `account.not_found` — which every page
+reads as an erased account, and signs out: a new person whose first page was the account page
+(sign-in back to it, E-113) was signed out. It now answers no decisions; an erased account still
+`account.not_found`; a lookup that fails `service.unavailable` (never an empty list).
+
+**Design check**
+
+- **Reach:** the user's pages (home, account, assistant, error and not-found), their parts, the
+  refusal displays (both), `AdaptiveInput`, `AppealForm`, PF's spike, `proxy.ts` (the query in
+  the return path), one route's response (`reason`), the catalogue. No migration, no setting.
+- **Races:** the shell waits for the session read; a page whose session ends mid-visit goes to
+  sign-in and back (the refusal session-end hook now runs once, in the shell).
+- **Dependencies down:** a read that fails is said on each section; the assistant's history is
+  memory only.
+- **Erasure leftovers:** none — nothing new is stored anywhere.
+- **Screens × responses:** the shell's sign-out (ended, not ended, rejected); every route the
+  pages call has fixtures; the appeals route's new field is in its response schema.
+- **Journeys touched:** `e2e/app-screens.spec.ts` (new), `e2e/assistant.spec.ts` (its header
+  link); Playform's live journeys' Sign out label (its TASK-5026).
+- **Weakens a tenant's protection?** No. The return path is the 56e-1 checked one (a path of this
+  site only); the proxy adds the query, which the sign-in page checks the same way; no route's
+  check, limit or CSRF rule changed; the answer renderer builds no HTML.
+- _Credits._ **WAI-ARIA Authoring Practices Guide** (W3C WAI; landmarks, `aria-pressed`,
+  `aria-expanded`, live regions); **WCAG 2.2** (W3C; 1.3.1, 1.4.1, 1.4.10 reflow, 2.4.1 bypass
+  blocks, 3.1.2 language of parts, 4.1.3); **OWASP Top 10 for LLM Applications 2025**, LLM05
+  "Improper Output Handling" (OWASP Foundation); **CommonMark** (John MacFarlane et al.; the
+  subset rendered).
+
+**Threat model**
+
+- **Boundary:** the browser ↔ the app's routes; the model's answer ↔ the page.
+- **Actors that exist today:** (1) any signed-in user; (2) the model's output, which can carry
+  what a prompt put there (markup, links); (3) a phisher's link to `/auth?redirect=…`.
+- **Bypasses:** none. (2): the answer is parsed into text elements only — no HTML parser, no
+  `dangerouslySetInnerHTML`, a link never clickable (tested with markup, scripts and image syntax).
+  (3): unchanged — the sign-in page accepts a path of this site only; the query the proxy adds is
+  part of that path and checked with it.
+- **Forgeries:** the decisions' reason is computed on the server from the stored record.
+- **Legitimate flows:** each page signed in, as a guest, signed out; each assistant answer form;
+  each decision reason.
+- **Agreed before code:** the owner's brief for batch 56e-2 (group B2), and the owner's answers
+  of 2026-11-15 (SF-app-010, 070, 095: Playform's TASK-5026).
+
+**Self-review**
+
+- **Consumers checked:** every importer of `AdaptiveInput` (the `variant` prop is gone: the app is
+  always dark), `AppealForm` (`variant` gone), `ConfirmStep`, `RefusalNotice` (`signInHref` now
+  defaults to this page), `TenantUnavailable`, `HomeClient`'s seam; Playform's `app-home.tsx`
+  (its session-end hook moved to the shell; its date-of-birth exit uses `useAppSignOut`).
+- **Hostile re-read:** the guard's patterns tested both ways (each rule refuses its example);
+  a decision category the platform does not name reads "other", never its code; an inherited
+  property name is no category.
+- **Found while doing it, fixed here:** the checked return path (56e-1, `safeReturnPath`) let a
+  path whose dot segments normalise to `//host` through — `/auth?redirect=/.//evil.example` would
+  have sent a person to another site after sign-in (an open redirect; found by its property test
+  on a new seed): such a path is now refused, with a test of each spelling; a new account's first
+  read of its decisions signed it out (above); the inherited decision reasons named categories the
+  classifier never records (`sexual_minors`, `illicit`, `profanity`) and missed two it does
+  (`self-harm`, `dangerous`) — now one table typed by the classifier's own list; the account
+  page's failed read offered "Try again" twice.
+
 ### TASK-223 — A test run's per-worker databases: a killed run's copies reclaimed, a copy left fails the run (56d-3's "copies left 3")
 
 | Field        | Detail                                                                                           |

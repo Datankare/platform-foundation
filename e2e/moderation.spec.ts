@@ -16,7 +16,9 @@
  *   3. an escalation filed by staff tooling (POST /api/moderation/review — no screen files one) is
  *      claimed and released through the review route;
  *   4. the member's account page shows the appeal decided; the member may not read the queue
- *      (hostile:role).
+ *      (hostile:role);
+ *   5. the member deletes their account from the account page (TASK-225, E-126): asked first, in
+ *      red, nothing sent until ticked; the platform's one erasure route; the session gone.
  *
  * Seeded once, through the owner connection: the moderator's role (assigned in the database, as
  * the console's first administrators are — ADR-013). The member records their date of birth
@@ -387,4 +389,43 @@ test("4. the member sees the appeal decided, and may not read the queue (hostile
   const own = await call(request, MODERATOR, "GET", "/api/moderation/appeals");
   expect(own.status()).toBe(200);
   expect(((await own.json()) as { decisions: unknown[] }).decisions).toEqual([]);
+});
+
+test("5. the member, done, deletes their account from the account page, through the one erasure route (TASK-225, E-126)", async ({
+  page,
+}) => {
+  // The last use of the member (no journey after this one signs in as them): their session,
+  // already held by the run — no sign-in spent.
+  await signInPage(page, MEMBER);
+  await page.goto("/account");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Your account", {
+    timeout: 30000,
+  });
+  await page.getByRole("button", { name: "Delete my account" }).click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("This cannot be undone.");
+  // Not ticked: nothing is sent.
+  await dialog.getByRole("button", { name: "Delete my account" }).click();
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  await dialog
+    .getByRole("checkbox", { name: "I understand that this cannot be undone." })
+    .check();
+  const deleted = page.waitForResponse(
+    (r) =>
+      new URL(r.url()).pathname === "/api/account/delete" &&
+      r.request().method() === "POST"
+  );
+  await dialog.getByRole("button", { name: "Delete my account" }).click();
+  const answer = await deleted;
+  expect(answer.status()).toBe(200);
+  expect(await answer.json()).toMatchObject({ success: true });
+  await expect(
+    page.getByRole("heading", { name: "Your account is deleted" })
+  ).toBeVisible();
+  await checkA11y(page);
+  // The account no longer serves its session.
+  const session = await page.request.get("/api/auth/session");
+  expect(((await session.json()) as { authenticated?: boolean }).authenticated).not.toBe(
+    true
+  );
 });

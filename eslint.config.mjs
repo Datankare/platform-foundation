@@ -84,7 +84,8 @@ const eslintConfig = [
   // The rule resolves `@/` aliases and relative paths (the TypeScript resolver), and checks
   // `import`, `export … from`, dynamic `import()` and `require()` (__tests__/module-lint.test.ts
   // proves each). The composition roots — platform/modules/app-modules.ts (the app's module
-  // list) and platform/modules/app-home.tsx (the app's home UI) — are the only core files
+  // list), platform/modules/app-home.tsx (the app's home UI) and platform/modules/app-account.tsx
+  // (the app's own sections of the account page, TASK-225) — are the only core files
   // exempt: composing the app from its modules is what they are for, and both are consumer
   // seams the sync excludes.
   ...lintBoundaryConfigs().map((config) => ({

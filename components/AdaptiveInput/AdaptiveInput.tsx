@@ -1,9 +1,8 @@
 /**
  * components/AdaptiveInput/AdaptiveInput.tsx — Adaptive input component
  *
- * Generic input component driven entirely by the agent output contract.
- * Supports light and dark themes via explicit `variant` prop — does NOT
- * depend on OS prefers-color-scheme.
+ * Generic input component driven entirely by the agent output contract, in the app's one dark
+ * look — it does NOT depend on the device's light or dark setting.
  *
  * L18: Every color value is in the THEMES map. Visual outcome for every
  * state is documented in the theme definition.
@@ -23,57 +22,25 @@ const msg = (key: string, values?: MessageValues) =>
 
 // ── Theme ─────────────────────────────────────────────────────────────
 
-type Variant = "light" | "dark";
-
-interface ThemeClasses {
-  pillInactive: string;
-  intentText: string;
-  intentConfidence: string;
-  listeningText: string;
-  border: string;
-  textarea: string;
-  micDefault: string;
-  micRecording: string;
-  uploadBtn: string;
-  counterNormal: string;
-  actionSecondary: string;
-  processingText: string;
-}
-
 /**
- * All color decisions in one place. No dark: variants, no OS dependency.
- * Consumer picks "light" or "dark" based on their background.
+ * Every colour in one place: the app's one dark look (TASK-224 — the light variant, which no
+ * screen used, put light boxes in a dark app's reach; the app is always dark, SCREEN-FINDINGS
+ * P12). No `dark:` variants, no dependence on the device's setting. Every text colour here meets
+ * 4.5:1 on the app's panels (gray-400 is the quietest).
  */
-const THEMES: Record<Variant, ThemeClasses> = {
-  light: {
-    pillInactive: "bg-gray-100 text-gray-600 hover:bg-gray-200",
-    intentText: "text-gray-400",
-    intentConfidence: "text-gray-300",
-    listeningText: "text-gray-500",
-    border: "border-gray-200",
-    textarea: "text-gray-900 placeholder-gray-400",
-    micDefault: "text-gray-400 hover:text-gray-600 hover:bg-gray-100",
-    micRecording: "bg-red-100 text-red-600",
-    uploadBtn: "text-gray-400 hover:text-gray-600 hover:bg-gray-100",
-    counterNormal: "text-gray-400",
-    actionSecondary: "bg-gray-100 text-gray-700 hover:bg-gray-200",
-    processingText: "text-gray-500",
-  },
-  dark: {
-    pillInactive: "bg-gray-700/50 text-gray-300 hover:bg-gray-600",
-    intentText: "text-gray-500",
-    intentConfidence: "text-gray-600",
-    listeningText: "text-gray-400",
-    border: "border-gray-600",
-    textarea: "text-white placeholder-gray-500",
-    micDefault: "text-gray-500 hover:text-gray-300 hover:bg-gray-700",
-    micRecording: "bg-red-900/40 text-red-400",
-    uploadBtn: "text-gray-500 hover:text-gray-300 hover:bg-gray-700",
-    counterNormal: "text-gray-500",
-    actionSecondary: "bg-gray-700 text-gray-300 hover:bg-gray-600",
-    processingText: "text-gray-400",
-  },
-};
+const THEME = {
+  pillInactive: "bg-gray-700/50 text-gray-200 hover:bg-gray-600",
+  intentText: "text-gray-400",
+  listeningText: "text-gray-300",
+  border: "border-gray-600",
+  textarea: "text-white placeholder-gray-400",
+  micDefault: "text-gray-300 hover:text-white hover:bg-gray-700",
+  micRecording: "bg-red-900/40 text-red-300",
+  uploadBtn: "text-gray-300 hover:text-white hover:bg-gray-700",
+  counterNormal: "text-gray-400",
+  actionSecondary: "bg-gray-700 text-gray-200 hover:bg-gray-600",
+  processingText: "text-gray-300",
+} as const;
 
 // ── Props ─────────────────────────────────────────────────────────────
 
@@ -85,8 +52,6 @@ export interface AdaptiveInputProps {
   readonly isProcessing?: boolean;
   readonly placeholder?: string;
   readonly disabled?: boolean;
-  /** Theme variant — "light" for light backgrounds, "dark" for dark (default: "light") */
-  readonly variant?: Variant;
   readonly onTextChange: (text: string) => void;
   readonly onModeSelect: (mode: InputMode) => void;
   readonly onAction: (actionId: string) => void;
@@ -101,9 +66,17 @@ export interface AdaptiveInputProps {
 /** A mode's pill text, from the catalog (screens.adaptive_input.mode_<mode>_*). */
 const modeConfig = (mode: InputMode) => ({
   label: msg(`mode_${mode}_label`),
-  ariaLabel: msg(`mode_${mode}_aria`),
   title: msg(`mode_${mode}_title`),
 });
+
+/**
+ * Whether the count is announced: near the limit or over it, never on every keystroke
+ * (SF-app-018 — a live region read on each key talked over the typing). Near is the last tenth,
+ * and at least the last ten characters.
+ */
+export function countAnnounced(count: number, max: number): boolean {
+  return count > max || max - count <= Math.max(10, Math.ceil(max / 10));
+}
 
 /** Pill order: text → speech → file → music */
 const MODES: InputMode[] = ["text", "speech", "file", "music"];
@@ -118,7 +91,6 @@ export default function AdaptiveInput({
   isProcessing = false,
   placeholder = msg("default_placeholder"),
   disabled = false,
-  variant = "light",
   onTextChange,
   onModeSelect,
   onAction,
@@ -130,7 +102,7 @@ export default function AdaptiveInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const charCount = text.length;
   const isOverLimit = charCount > maxChars;
-  const t = THEMES[variant];
+  const t = THEME;
 
   const handleUploadClick = useCallback(() => {
     onUpload();
@@ -144,14 +116,13 @@ export default function AdaptiveInput({
   );
 
   const intentDisplay = output.intent?.displayLabel ?? null;
-  const intentConfidence = output.intent?.confidence ?? 0;
   const actions = output.intent?.actions ?? [];
 
   return (
     <div className="w-full max-w-2xl mx-auto" data-testid="adaptive-input">
       {/* Mode Pills + Intent Indicator */}
       <div
-        className="flex items-center gap-2 mb-3"
+        className="flex flex-wrap items-center gap-2 mb-3"
         role="group"
         aria-label={msg("input_mode_selection")}
       >
@@ -164,7 +135,6 @@ export default function AdaptiveInput({
               type="button"
               onClick={() => onModeSelect(mode)}
               aria-pressed={isActive}
-              aria-label={config.ariaLabel}
               title={config.title}
               disabled={disabled}
               className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
@@ -183,14 +153,6 @@ export default function AdaptiveInput({
             data-testid="intent-bar"
           >
             {intentDisplay}
-            {intentConfidence > 0 && (
-              <span
-                className={`ml-1 ${t.intentConfidence}`}
-                data-testid="intent-confidence"
-              >
-                {Math.round(intentConfidence * 100)}%
-              </span>
-            )}
           </span>
         )}
       </div>
@@ -264,18 +226,18 @@ export default function AdaptiveInput({
         </div>
       </div>
 
-      {/* Character Counter */}
-      <div
-        className="mt-1 text-right text-xs"
-        role="status"
-        aria-label={msg("characters_used", {
-          count: String(charCount),
-          max: String(maxChars),
-        })}
-        data-testid="char-counter"
-      >
-        <span className={isOverLimit ? "text-red-500" : t.counterNormal}>
+      {/* Character Counter: shown always, announced only near or over the limit (SF-app-018) */}
+      <div className="mt-1 text-right text-xs" data-testid="char-counter">
+        <span
+          aria-hidden="true"
+          className={isOverLimit ? "text-red-400" : t.counterNormal}
+        >
           {charCount}/{maxChars}
+        </span>
+        <span role="status" className="sr-only" data-testid="char-announcement">
+          {countAnnounced(charCount, maxChars)
+            ? msg("characters_used", { count: String(charCount), max: String(maxChars) })
+            : ""}
         </span>
       </div>
 
