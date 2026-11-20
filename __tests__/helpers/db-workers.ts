@@ -242,7 +242,14 @@ export async function reclaimKilledCopies(
   c: Client,
   base: string,
   alive: (pid: number) => boolean = processAlive,
-  host: string = hostname()
+  host: string = hostname(),
+  /**
+   * Filled, when given, with every copy of a dead run on this host that this call did NOT drop,
+   * and why, as this call itself saw it: "in use" (a session at its read, or PostgreSQL's 55006
+   * when it came to drop it), else the drop's error code. A caller that repeats the reclaim can
+   * then tell "left because busy" from "left for any other reason" (code review B-15).
+   */
+  notDropped?: { name: string; why: string }[]
 ): Promise<string[]> {
   const { rows } = await c.query<{
     name: string;
@@ -256,13 +263,21 @@ export async function reclaimKilledCopies(
     [copyPrefixes(base)]
   );
   const dropped: string[] = [];
+  for (const r of rows) {
+    const mark = readCopyMark(r.comment);
+    if (mark !== null && mark.host === host && !alive(mark.pid) && r.sessions > 0)
+      notDropped?.push({ name: r.name, why: "in use" });
+  }
   for (const name of reclaimable(rows, alive, host)) {
     // No force: one someone connected to since it was read is left alone (it is in use).
-    const done = await c
-      .query(`drop database if exists ${quoteIdent(name)}`)
-      .then(() => true)
-      .catch(() => false);
-    if (done) dropped.push(name);
+    const failed = await c.query(`drop database if exists ${quoteIdent(name)}`).then(
+      () => null,
+      (e: { code?: string }) => e.code ?? "unknown"
+    );
+    if (failed === null) dropped.push(name);
+    // 55006 object_in_use: "database … is being accessed by other users".
+    else
+      notDropped?.push({ name, why: failed === "55006" ? "in use" : `error ${failed}` });
   }
   return dropped;
 }

@@ -151,13 +151,14 @@ export function selectsFirst(file: string, text: string): string[] {
 export function connectionProblems(file: string, text: string): string[] {
   const out: string[] = [];
   const lineOf = (i: number) => text.slice(0, i).split("\n").length;
-  // A written URL to port 1 of the loopback is the tests' unreachable database (a refusal's
-  // check), never a database; this file's own fixtures are the violations it plants.
+  // A written URL to a released loopback port (helpers/closed-port.ts: `${CLOSED}`; TASK-229 — it
+  // was port 1, which a macOS process may listen on) is the tests' unreachable database (a
+  // refusal's check), never a database; this file's own fixtures are the violations it plants.
   if (file !== SELF)
     for (const m of text.matchAll(
       /new\s+(?:Client|Pool)\s*\(\s*\{[^}]*?["'`](postgres(?:ql)?:\/\/[^"'`]*)/g
     ))
-      if (!/@127\.0\.0\.1:1\//.test(m[1]))
+      if (!/@127\.0\.0\.1:\$\{CLOSED\}\//.test(m[1]))
         out.push(
           `${file}:${lineOf(m.index ?? 0)}: a database URL written in the test — connect through TEST_DATABASE_URL / TEST_DATABASE_OWNER_URL (this worker's copy)`
         );
@@ -664,5 +665,91 @@ describe("no copy outlives its run unseen (TASK-223)", () => {
     );
     expect(r.stderr).toBe("");
     expect(JSON.parse(r.stdout)).toEqual(bases.map(copyPrefixes));
+  });
+});
+
+/**
+ * TASK-229 (the Mac test pass): a run's copies are named in worker order (_w1 … _wN), and the
+ * database answers in name order (`order by datname`; a `name` sorts by collation C). With fewer
+ * than ten workers the two orders coincide; with ten or more they do not — the Mac (16 cores, 15
+ * workers) failed worker-database.db.test.ts on `expect(left).toEqual(probe.names)` while every CI
+ * run (2–3 workers) passed. Checked here without a database, with 16 synthetic workers, so it holds
+ * on any machine; and every nested jest run a test starts names its worker count, so what it makes
+ * does not depend on the machine's cores (the killed-run probe runs 12, past the trap, everywhere).
+ */
+describe("worker copies: nothing depends on how many workers a machine has (TASK-229)", () => {
+  const names = Array.from({ length: 16 }, (_, i) =>
+    workerDatabaseName("replay", i + 1, "run1")
+  );
+  const collationC = (a: string, b: string) =>
+    Buffer.compare(Buffer.from(a), Buffer.from(b));
+
+  it("with 16 workers, name order is not worker order (the trap)", () => {
+    expect([...names].sort(collationC)).not.toEqual(names);
+    expect([...names].sort(collationC).slice(0, 3)).toEqual([
+      "replay_w10_run1",
+      "replay_w11_run1",
+      "replay_w12_run1",
+    ]);
+  });
+
+  it("sorting both sides with .sort() is the database's own order (collation C) for these names", () => {
+    expect([...names].sort()).toEqual([...names].sort(collationC));
+  });
+
+  /** A worker-ordered list (`x.names`, `Object.values(x.names)`) compared in order. */
+  const ORDERED_NAMES =
+    /toEqual\(\s*(?:Object\.values\(\s*[\w.]+\.names\s*\)|[\w.]+\.names)\s*\)/;
+
+  it("[self-test] the scan finds an in-order comparison and spares a sorted one", () => {
+    expect(ORDERED_NAMES.test("expect(left).toEqual(probe.names);")).toBe(true);
+    expect(ORDERED_NAMES.test("expect(x).toEqual(Object.values(run.names));")).toBe(true);
+    expect(
+      ORDERED_NAMES.test("expect([...left].sort()).toEqual([...probe.names].sort());")
+    ).toBe(false);
+    expect(
+      ORDERED_NAMES.test("expect(present).toEqual([...Object.values(run.names)].sort());")
+    ).toBe(false);
+  });
+
+  it("no test compares a run's copy names in worker order", () => {
+    const offenders: string[] = [];
+    for (const f of walkFiles(__dirname, (n) => /\.tsx?$/.test(n))) {
+      if (f.endsWith("db-isolation.test.ts")) continue;
+      readFileSync(f, "utf8")
+        .split("\n")
+        .forEach((line, i) => {
+          if (ORDERED_NAMES.test(line)) offenders.push(`${relative(ROOT, f)}:${i + 1}`);
+        });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  /** A nested jest run: the jest binary spawned with its own argument list. */
+  const NESTED = /jest[\\/]bin[\\/]jest\.js"?\)?\s*,([\s\S]*?)\]/g;
+
+  it("[self-test] a nested run without a worker count is found; one with it is not", () => {
+    const without =
+      'spawn(node, [join(root, "node_modules", "jest", "bin", "jest.js"), "-t", "x"], {})';
+    const withIt =
+      'spawn(node, [join(root, "node_modules", "jest", "bin", "jest.js"), "-t", "x", "--maxWorkers=2"], {})';
+    const count = (src: string) =>
+      [...src.replace(/", "/g, "/").matchAll(NESTED)].filter(
+        (m) => !/--maxWorkers=\d+|--runInBand|"-i"/.test(m[1])
+      ).length;
+    expect(count(without)).toBe(1);
+    expect(count(withIt)).toBe(0);
+  });
+
+  it("every nested jest run a test starts names its worker count", () => {
+    const offenders: string[] = [];
+    for (const f of walkFiles(__dirname, (n) => /\.tsx?$/.test(n))) {
+      if (f.endsWith("db-isolation.test.ts")) continue;
+      const src = readFileSync(f, "utf8").replace(/", "/g, "/");
+      for (const m of src.matchAll(NESTED))
+        if (!/--maxWorkers=\d+|--runInBand|"-i"/.test(m[1]))
+          offenders.push(`${relative(ROOT, f)}: ${m[0].slice(0, 80)}`);
+    }
+    expect(offenders).toEqual([]);
   });
 });

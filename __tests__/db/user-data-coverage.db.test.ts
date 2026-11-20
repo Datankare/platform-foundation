@@ -728,7 +728,7 @@ dbDescribe(`${SUITE} hostile scan`, () => {
     const address = String(email);
     const columns = ADDRESS_REPLACEMENTS.flatMap((text) => {
       const table = /^update (\w+) set/.exec(text)![1];
-      return [...text.matchAll(/(\w+) = jsonb_replace_text_value\(/g)].map(
+      return [...text.matchAll(/(\w+) = jsonb_erase_address_text\(/g)].map(
         (m) => `${table}.${m[1]}`
       );
     });

@@ -21,6 +21,12 @@ import type {
 import { getEffectLedger, idempotencyKeyFor } from "./effect-ledger";
 import { logCaught } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
+import {
+  fromStoredKept,
+  isOmittedMarker,
+  type OmittedMarker,
+} from "@/platform/errors/json-limits";
+import { recordMetricEvent } from "@/platform/observability/metric-event";
 
 /** An error that leaves a sent call's outcome unknown (a timeout, an abort, a dropped socket). */
 const AMBIGUOUS = /timeout|timed out|abort|socket|econnreset|network/i;
@@ -55,10 +61,29 @@ export interface ExternalEffectArgs<T> {
   readonly ledger?: EffectLedger;
 }
 
+/**
+ * A confirmed effect. `resultKept: false` — its receipt was over the stored-JSON bound and the
+ * ledger kept only the "not kept" marker (platform TASK-229, review TA-a-4): a replay has no
+ * result to give, and a caller must narrow on `resultKept` before it can read one. The live call
+ * always returns its real result (`resultKept: true`) and says, in `replayable`, whether a later
+ * call with the same identity will get it back: false when the receipt could not be kept — a
+ * caller that would hold the result for a later step (an approval) must not, because that step
+ * could never be given it (code review B-1).
+ */
 export type ExternalEffectOutcome<T> =
   | {
       readonly status: "confirmed";
+      readonly resultKept: true;
       readonly result: T;
+      /** Whether the ledger kept the receipt, so a replay returns this result. */
+      readonly replayable: boolean;
+      readonly entry: EffectLedgerEntry;
+    }
+  | {
+      readonly status: "confirmed";
+      readonly resultKept: false;
+      /** Why the receipt was not kept: the refusal's code and limit. */
+      readonly notKept: OmittedMarker["_omitted"];
       readonly entry: EffectLedgerEntry;
     }
   | {
@@ -96,9 +121,33 @@ export async function performExternalEffect<T>(
     // Already resolved. Replaying a stage with the same identity is a no-op returning the
     // original result (ADR-031 invariant 7).
     if (existing.status === "confirmed") {
+      // A receipt the ledger could not keep (over the stored-JSON bound) is replayed as such —
+      // never as the result (TASK-229, TA-a-4).
+      if (isOmittedMarker(existing.receipt)) {
+        logger.warn("A confirmed effect was replayed whose receipt was not kept", {
+          operationId: args.operationId,
+          effectKey: args.effectKey,
+          code: existing.receipt._omitted.code,
+          route: "platform/agents/external-effect",
+        });
+        recordMetricEvent(
+          "effect.receipt_not_kept_replayed",
+          { count: 1 },
+          { code: existing.receipt._omitted.code }
+        );
+        return {
+          status: "confirmed",
+          resultKept: false,
+          notKept: existing.receipt._omitted,
+          entry: existing,
+        };
+      }
       return {
         status: "confirmed",
-        result: (existing.receipt as T) ?? (undefined as T),
+        resultKept: true,
+        // A receipt of the marker's own shape was stored wrapped (asStoredKept): read back whole.
+        result: (fromStoredKept(existing.receipt) as T) ?? (undefined as T),
+        replayable: true,
         entry: existing,
       };
     }
@@ -133,7 +182,13 @@ export async function performExternalEffect<T>(
             receipt: found as Record<string, unknown>,
           }
         );
-        return { status: "confirmed", result: found, entry: resolved ?? entry };
+        return {
+          status: "confirmed",
+          resultKept: true,
+          result: found,
+          replayable: !isOmittedMarker(resolved?.receipt),
+          entry: resolved ?? entry,
+        };
       }
     }
     const resolved = await ledger.resolve(
@@ -150,7 +205,13 @@ export async function performExternalEffect<T>(
     const resolved = await ledger.resolve(args.operationId, args.effectKey, "confirmed", {
       receipt: result as Record<string, unknown>,
     });
-    return { status: "confirmed", result, entry: resolved ?? entry };
+    return {
+      status: "confirmed",
+      resultKept: true,
+      result,
+      replayable: !isOmittedMarker(resolved?.receipt),
+      entry: resolved ?? entry,
+    };
   } catch (err) {
     // Ambiguity resolves to indeterminate, never to failure. A timeout after send is not a
     // failure — it is an unknown, and recording it as failure invites a retry that

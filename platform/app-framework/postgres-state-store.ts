@@ -16,7 +16,10 @@
  */
 
 import type { ActivityStateStore, StateReducer } from "./state-store";
-import { assertStorableJson } from "@/platform/errors/json-limits";
+import {
+  assertStorableJson,
+  assertWithinDatabaseBound,
+} from "@/platform/errors/json-limits";
 import type { CommitResult, SessionMeta, VersionedState } from "./types";
 import { DataUnavailableError, withTenantTx } from "@/platform/data";
 import { TenantContextError } from "@/platform/tenancy/context";
@@ -147,6 +150,9 @@ export class PostgresActivityStateStore<TState> implements ActivityStateStore<TS
     // Deliberately NOT version-guarded: meta moves on a different cadence than state, and
     // making a participant change contend with a state commit would be a conflict nobody
     // asked for.
+    // The participants and the budget are the caller's: refused, coded, when over the
+    // stored-JSON limits — never the database's 23514 as an uncoded 500 (code review B-7).
+    assertWithinDatabaseBound(meta, "app_sessions.meta");
     await withTenantTx((tx) =>
       tx.query(
         "update app_sessions set meta = $2::jsonb, updated_at = now() where id = $1",

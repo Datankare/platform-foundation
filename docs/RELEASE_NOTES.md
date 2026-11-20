@@ -100,6 +100,34 @@ candidate" rows.
   app is always dark). No migration, no setting. Consumer steps: the "App screens (TASK-224)"
   row of [MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md).
 
+- **Every stored JSON value bounded; today's erasure lossless (TASK-229, ADR-058).** Migration
+  074 bounds every jsonb column for every writer: 128 levels deep, every number 0 or
+  1e-18 ≤ |n| < 1e21, 8 MiB of text as printed (two `BEFORE` triggers per table, the whole test in
+  `WHEN`); 075 reads what was stored before once. The application refuses first, coded: the new
+  `request.json_number_out_of_range` (422) and `request.json_value_not_storable` (422: a text
+  holding U+0000 or half of a surrogate pair, a BigInt); what an action is known to record is
+  tested before it performs, and what its work returned — an action's result, a classifier's
+  output, an agent step — is kept as an explicit "not kept" marker, never failed after its work.
+  An effect's receipt is kept up to 6 MiB as printed (a generated image of about 4.4 MiB, so a
+  held image is delivered after approval); over that, `resultKept: false` on a replay, and a
+  generation that needed approval is withheld saying the limit. Rows stored before the bound that
+  are over it are counted before 074, named by 075 and converted — never deleted — by
+  `json_bound_convert()`. Readiness probe `json-bound` (degraded) names every way the bound is
+  not in force; the deploy smoke requires it. The soft delete's and the purge's rewrites
+  (`jsonb_erase_address_text`, `jsonb_erase_id_text`) lose no value and match no id across a JSON
+  escape. PostgreSQL 17 is the minimum. Tests no longer depend on the worker count, the
+  architecture, the clock or fixed "closed" ports (docs/PORTABILITY.md). Deploy: 074 then 075 in
+  the SQL Editor, the check, then the code ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md), "074
+  and 075"); the bound's one definition is [JSON_BOUND.md](JSON_BOUND.md). Consumer steps: an
+  app's own jsonb columns go in `platform/auth/app-json-columns.ts`, each naming the files that
+  write it; a later migration that adds one calls `json_bound_install` and `json_bound_check` for
+  its table (and one that changes a covered column's type, or drops it, drops the two triggers
+  first: ADR-058 §3); **round a computed amount before storing it** — the residue of ordinary
+  arithmetic on small amounts, `(a + b) - a - b`, is often under 1e-18 and is refused like any
+  number out of range; a session's `budget` takes numbers below 1e21 (leave a cap out rather than
+  passing `Number.MAX_VALUE`); `admin.config_invalid_value` has two more reasons
+  (`number_out_of_range`, `too_deep`).
+
 - **Axe measures a still page; the return path refuses more (TASK-226).** `checkA11y`
   (`e2e/helpers/a11y.ts`) waits until no CSS transition or animation runs before axe measures,
   and fails, naming them, when the page does not come to rest within 5 s (an option,

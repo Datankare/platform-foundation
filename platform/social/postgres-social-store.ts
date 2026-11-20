@@ -17,6 +17,7 @@
 
 import { logger } from "@/lib/logger";
 import { DataUnavailableError, withTenantTx, type Tx } from "@/platform/data";
+import { assertWithinDatabaseBound } from "@/platform/errors/json-limits";
 import type {
   SocialStore,
   Group,
@@ -142,6 +143,9 @@ export class PostgresSocialStore implements SocialStore {
     input: CreateGroupInput,
     _actor?: AgentIdentity
   ): Promise<GroupResult> {
+    // Metadata the database would refuse is refused here, coded, before anything is written
+    // (platform TASK-229: depth, size and the number range of the stored-JSON bound).
+    assertWithinDatabaseBound(input.metadata ?? {}, "groups.metadata");
     try {
       const group = await withTenantTx(async (tx) => {
         const { rows } = await tx.query<GroupRow>(

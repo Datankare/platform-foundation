@@ -34,6 +34,43 @@ psql -X -q -d postgres -c "select 1" >/dev/null || {
   exit 1
 }
 
+# Workers: a fixed number, never "cores less one" (jest's default) — TASK-229: the Mac test pass ran
+# 15 on 16 cores, which needed max_connections raised and showed an order no 2–3-worker run could.
+# TEST_DB_WORKERS overrides it (the pass is the same at 2 and at 15: the gate runs both). Each
+# worker holds its app and owner pools (DATABASE_POOL_MAX=4 each, __tests__/helpers/db.ts), its
+# setup's admin client and the nested runs a suite starts (worker-database.db.test.ts): measured at
+# most 9 at once per worker (docs/PORTABILITY.md); 12 per worker and 10 more are asked for here.
+workers="${TEST_DB_WORKERS:-4}"
+case "$workers" in
+  ''|*[!0-9]*) echo "test:db: TEST_DB_WORKERS must be a whole number of workers (1 or more), not '$workers'" >&2; exit 2 ;;
+esac
+# Leading zeros stripped: bash reads 08 and 09 as octal and fails on them (review B, N-4).
+while [ "${#workers}" -gt 1 ] && [ "${workers#0}" != "$workers" ]; do workers="${workers#0}"; done
+if [ "$workers" = "0" ]; then
+  echo "test:db: TEST_DB_WORKERS must be a whole number of workers (1 or more), not '${TEST_DB_WORKERS}'" >&2
+  exit 2
+fi
+# What this run may use: max_connections less the slots reserved for superusers (and, from
+# Postgres 16, for pg_use_reserved_connections) and less the connections already open (N-4).
+free="$(psql -X -At -d postgres -c "select current_setting('max_connections')::int - current_setting('superuser_reserved_connections')::int - coalesce(nullif(current_setting('reserved_connections', true), '')::int, 0) - (select count(*)::int from pg_stat_activity where backend_type = 'client backend') || ' ' || current_setting('max_connections')")"
+max_conn="${free#* }"
+free="${free%% *}"
+need=$((workers * 12 + 10))
+if [ "$free" -lt "$need" ]; then
+  echo "test:db: $workers workers need about $need connections; this server has $free free (max_connections $max_conn, less reserved slots and connections already open)." >&2
+  echo "test:db: run fewer (TEST_DB_WORKERS=2 npm run test:db) or raise max_connections on the server (then restart it)." >&2
+  exit 1
+fi
+echo "test:db: $workers jest workers (TEST_DB_WORKERS), $free of max_connections $max_conn free"
+
+# The Valkey suites (in --full) need valkey-server or redis-server and openssl. Present: their
+# failure to start is a failure (REQUIRE_VALKEY_TESTS=1), never a skip. Absent: said here, plainly.
+if command -v valkey-server >/dev/null 2>&1 || command -v redis-server >/dev/null 2>&1; then
+  export REQUIRE_VALKEY_TESTS=1
+elif [ "$mode" = "full" ]; then
+  echo "test:db: no valkey-server or redis-server on PATH: the Valkey suites are SKIPPED in this run (install one, e.g. brew install valkey, to run them)" >&2
+fi
+
 db="pf_test_$(date +%s)_$$"
 psql -X -q -d postgres -c "CREATE DATABASE $db" >/dev/null
 # With it, the per-worker copies jest makes of it (TASK-218), should a run have been killed before
@@ -61,10 +98,10 @@ export TEST_DATABASE_OWNER_URL="postgresql://$owner_auth@$PGHOST:$PGPORT/$db"
 export REQUIRE_DB_TESTS=1
 
 if [ "$mode" = "full" ]; then
-  npm run test:coverage -- --silent
+  npm run test:coverage -- --silent --maxWorkers="$workers"
   npm run coverage:ratchet
 else
-  npx jest __tests__/db --silent
+  npx jest __tests__/db --silent --maxWorkers="$workers"
 fi
 # The suites that act on a seeded key run alone, after the parallel ones (TASK-204, N-19).
 npm run test:db-serial -- --silent

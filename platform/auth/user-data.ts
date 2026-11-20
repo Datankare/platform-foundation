@@ -49,6 +49,7 @@ import type { Tx } from "@/platform/data";
 import { AUDIT_TEXT_KEYS } from "@/platform/auth/audit-details";
 import { PURGE_REASONS } from "@/platform/gdpr/types";
 import { NOTE_ERASED, NOTE_ONLY } from "@/platform/errors/recorded-text";
+import { requireErasureFunctions } from "@/platform/auth/erasure-schema";
 
 /**
  * The schema's free-text keys as a SQL text array (TASK-194 rebase, I-1): built from
@@ -161,7 +162,7 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     count:
       "select count(*)::int as n from review_queue where moderation_result::text ~* $1::text or coalesce(explanation_chain::text, '') ~* $1::text",
     erase:
-      "update review_queue set moderation_result = regexp_replace(moderation_result::text, $1::text, 'erased', 'gi')::jsonb, explanation_chain = regexp_replace(explanation_chain::text, $1::text, 'erased', 'gi')::jsonb where moderation_result::text ~* $1::text or coalesce(explanation_chain::text, '') ~* $1::text",
+      "update review_queue set moderation_result = jsonb_erase_id_text(moderation_result, $1::text), explanation_chain = jsonb_erase_id_text(explanation_chain, $1::text) where moderation_result::text ~* $1::text or coalesce(explanation_chain::text, '') ~* $1::text",
     exportReason: "another account's case; the user's own cases are reviewItems",
   },
   {
@@ -247,7 +248,7 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     count:
       "select count(*)::int as n from user_ai_context where preferences::text ~* $1::text or array_to_string(patterns, ' ') ~* $1::text",
     erase:
-      "update user_ai_context set preferences = regexp_replace(preferences::text, $1::text, 'erased', 'gi')::jsonb, patterns = array(select regexp_replace(x.p, $1::text, 'erased', 'gi') from unnest(patterns) with ordinality as x(p, n) order by x.n) where preferences::text ~* $1::text or array_to_string(patterns, ' ') ~* $1::text",
+      "update user_ai_context set preferences = jsonb_erase_id_text(preferences, $1::text), patterns = array(select regexp_replace(x.p, $1::text, 'erased', 'gi') from unnest(patterns) with ordinality as x(p, n) order by x.n) where preferences::text ~* $1::text or array_to_string(patterns, ' ') ~* $1::text",
     exportReason: "another account's context; the user's own is aiContext",
   },
   {
@@ -343,7 +344,7 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     // free text written about it — the decider's note, and the requester's reason (a
     // restriction's; an erasure's reason is a listed code, PURGE_REASONS, and stays) — not only
     // the id in them.
-    erase: `update proposals set payload = case when jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and jsonb_typeof(payload) = 'object' then regexp_replace(payload::text, $1::text, 'erased', 'gi')::jsonb - (case when label = 'purge_user_data' and payload->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end) else regexp_replace(payload::text, $1::text, 'erased', 'gi')::jsonb end, effects = regexp_replace(effects::text, $1::text, 'erased', 'gi')::jsonb, decision_note = case when decision_note is not null and jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) then null else regexp_replace(decision_note, $1::text, 'erased', 'gi') end, decision_shown = case when decision_note is not null and jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) then jsonb_set(coalesce(regexp_replace(decision_shown::text, $1::text, 'erased', 'gi')::jsonb, jsonb_build_object('key', '${NOTE_ONLY}', 'params', '{}'::jsonb)), '{params,note}', ${NOTE_ERASED_SQL}) else regexp_replace(decision_shown::text, $1::text, 'erased', 'gi')::jsonb end, last_run_error = regexp_replace(last_run_error, $1::text, 'erased', 'gi'), actor_identity = regexp_replace(actor_identity::text, $1::text, 'erased', 'gi')::jsonb where payload::text ~* $1::text or effects::text ~* $1::text or coalesce(decision_note, '') ~* $1::text or coalesce(decision_shown::text, '') ~* $1::text or coalesce(last_run_error, '') ~* $1::text or coalesce(actor_identity::text, '') ~* $1::text`,
+    erase: `update proposals set payload = case when jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and jsonb_typeof(payload) = 'object' then jsonb_erase_id_text(payload, $1::text) - (case when label = 'purge_user_data' and payload->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end) else jsonb_erase_id_text(payload, $1::text) end, effects = jsonb_erase_id_text(effects, $1::text), decision_note = case when decision_note is not null and jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) then null else regexp_replace(decision_note, $1::text, 'erased', 'gi') end, decision_shown = case when decision_note is not null and jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) then jsonb_set(coalesce(jsonb_erase_id_text(decision_shown, $1::text), jsonb_build_object('key', '${NOTE_ONLY}', 'params', '{}'::jsonb)), '{params,note}', ${NOTE_ERASED_SQL}) else jsonb_erase_id_text(decision_shown, $1::text) end, last_run_error = regexp_replace(last_run_error, $1::text, 'erased', 'gi'), actor_identity = jsonb_erase_id_text(actor_identity, $1::text) where payload::text ~* $1::text or effects::text ~* $1::text or coalesce(decision_note, '') ~* $1::text or coalesce(decision_shown::text, '') ~* $1::text or coalesce(last_run_error, '') ~* $1::text or coalesce(actor_identity::text, '') ~* $1::text`,
     exportReason:
       "another account's decided action about the user; its effect is in the user's profile and audit trail",
   },
@@ -438,7 +439,7 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
       "a run others took part in stands for them; the user's id in its steps is replaced",
     columns: ["agent_trajectories.steps", "agent_trajectories.scope_id"],
     count: `select count(*)::int as n from agent_trajectories where (steps::text ilike ${LIKE_ID} or scope_id = $1::text) and (steps::text ~* $1::text or scope_id = $1::text) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))`,
-    erase: `update agent_trajectories set steps = regexp_replace(steps::text, $1::text, 'erased', 'gi')::jsonb, scope_id = case when scope_id = $1::text then 'erased' else scope_id end where (steps::text ilike ${LIKE_ID} or scope_id = $1::text) and (steps::text ~* $1::text or scope_id = $1::text) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))`,
+    erase: `update agent_trajectories set steps = jsonb_erase_id_text(steps, $1::text), scope_id = case when scope_id = $1::text then 'erased' else scope_id end where (steps::text ilike ${LIKE_ID} or scope_id = $1::text) and (steps::text ~* $1::text or scope_id = $1::text) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))`,
     exportSql:
       "select to_jsonb(t) - '_k' as r, t._k::text as k from (select id, segment, previous_trajectory_id, trigger, started_at, (select coalesce(jsonb_agg(s.step order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n) where s.step->'actor'->>'actorId' = $1::text) as steps, a.ctid as _k from agent_trajectories a where (a.steps @> jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text))) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))) and a.ctid > $3::tid order by a.ctid limit $2::int) t",
   },
@@ -520,7 +521,7 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     count:
       "select count(*)::int as n from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') > 1",
     erase:
-      "update app_sessions set meta = jsonb_set(meta, '{participants}', ( select coalesce(jsonb_agg(p), '[]'::jsonb) from jsonb_array_elements(meta->'participants') p where p->>'actorId' <> $1::text)), state = replace(state::text, $1::text, 'erased')::jsonb where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') > 1",
+      "update app_sessions set meta = jsonb_set(meta, '{participants}', ( select coalesce(jsonb_agg(p), '[]'::jsonb) from jsonb_array_elements(meta->'participants') p where p->>'actorId' <> $1::text)), state = jsonb_erase_id_text(state, $1::text) where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') > 1",
     // The state is the participants' together, not the user's (review 7 M3: it was exported
     // whole, with the others' part). The user's own part — their steps — is in trajectorySteps.
     exportSql:
@@ -538,7 +539,7 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     count:
       "select count(*)::int as n from app_sessions where meta::text ~* $1::text or state::text ~* $1::text",
     erase:
-      "update app_sessions set meta = regexp_replace(meta::text, $1::text, 'erased', 'gi')::jsonb, state = regexp_replace(state::text, $1::text, 'erased', 'gi')::jsonb where meta::text ~* $1::text or state::text ~* $1::text",
+      "update app_sessions set meta = jsonb_erase_id_text(meta, $1::text), state = jsonb_erase_id_text(state, $1::text) where meta::text ~* $1::text or state::text ~* $1::text",
     exportReason:
       "others' sessions; the user's own part is in their steps (trajectorySteps)",
   },
@@ -672,7 +673,7 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
       "the record of an act stands; every mention of the user's id in its details is replaced",
     count: "select count(*)::int as n from audit_log where details::text ~* $1::text",
     erase:
-      "update audit_log set details = regexp_replace(details::text, $1::text, 'erased', 'gi')::jsonb where details::text ~* $1::text",
+      "update audit_log set details = jsonb_erase_id_text(details, $1::text) where details::text ~* $1::text",
     exportReason: "exported as auditLog by data-export (auditRowsForUser)",
   },
   // A moderator's or administrator's id on another account's standing (review 7 M4: it outlived
@@ -1765,7 +1766,7 @@ export const CROSS_TENANT_ERASURE: readonly string[] = [
   // still says which records those are.
   `update audit_log set details = (details - ${AUDIT_TEXT_ARRAY}) || jsonb_build_object('textErased', true) where ctid >= $2::tid and ctid < $3::tid and (target_id = $1::uuid or details->>'user_id' = $1::text or details->>'userId' = $1::text) and details ?| ${AUDIT_TEXT_ARRAY}`,
   // Every mention of its id, in any record.
-  "update audit_log set details = regexp_replace(details::text, $1::text, 'erased', 'gi')::jsonb where ctid >= $2::tid and ctid < $3::tid and details::text ~* $1::text",
+  "update audit_log set details = jsonb_erase_id_text(details, $1::text) where ctid >= $2::tid and ctid < $3::tid and details::text ~* $1::text",
 ];
 
 /**
@@ -1789,6 +1790,11 @@ export interface ErasureStep {
  * Erase the user's data from every table of the register, in `tx` (the caller's tenant
  * transaction). Any failure throws, and the transaction rolls the whole erasure back: a partial
  * erasure is never committed. `dryRun` counts the rows instead.
+ *
+ * The statements rewrite stored JSON with migration 074's public.jsonb_erase_id_text (no value
+ * lost, no id matched across an escape: platform TASK-229); a run that writes is refused first,
+ * with ErasureSchemaMissing, when that function is missing or not as 074 made it
+ * (erasure-schema.ts). A dry run writes nothing and is never refused (review B-12).
  */
 export async function eraseUserData(
   tx: Tx,
@@ -1798,6 +1804,7 @@ export async function eraseUserData(
   if (!UUID.test(userId)) throw new Error("invalid user id");
   // Ids are stored lower-case; text columns compare as text.
   const id = userId.toLowerCase();
+  if (!options.dryRun) await requireErasureFunctions(tx, "Account purge");
   const steps: ErasureStep[] = [];
   for (const entry of USER_DATA_TABLES) {
     const rows = options.dryRun

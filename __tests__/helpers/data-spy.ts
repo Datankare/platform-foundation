@@ -18,6 +18,12 @@ export interface DataSpy {
   writes: [string, string][];
   /** While true, an insert into audit_log fails as an unavailable store would. */
   auditDown: boolean;
+  /**
+   * Every statement sent through a tenant transaction since the last reset, whatever it is — a
+   * write inside a WITH, a read, a lock (code review B-16: `writes` reads only statements that
+   * begin insert/update/delete, so a bound on it passes at 0 for a store that writes in a WITH).
+   */
+  queries: number;
 }
 
 const KEY = Symbol.for("datankare.tests.dataSpy");
@@ -25,7 +31,7 @@ type Holder = { [KEY]?: DataSpy };
 
 export function dataSpy(): DataSpy {
   const g = globalThis as Holder;
-  g[KEY] ??= { writes: [], auditDown: false };
+  g[KEY] ??= { writes: [], auditDown: false, queries: 0 };
   return g[KEY];
 }
 
@@ -34,6 +40,7 @@ export function resetDataSpy(): void {
   const s = dataSpy();
   s.writes = [];
   s.auditDown = false;
+  s.queries = 0;
 }
 
 const WRITE = /^\s*(insert\s+into|update|delete\s+from)\s+(\w+)/i;
@@ -57,6 +64,7 @@ function spied(tx: import("@/platform/data").Tx): import("@/platform/data").Tx {
   return {
     tenantId: tx.tenantId,
     async query(text, values) {
+      dataSpy().queries++;
       const m = WRITE.exec(text);
       if (m) {
         const verb = m[1].split(/\s+/)[0].toLowerCase();

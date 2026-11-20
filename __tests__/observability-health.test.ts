@@ -20,6 +20,14 @@ jest.mock("@/platform/data", () => ({
 const mockHasDatabase = hasDatabase as jest.MockedFunction<typeof hasDatabase>;
 const mockWithPlatformTx = withPlatformTx as jest.MockedFunction<typeof withPlatformTx>;
 import type { HealthProbe, HealthCheckResult } from "@/platform/observability/types";
+import {
+  createJsonBoundProbe,
+  JSON_BOUND_MISSING_SQL,
+} from "@/platform/auth/erasure-schema";
+import { closedPortSync } from "./helpers/closed-port";
+
+/** A loopback port nothing listens on (TASK-229). */
+const CLOSED = closedPortSync();
 
 // ---------------------------------------------------------------------------
 // Test helpers — mock probes
@@ -208,12 +216,12 @@ describe("HealthRegistry", () => {
 
 describe("HttpHealthProbe", () => {
   it("has the correct name", () => {
-    const probe = new HttpHealthProbe("my-service", "http://localhost:9999/health");
+    const probe = new HttpHealthProbe("my-service", `http://127.0.0.1:${CLOSED}/health`);
     expect(probe.name).toBe("my-service");
   });
 
   it("reports unhealthy on connection failure", async () => {
-    const probe = new HttpHealthProbe("unreachable", "http://localhost:1/health");
+    const probe = new HttpHealthProbe("unreachable", `http://127.0.0.1:${CLOSED}/health`);
     const result = await probe.check(500);
 
     expect(result.name).toBe("unreachable");
@@ -324,5 +332,68 @@ describe("PostgresHealthProbe", () => {
       status: "unhealthy",
       detail: "Database did not answer within 250ms",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The json-bound probe (platform TASK-229, review SB-17): degraded on any readiness line, so the
+// deploy smoke (which requires it healthy) fails while the bound is not in force.
+// ---------------------------------------------------------------------------
+
+describe("json-bound readiness probe (TASK-229)", () => {
+  /** A tx whose one query answers `missing` (what json_bound_missing() names). */
+  const answering = (missing: string[]) => async (fn: (tx: unknown) => unknown) =>
+    fn({ query: async () => ({ rows: [{ missing }], rowCount: 1 }) });
+
+  beforeEach(() => {
+    mockHasDatabase.mockReset();
+    mockWithPlatformTx.mockReset();
+  });
+
+  it("healthy when nothing is missing", async () => {
+    mockHasDatabase.mockReturnValue(true);
+    mockWithPlatformTx.mockImplementation(answering([]) as never);
+    const r = await createJsonBoundProbe().check(1000);
+    expect(r.name).toBe("json-bound");
+    expect(r.status).toBe("healthy");
+  });
+
+  it("[guard] degraded, naming every line, when the bound is not in force", async () => {
+    mockHasDatabase.mockReturnValue(true);
+    mockWithPlatformTx.mockImplementation(
+      answering([
+        "public.jobs: trigger zz_json_bound_ins not enabled ALWAYS (the bound is off)",
+        "075_json_bound_existing_rows.sql: not recorded",
+      ]) as never
+    );
+    const r = await createJsonBoundProbe().check(1000);
+    expect(r.status).toBe("degraded");
+    expect(r.detail).toContain(
+      "public.jobs: trigger zz_json_bound_ins not enabled ALWAYS"
+    );
+    expect(r.detail).toContain("075_json_bound_existing_rows.sql: not recorded");
+  });
+
+  it("[hostile:store-down] degraded, naming only the error's name, when it cannot be read", async () => {
+    mockHasDatabase.mockReturnValue(true);
+    mockWithPlatformTx.mockRejectedValue(new TypeError("secret connection text"));
+    const r = await createJsonBoundProbe().check(1000);
+    expect(r.status).toBe("degraded");
+    expect(r.detail).toContain("could not be read: TypeError");
+    expect(r.detail).not.toContain("secret connection text");
+  });
+
+  it("healthy without a database (nothing is stored)", async () => {
+    mockHasDatabase.mockReturnValue(false);
+    const r = await createJsonBoundProbe().check(1000);
+    expect(r.status).toBe("healthy");
+    expect(mockWithPlatformTx).not.toHaveBeenCalled();
+  });
+
+  it("asks without 074 in one statement that names it (to_regprocedure, nothing called)", () => {
+    expect(JSON_BOUND_MISSING_SQL).toContain(
+      "to_regprocedure('public.json_bound_missing()') is null"
+    );
+    expect(JSON_BOUND_MISSING_SQL).toContain("074_json_bound.sql: not applied");
   });
 });

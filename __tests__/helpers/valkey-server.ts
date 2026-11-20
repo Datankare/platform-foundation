@@ -65,8 +65,34 @@ export interface RunningValkey {
   readonly password: string;
   /** The test CA that signed the server's certificate (PEM). */
   readonly caPem: string;
+  /** The server's certificate (PEM). */
+  readonly serverPem: string;
   stop(): Promise<void>;
 }
+
+/**
+ * The test CA's and the server certificate's extensions, written out (TASK-229): the same with
+ * OpenSSL and with LibreSSL (macOS), whatever the system's openssl.cnf holds.
+ */
+export const CERT_CONFIG = {
+  req: [
+    "[req]",
+    "distinguished_name = dn",
+    "[dn]",
+    "[v3_ca]",
+    "basicConstraints = critical,CA:TRUE",
+    "keyUsage = critical,keyCertSign,cRLSign",
+    "subjectKeyIdentifier = hash",
+    "",
+  ].join("\n"),
+  server: [
+    "subjectAltName = DNS:localhost",
+    "basicConstraints = critical,CA:FALSE",
+    "keyUsage = critical,digitalSignature,keyEncipherment",
+    "extendedKeyUsage = serverAuth",
+    "",
+  ].join("\n"),
+};
 
 /** How many ports a start tries before it gives up. */
 const START_ATTEMPTS = 5;
@@ -169,8 +195,18 @@ export async function startValkey(
   const dir = mkdtempSync(join(tmpdir(), "pf-valkey-"));
   const ssl = (...args: string[]) =>
     execFileSync(OPENSSL, args, { cwd: dir, stdio: "ignore" });
+  // Every extension is written here, never taken from the system's openssl.cnf (TASK-229): macOS
+  // ships LibreSSL, whose configuration differs from OpenSSL's, and a CA certificate without
+  // basicConstraints CA:TRUE is refused as an issuer by Node's verification. These files say the
+  // same to both (CERT_CONFIG).
+  writeFileSync(join(dir, "req.cnf"), CERT_CONFIG.req);
+  writeFileSync(join(dir, "server.ext"), CERT_CONFIG.server);
   ssl(
     "req",
+    "-config",
+    "req.cnf",
+    "-extensions",
+    "v3_ca",
     "-x509",
     "-newkey",
     "rsa:2048",
@@ -186,6 +222,9 @@ export async function startValkey(
   );
   ssl(
     "req",
+    "-config",
+    "req.cnf",
+    "-new",
     "-newkey",
     "rsa:2048",
     "-nodes",
@@ -197,7 +236,6 @@ export async function startValkey(
     "server.csr"
   );
   // The certificate names localhost only: the hostname check is exercised against 127.0.0.1.
-  writeFileSync(join(dir, "san.cnf"), "subjectAltName=DNS:localhost\n");
   ssl(
     "x509",
     "-req",
@@ -213,9 +251,10 @@ export async function startValkey(
     "-out",
     "server.crt",
     "-extfile",
-    "san.cnf"
+    "server.ext"
   );
   const caPem = readFileSync(join(dir, "ca.crt"), "utf8");
+  const serverPem = readFileSync(join(dir, "server.crt"), "utf8");
   const password = `pw-${randomBytes(12).toString("hex")}`;
   let started: { child: ChildProcess; port: number } | undefined;
   for (let attempt = 0; attempt < START_ATTEMPTS && !started; attempt++) {
@@ -235,6 +274,7 @@ export async function startValkey(
     port,
     password,
     caPem,
+    serverPem,
     async stop() {
       await new Promise<void>((resolve) => {
         child.once("exit", () => resolve());

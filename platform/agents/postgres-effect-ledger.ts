@@ -11,6 +11,14 @@
  *
  * Table: effect_ledger (migration 028; unique per tenant since 049).
  *
+ * Stored JSON is bounded (platform TASK-229, migration 074): a request over the bound is refused,
+ * coded, by `begin` — before the effect runs. A receipt is kept up to EFFECT_RECEIPT_MAX_TEXT
+ * (6 MiB as the database prints it — a generated image of about 4.4 MiB; code review B-1: the
+ * 1 MiB of other documents made a held image undeliverable). One that cannot be kept (the effect
+ * has happened) is stored as the "not kept" marker (`{"_omitted": {code, max}}`), logged and
+ * counted (`effect.receipt_not_kept`) — receiptToStore, the one rule of both ledgers;
+ * performExternalEffect replays such an entry as `resultKept: false`, never as the result.
+ *
  * @module platform/agents
  */
 
@@ -22,8 +30,9 @@ import type {
   ExternalEffectType,
 } from "@/platform/kernel";
 import { generateUuid } from "./utils";
-import { idempotencyKeyFor } from "./effect-ledger";
+import { idempotencyKeyFor, receiptToStore } from "./effect-ledger";
 import { withTenantTx } from "@/platform/data";
+import { assertWithinDatabaseBound } from "@/platform/errors/json-limits";
 
 interface LedgerRow {
   id: string;
@@ -65,7 +74,9 @@ function mapRow(row: LedgerRow): EffectLedgerEntry {
 export class PostgresEffectLedger implements EffectLedger {
   async begin(args: BeginEffectArgs): Promise<EffectLedgerEntry> {
     // A retry returns the EXISTING entry with attempts raised; its request, type and status
-    // are left as first written.
+    // are left as first written. A request the database would refuse is refused here, coded,
+    // before anything is written or fired (TASK-229).
+    assertWithinDatabaseBound(args.request ?? {}, "effect_ledger.request");
     const { rows } = await withTenantTx((tx) =>
       tx.query<LedgerRow>(
         `insert into effect_ledger
@@ -95,7 +106,8 @@ export class PostgresEffectLedger implements EffectLedger {
     status: Exclude<EffectStatus, "pending">,
     detail?: { receipt?: Record<string, unknown>; error?: string }
   ): Promise<EffectLedgerEntry | undefined> {
-    const receipt = detail?.receipt ?? null;
+    // What is kept of the receipt: itself, or the "not kept" marker (TASK-229, TA-a-4, B-1).
+    const receipt = receiptToStore(detail?.receipt, operationId, effectKey) ?? null;
     const { rows } = await withTenantTx((tx) =>
       tx.query<LedgerRow>(
         `update effect_ledger

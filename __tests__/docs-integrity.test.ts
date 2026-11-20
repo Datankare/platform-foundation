@@ -111,6 +111,59 @@ describe("docs integrity — README counts match the filesystem (Gotcha 85)", ()
     expect(stated.every((c) => c === n)).toBe(true);
   });
 
+  // TASK-229 (code review B-21): docs/README.md said "57 Architecture Decision Records" with 58
+  // files — the root README's count was checked, the docs index's was not.
+  it("every ADR count stated in docs/README.md equals the ADR file count", () => {
+    const n = adrFilesIds().length;
+    const stated = [
+      ...read("docs/README.md").matchAll(
+        /(\d+)\s+(?:ADRs|Architecture Decision Records)/g
+      ),
+    ].map((m) => Number(m[1]));
+    expect(stated.length).toBeGreaterThan(0);
+    expect(stated).toEqual(stated.map(() => n));
+  });
+
+  // TASK-229 (code reviews A-13, B-22): comments, tests and migrations cite sections of the
+  // batch's design, a document that is not in the repository. docs/JSON_BOUND.md §10 says, for
+  // each cited section, what it decided and where the repository writes it: a section cited
+  // anywhere without its row there cannot be followed by a reader, and fails here.
+  it("every section of the batch design cited in the repository has its row in docs/JSON_BOUND.md §10", () => {
+    const CITED = /design 56e-3a[\s*/-]*§(\d+\.\d+)/g;
+    const cited = new Map<string, string>();
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== "node_modules" && !e.name.startsWith(".")) walk(p);
+        } else if (/\.(?:md|ts|tsx|sql|sh|mjs|cjs|js|json|yml)$/.test(e.name)) {
+          for (const m of readFileSync(p, "utf-8").matchAll(CITED)) {
+            if (!cited.has(m[1]!)) cited.set(m[1]!, p.slice(ROOT.length + 1));
+          }
+        }
+      }
+    };
+    for (const d of [
+      "docs",
+      "platform",
+      "__tests__",
+      "scripts",
+      "supabase",
+      "lib",
+      "app",
+      "components",
+      "e2e",
+      "e2e-live",
+    ]) {
+      if (existsSync(join(ROOT, d))) walk(join(ROOT, d));
+    }
+    expect(cited.size).toBeGreaterThan(3); // self-test: the citations are found
+    expect(cited.has("2.5")).toBe(true); // self-test: one cited across a line break is read
+    const table = read("docs/JSON_BOUND.md");
+    const without = [...cited].filter(([n]) => !table.includes(`| design 56e-3a §${n} `));
+    expect(without).toEqual([]);
+  });
+
   // TASK-194 round 19: PLATFORM_ARCHITECTURE said "52 migrations" when there were 63 — no check
   // read it; round 20: Playform's migration guide said "all 65 migrations recorded". One pattern
   // finds a count however it is worded (round 21, nit 3: the README's check uses it too); the

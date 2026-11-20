@@ -88,9 +88,12 @@ const CONSUMERS: Readonly<Record<string, string>> = { playform: "platform-founda
 
 /**
  * Modules no entry reaches that this repository keeps, by package name, each with why. Kept
- * minimal: each is a consumer-owned register a CI guard reads (a test marked @guard imports it),
- * at the path the sync template excludes (docs/templates/sync-config.json) so the consumer owns
- * it — moving it would break every consumer's sync. Code no entry reaches is wired or removed.
+ * minimal: each is a register a CI guard reads (a test marked @guard imports it). All but one are
+ * consumer-owned, at the path the sync template excludes (docs/templates/sync-config.json) so the
+ * consumer owns it — moving it would break every consumer's sync. The one that is not is
+ * platform/errors/json-columns.ts: the platform's own register of its own schema, synced to
+ * every consumer like any platform file (code review B-28: it was called consumer-owned here).
+ * Code no entry reaches is wired or removed.
  */
 export const KNOWN_UNREACHED: Readonly<Record<string, Readonly<Record<string, string>>>> =
   {
@@ -101,6 +104,13 @@ export const KNOWN_UNREACHED: Readonly<Record<string, Readonly<Record<string, st
       "platform/assurance/unwired-security.ts":
         "the register of security controls with no production caller, consumer-owned: read by " +
         "__tests__/security-wiring.test.ts, never by the app at run time",
+      "platform/errors/json-columns.ts":
+        "the platform's own register (synced, not consumer-owned) read by " +
+        "__tests__/db/json-columns.db.test.ts (@guard): every jsonb column of the platform's " +
+        "schema, its writers and what keeps it within the stored-JSON bound (TASK-229)",
+      "platform/auth/app-json-columns.ts":
+        "consumer-owned register read by __tests__/db/json-columns.db.test.ts (@guard): the " +
+        "app's own jsonb columns (TASK-229)",
     },
     playform: {
       "platform/route-policy/app-route-policy.ts":
@@ -109,6 +119,13 @@ export const KNOWN_UNREACHED: Readonly<Record<string, Readonly<Record<string, st
       "platform/assurance/unwired-security.ts":
         "Playform's register of security controls with no production caller, consumer-owned: " +
         "read by __tests__/security-wiring.test.ts, never by the app at run time",
+      "platform/errors/json-columns.ts":
+        "the platform's own register (synced, not consumer-owned) read by " +
+        "__tests__/db/json-columns.db.test.ts (@guard): every jsonb column of the platform's " +
+        "schema, its writers and what keeps it within the stored-JSON bound (TASK-229)",
+      "platform/auth/app-json-columns.ts":
+        "consumer-owned register read by __tests__/db/json-columns.db.test.ts (@guard): " +
+        "Playform's own jsonb columns (TASK-229)",
     },
   };
 

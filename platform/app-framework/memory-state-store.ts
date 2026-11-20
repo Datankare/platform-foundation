@@ -15,6 +15,7 @@
 import type { ActivityStateStore, StateReducer } from "./state-store";
 import type { CommitResult, SessionMeta, VersionedState } from "./types";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
+import { assertWithinDatabaseBound } from "@/platform/errors/json-limits";
 
 interface Entry<TState> {
   state: TState;
@@ -95,6 +96,8 @@ export class InMemoryActivityStateStore<TState> implements ActivityStateStore<TS
     if (!entry) {
       throw new Error(`app-framework: session not found: ${sessionId}`);
     }
+    // As PostgresActivityStateStore.saveMeta (code reviews B-7, B-26).
+    assertWithinDatabaseBound(meta, "app_sessions.meta");
     this.meta.set(sessionId, meta);
   }
 

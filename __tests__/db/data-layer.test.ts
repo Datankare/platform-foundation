@@ -28,6 +28,10 @@ import {
 } from "@/platform/tenancy/context";
 import { Pool } from "pg";
 import { dbDescribe } from "../helpers/db";
+import { closedPortSync } from "../helpers/closed-port";
+
+/** A loopback port nothing listens on (TASK-229). */
+const CLOSED = closedPortSync();
 
 const URL = process.env.TEST_DATABASE_URL;
 const OWNER = process.env.TEST_DATABASE_OWNER_URL;
@@ -320,7 +324,7 @@ d("platform/data on Postgres", () => {
     await setDataPoolFactory(
       () =>
         new Pool({
-          connectionString: "postgresql://app_tenant:x@127.0.0.1:1/none",
+          connectionString: `postgresql://app_tenant:x@127.0.0.1:${CLOSED}/none`,
           connectionTimeoutMillis: 500,
         })
     );

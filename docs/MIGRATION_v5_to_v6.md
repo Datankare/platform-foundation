@@ -341,7 +341,7 @@ tenant admin, a key that governs the platform). A value its entry refuses is
 `POST /api/admin/config-ai/execute` (round 14; it was `request.invalid_value` with the entry's
 English reasons as `allowed`, or an uncoded 422): `params` are `key` and a structured `reason`
 (`type` with `expected`, `below_min` with `min`, `above_max` with `max`, `not_allowed`,
-`not_serializable`, `too_large` with `max`, else `other`), worded by the message; a screen of yours
+`not_serializable`, `too_large` with `max`, `number_out_of_range`, `too_deep`, else `other`), worded by the message; a screen of yours
 shows `message`, and the English reasons are no longer in the body. Every refusal of
 `POST /api/admin/config-ai/execute` carries a registry `code`, `params` and `message` (round 13; a
 refusal had none) and answers its registry status (round 14; it answered 422 for every refusal):
@@ -763,6 +763,272 @@ select (select checksum from public.applied_migrations
            and not exists (select 1 from public.app_sessions s
                             where s.id = t.subject_id and s.tenant_id = t.tenant_id)) as orphaned_session_runs;
 ```
+
+#### 074 and 075 — every stored JSON value bounded; today's erasure lossless (platform TASK-229, ADR-058)
+
+**Needs PostgreSQL 17** (074 refuses on 16: it reads `pg_column_toast_chunk_id`). Paste each in
+order, one at a time, as `postgres`. Nothing here is rolled back by hand: 074 and 075 are each one
+statement that applies whole or not at all. Withdraw the release by deploying the previous build —
+which keeps working on a database with them, with three differences (ADR-058 §3): a write of a
+number other than 0 or 1e-18 ≤ |n| < 1e21, or of a value that prints more than 8 MiB, is refused
+by the database (23514: an uncoded 500 from that build, and for an effect's receipt or a run's
+step after the work); its erasure is refused on a row over the bound until the row is converted
+("A row over the JSON bound", below); and it has no `json-bound` probe. So keep the time between
+074 and the deploy of this release short: paste, check, push.
+
+The two migration files are in this release's checkout (pull or check out the release first;
+pasting them needs no deploy).
+
+**Step 0 — staging, the state check, rows over the bound counted, the A-2 question (read-only).**
+
+- Dev and staging share one database, and staging runs an older build whose cron calls
+  `/api/internal/jobs/tick` every 5 minutes. Decision D4 (the owner's): pause staging's cron for
+  the whole period until promotion — Vercel → project `playform-staging` → Settings → Cron Jobs →
+  **Disable Cron Jobs** (if that setting is not there: remove `CRON_SECRET` from staging's
+  environment and redeploy staging once — every tick is then refused). Check: staging's Cron Jobs
+  page shows no invocation after the pause. Re-enable it at promotion, when staging is redeployed
+  from `develop`. (Recommended; if the owner promotes staging with each batch instead, skip this.)
+- The state check — one row: `pg17 t`, `current_user postgres`, `sees_every_row t`,
+  `before_074 t` (064–073 recorded, 074 not yet), `json_tables 21` (Playform 23), `json_mb` as it
+  is, and the editor's three timeouts. `sees_every_row f`: stop. `json_mb` over 3000: run 075's
+  per-table form with psql (below).
+
+```sql
+select current_setting('server_version_num')::int >= 170000 as pg17,
+       current_user,
+       (select r.rolsuper or r.rolbypassrls from pg_catalog.pg_roles r where r.rolname = current_user) as sees_every_row,
+       (select count(*) = 10 from public.applied_migrations
+         where filename in ('064_retention_and_migration_order.sql', '065_role_description_note.sql', '066_recorded_notes.sql',
+                            '067_recorded_notes_written_by_code.sql', '068_moderation_decision_accounts.sql', '069_provider_usage.sql',
+                            '070_auth_sessions.sql', '071_tenant_export_named_columns.sql', '072_record_text_and_hashes.sql',
+                            '073_retention_lifecycles.sql'))
+         and not exists (select 1 from public.applied_migrations where filename = '074_json_bound.sql') as before_074,
+       (select count(distinct c.oid) from pg_catalog.pg_class c join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+          join pg_catalog.pg_attribute a on a.attrelid = c.oid
+         where s.nspname = 'public' and c.relkind in ('r', 'p') and not c.relispartition and a.attnum > 0
+           and not a.attisdropped and a.atttypid = 'jsonb'::regtype) as json_tables,
+       (select round(sum(pg_catalog.pg_total_relation_size(c.oid)) / 1048576.0) from pg_catalog.pg_class c
+          join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+         where s.nspname = 'public' and c.relkind = 'r'
+           and exists (select 1 from pg_catalog.pg_attribute a where a.attrelid = c.oid and a.attnum > 0
+                         and not a.attisdropped and a.atttypid = 'jsonb'::regtype)) as json_mb,
+       current_setting('statement_timeout') as statement_timeout,
+       current_setting('lock_timeout') as lock_timeout,
+       current_setting('deadlock_timeout') as deadlock_timeout;
+```
+
+- Rows over the bound, counted (code review A-2). Every build before this one had no number range,
+  so a stored row may hold a value 074 would refuse: until it is converted, every update of that
+  row — an erasure's rewrite included — is refused. One statement, read-only, needing nothing of
+  074: a row per jsonb column that holds such values, then a `TOTAL` row, always. Expected: the
+  `TOTAL` row alone, `0 | 0 | 0`, `sees_every_row t`. Any other count: go on with steps 1 and 2 —
+  075 will name the rows and stop, and "A row over the JSON bound" below converts them.
+
+```sql
+-- Rows over the bound, counted (read-only; paste BEFORE 074 — it needs nothing of 074; code review A-2).
+-- One row per jsonb column that holds a value the bound would refuse, with how many and why — too_deep:
+-- nested deeper than 128 levels; bad_number: a number other than 0 or 1e-18 <= |n| < 1e21; too_long: more
+-- than 8 MiB as text (each value counted once, under the first reason that applies) — then one TOTAL row,
+-- always. Expected on dev: the TOTAL row alone, 0 | 0 | 0, sees_every_row t. agent_trajectories.steps is
+-- bounded in depth only until migration 076, so only too_deep is counted for it. It reads every row once
+-- (as 075 does): above about 3 GB of JSON (json_mb of the state check) run it with psql.
+with cols as (
+  select c.oid::pg_catalog.regclass::text as tbl, a.attname::text as col,
+         (c.oid = 'public.agent_trajectories'::pg_catalog.regclass and a.attname = 'steps') as depth_only
+    from pg_catalog.pg_class c
+    join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+    join pg_catalog.pg_attribute a on a.attrelid = c.oid
+   where s.nspname = 'public' and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
+     and a.atttypid = 'pg_catalog.jsonb'::pg_catalog.regtype),
+counted as (
+  select k.tbl, k.col,
+         (xpath('/row/too_deep/text()', x.r))[1]::text::bigint as too_deep,
+         (xpath('/row/bad_number/text()', x.r))[1]::text::bigint as bad_number,
+         (xpath('/row/too_long/text()', x.r))[1]::text::bigint as too_long
+    from cols k
+    cross join lateral (select query_to_xml(format(
+      $q$select count(*) filter (where d.deep) as too_deep,
+                count(*) filter (where not d.deep and not %3$L::boolean and d.num) as bad_number,
+                count(*) filter (where not d.deep and not %3$L::boolean and not d.num and octet_length(d.v::text) > 8388608) as too_long
+           from (select t.v, t.deep,
+                        case when t.deep then false
+                             else jsonb_path_exists(t.v, 'strict $.**?(@.abs() >= 1e21 || @.abs() < 1e-18)?(@ != 0)') end as num
+                   from (select %1$I as v,
+                                jsonb_path_exists(%1$I, 'strict $.**{128}?(@.type() == "object" || @.type() == "array")') as deep
+                           from only %2$s where %1$I is not null) t) d$q$,
+      k.col, k.tbl, k.depth_only), false, true, '') as r) x)
+select tbl || '.' || col as jsonb_column, too_deep, bad_number, too_long,
+       (select r.rolsuper or r.rolbypassrls from pg_catalog.pg_roles r where r.rolname = current_user) as sees_every_row
+  from counted where too_deep + bad_number + too_long > 0
+union all
+select 'TOTAL (' || count(*) || ' jsonb columns read)', coalesce(sum(too_deep), 0), coalesce(sum(bad_number), 0), coalesce(sum(too_long), 0),
+       (select r.rolsuper or r.rolbypassrls from pg_catalog.pg_roles r where r.rolname = current_user)
+  from counted
+ order by 1;
+```
+
+- The A-2 question (review A-2: 052's soft delete could drop a value or put a stand-in in place of
+  a document). K-1, then K-2, then K-3, each one statement; report any non-zero K-3 count to the
+  owner before step 1. No row from K-1, or 0 soft deletes from K-2: stop here, nothing to ask.
+
+```sql
+-- K-1 (read-only): was migration 052 ever applied here? No row: this project cannot hold A-2 damage — stop.
+select filename, recorded_at, checksum from public.applied_migrations where filename = '052_audit_wave2.sql';
+```
+
+```sql
+-- K-2 (read-only): soft deletes since the first build that called 052's function (908d64a, 2026-10-25);
+-- sees_every_row must be t (run as postgres), else the counts are not complete. 0 soft deletes: stop.
+select (select rolsuper or rolbypassrls from pg_catalog.pg_roles where rolname = current_user) as sees_every_row,
+       count(*) filter (where soft_deleted_at >= timestamptz '2026-10-25 00:00:00+00') as soft_deletes_since_052_code,
+       count(*) filter (where soft_deleted_at >= timestamptz '2026-10-25 00:00:00+00' and purged_at is not null) as of_which_purged
+  from public.user_deletions;
+```
+
+```sql
+-- K-3 (read-only): documents of the shape 052's rewrite could damage, in the columns it rewrote.
+-- Exact for stand-ins. 0 at_risk means "no document of the at-risk shape" — a value 052 dropped leaves
+-- no trace, so 0 is NOT "no damage" (RA2-5). Rate: ~94.6 s per 1.4 GB (RB2-11); above ~0.8 GB of these
+-- columns run one table's line at a time (or with psql) — the SQL Editor stops a statement at 60 s.
+with docs(tbl, doc) as (
+  select 'proposals.payload', payload from public.proposals union all
+  select 'proposals.effects', effects from public.proposals union all
+  select 'agent_trajectories.steps', steps from public.agent_trajectories union all
+  select 'audit_log.details', details from public.audit_log union all
+  select 'review_queue.moderation_result', moderation_result from public.review_queue union all
+  select 'review_queue.explanation_chain', explanation_chain from public.review_queue union all
+  select 'app_sessions.state', state from public.app_sessions)
+select l.tbl,
+       count(d.doc) filter (where d.doc::text like '%erasure: key collision%' or d.doc::text like '%erasure: too deep to rewrite%') as stand_ins,
+       count(d.doc) filter (where d.doc::text ~ '"([0-9a-fA-F-]{36}|erased)#[0-9]+": ') as numbered_keys,
+       count(d.doc) filter (where jsonb_path_exists(d.doc, 'strict $.**{0 to 128} ? (@.type() == "string" && @ starts with ": ")')
+                          and jsonb_path_exists(d.doc, 'strict $.**{0 to 128} ? (@.type() == "object").keyvalue() ? (@.key like_regex "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|erased)(#[0-9]+)?$")')) as at_risk
+  from (values ('proposals.payload'), ('proposals.effects'), ('agent_trajectories.steps'), ('audit_log.details'),
+               ('review_queue.moderation_result'), ('review_queue.explanation_chain'), ('app_sessions.state')) l(tbl)
+  left join docs d on d.tbl = l.tbl
+ group by l.tbl order by l.tbl;
+```
+
+**Step 1 — 074** (the bound, its readiness, the lossless rewrites). Answers `DO`. A lock message
+names a busy table and the sessions holding it: nothing of 074 exists yet (it applies whole or not
+at all), so wait a minute and paste 074 again ("The JSON bound could not take its locks", below).
+
+```bash
+pbcopy < supabase/migrations/074_json_bound.sql
+```
+
+**Step 2 — 075** (every row stored before the bound read once against it). Answers `DO`. Rows
+named over the bound, each with its reason: "A row over the JSON bound" below, then paste 075
+again.
+
+```bash
+pbcopy < supabase/migrations/075_json_bound_existing_rows.sql
+```
+
+**Step 3 — the check** (one row; it fires the installed triggers with a value over each limit, in
+subtransactions always rolled back — nothing is written; ~1–2 s). Expected:
+`missing 0 | triggers_on 42 (Playform 46) | tables 21 (Playform 23) | refused 63 (Playform 69) |
+not_refused 0 | recorded 074_json_bound.sql,075_json_bound_existing_rows.sql | keeps_both t |
+escape_kept t | app_reads t | anon_runs f`.
+
+```sql
+with selftest as (select * from public.json_bound_selftest())
+select (select count(*) from public.json_bound_missing()) as missing,
+       (select count(*) from pg_catalog.pg_trigger where tgname in ('zz_json_bound_ins', 'zz_json_bound_upd') and tgenabled = 'A') as triggers_on,
+       (select count(*) from public.json_bound_tables()) as tables,
+       (select count(*) from selftest where outcome like 'refused%') as refused,
+       (select count(*) from selftest where outcome not like 'refused%') as not_refused,
+       (select string_agg(filename, ',' order by filename) from public.applied_migrations
+         where filename in ('074_json_bound.sql', '075_json_bound_existing_rows.sql')) as recorded,
+       (select count(*) = 2 from jsonb_object_keys(public.jsonb_erase_id_text('{"erased": 1, "3f2b1c4d-0000-4000-8000-00000000abcd": 2}', '3f2b1c4d-0000-4000-8000-00000000abcd'))) as keeps_both,
+       public.jsonb_erase_id_text(jsonb_build_object('n', chr(6) || 'f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b'), '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b')
+         = jsonb_build_object('n', chr(6) || 'f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b') as escape_kept,
+       has_function_privilege('app_tenant', 'public.json_bound_missing()', 'EXECUTE') as app_reads,
+       coalesce(pg_catalog.to_regrole('anon') is not null and has_function_privilege('anon', 'public.jsonb_erase_id_text(jsonb,text)', 'EXECUTE'), false) as anon_runs;
+```
+
+**Step 4 — push the release** (both repositories), straight after step 3. Either order is safe,
+neither is without effect: the previous build on a 074 database is refused the writes named at the
+top of this section; this build on a database without 074 refuses erasures (no attempt counted;
+the retention job's run fails saying so) and readiness says `074_json_bound.sql: not recorded`.
+
+**Step 5 — after the deploy.**
+`curl -s https://YOUR-DEV-HOST/api/health | jq '.checks[] | select(.name=="json-bound")'` — with
+the deployment's own host in place of `YOUR-DEV-HOST` — shows `"status": "healthy"`;
+`gh run list --workflow deploy-smoke.yml -R Datankare/playform -L 5 --json headSha,status,conclusion`
+shows the pushed commit's run (its `headSha`) `completed` / `success` (the smoke requires
+`json-bound` healthy). The hourly health watch watches `json-bound` from promotion (it runs from
+`main`).
+
+##### A row over the JSON bound
+
+075 (or `select public.json_bound_check('public.<table>');`) names every such row in one refusal —
+the first 50 of each table and the count of the rest — each with its table, column, the row (its
+primary key when made of uuids and integers, else its ctid) and why: nested deeper than 128
+levels, a number other than 0 or 1e-18 ≤ |n| < 1e21, or longer than 8 MiB as text. Such a row was
+written before the bound existed: by a SQL session, or by the application itself — no build
+before this one refused a number outside the range (a probability from a model, an amount in
+wei, the residue of arithmetic on small amounts).
+
+**While such a row stands, every update of it is refused** (`23514`, constraint `json_bound`),
+an erasure's rewrite included: the account's erasure fails on each retry (`last_purge_error`,
+then `gdpr.erasure_stuck`), with this build and with the previous one.
+
+Convert the rows — nothing is deleted, and no value is changed by hand:
+
+```sql
+select public.json_bound_convert();
+```
+
+(or `select public.json_bound_convert('public.<table>');` for one table.) In each such value a
+number under 1e-18 in magnitude becomes 0, and a number of 1e21 or more becomes its digits as a
+string; a value that is then still over the bound — too deep, or too long — becomes the marker
+`{"_omitted": {"code": "request.json_too_deep"}}` (or `…json_too_large`), which the application
+reads as "not kept". It answers one line per table that had such rows and a total. A row that
+another rule of its table refuses to change (an append-only guard, say) is named with that rule's
+SQLSTATE and left as it was: report it — it needs a decision, not a deletion. Then paste 075
+again. The erasure that was refused completes at its next retry.
+
+When PostgreSQL's own message stops the check instead ("its rows could not be read"), a stored
+value cannot be printed at all (past the server's 1 GB limit) or the table stayed locked for 5 s:
+the table is named, and `select ctid, pg_column_size(<column>) from only public.<table> order by 2 desc limit 5;`
+finds its largest values.
+
+##### The JSON bound could not take its locks
+
+074, `json_bound_install` and `json_bound_off` take each table's lock within one short budget per
+attempt (half of `deadlock_timeout`, at most 100 ms) and give way to the application, retrying for
+up to 30 s; then they fail, naming the table and the sessions holding it, having changed nothing.
+
+- **It was 074 itself** (the first paste): nothing of it exists yet, so there is no function to
+  run for one table — paste 074 again in a quieter minute.
+- **It was `json_bound_install` or `json_bound_off`** (074 is applied): run it for that one table
+  when it is quieter — `select public.json_bound_install(array['public.<table>'::regclass]);` then
+  `select public.json_bound_check('public.<table>');`.
+
+##### After an older migration is applied again, a restore, or a change to a covered column
+
+- **049 or 050 applied again** (each is written to be) grants all on its tables to `service_role`
+  again, TRIGGER included; readiness names each table ("service_role holds TRIGGER on it"). Run
+  `select public.json_bound_install();` — it takes the privilege away and re-makes nothing.
+- **A restore, a branch copy, a major-version upgrade:** every table reads "existing rows not
+  checked" until `select public.json_bound_check();` has run; after a major upgrade see
+  `docs/runbooks/jobs.md`, "After a restore or an upgrade".
+- **Changing the type of a covered jsonb column, or dropping it,** is refused while the triggers
+  stand: ADR-058 §3 has the form (drop the two triggers, change, `json_bound_install`,
+  `json_bound_check`, in one transaction).
+
+##### The emergency off, and putting it back
+
+If the bound refuses or slows writes it should not: **per table first** —
+`select public.json_bound_off(array['public.<table>'::regclass]);`, one paste per table — or
+`select public.json_bound_off();` for all (which needs every covered table free at one moment).
+Readiness then names the table "not enabled ALWAYS (the bound is off)" and "rows not checked":
+health is degraded and the deploy smoke fails until it is put back. Restore per table:
+`select public.json_bound_install(array['public.<table>'::regclass]);` then
+`select public.json_bound_check('public.<table>');`. Above ~3 GB of JSON the SQL Editor's time
+limit can stop 075: run `select public.json_bound_check('public.<table>');` per table with psql,
+then paste 075.
 
 Every one is idempotent: one already applied (046 on a database on v5.1.x) changes nothing when
 run again. An app's own migrations go in between, by name (`052a_<app>_…` after 052 — §1b).

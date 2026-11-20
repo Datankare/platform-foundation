@@ -29,6 +29,8 @@ import type {
   ReviewResult,
 } from "./review-types";
 import { withTenantTx } from "@/platform/data";
+import { isOmittedMarker } from "@/platform/errors/json-limits";
+import { storableModerationResult, storedClassifierJson } from "./store";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
@@ -321,13 +323,21 @@ function mapRowToItem(row: ReviewQueueRow): ReviewQueueItem {
     source: row.source as ReviewQueueItem["source"],
     priority: row.priority as ReviewQueueItem["priority"],
     status: row.status as ReviewQueueItem["status"],
-    moderationResult:
-      row.moderation_result as unknown as ReviewQueueItem["moderationResult"],
+    // A result whose classifier output was not kept carries classifierOutputNotKept, and one
+    // whose other fields were not kept names them in fieldsNotKept (TASK-229, code review B-13:
+    // the decision's own fields are always stored). A whole result stored as the bare marker (a
+    // row written before that) is never read as a result's fields.
+    moderationResult: (isOmittedMarker(row.moderation_result)
+      ? { classifierOutputNotKept: row.moderation_result._omitted }
+      : row.moderation_result) as unknown as ReviewQueueItem["moderationResult"],
     targetUserId: row.target_user_id,
     requestId: row.request_id,
-    explanationChain: row.explanation_chain
-      ? (row.explanation_chain as unknown as ReviewQueueItem["explanationChain"])
-      : undefined,
+    // A chain not kept (over the stored-JSON bound, TASK-229) is absent — never the marker read
+    // as a chain; its not keeping was logged and counted when it was written.
+    explanationChain:
+      row.explanation_chain && !isOmittedMarker(row.explanation_chain)
+        ? (row.explanation_chain as unknown as ReviewQueueItem["explanationChain"])
+        : undefined,
     appealReason: row.appeal_reason ?? undefined,
     originalDecisionId: row.original_decision_id ?? undefined,
     claimedBy: row.claimed_by ?? undefined,
@@ -376,10 +386,25 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
             item.source,
             item.priority,
             item.status,
-            JSON.stringify(item.moderationResult),
+            // The classifier output inside it, any other field over the stored-JSON bound, and
+            // the explanation chain are stored as not kept, logged and counted (TASK-229); the
+            // decision's own fields are always kept (code review B-13).
+            JSON.stringify(
+              storableModerationResult(
+                item.moderationResult,
+                "review_queue.moderation_result"
+              )
+            ),
             item.targetUserId,
             item.requestId,
-            item.explanationChain ? JSON.stringify(item.explanationChain) : null,
+            item.explanationChain
+              ? JSON.stringify(
+                  storedClassifierJson(
+                    item.explanationChain,
+                    "review_queue.explanation_chain"
+                  )
+                )
+              : null,
             item.appealReason ?? null,
             item.originalDecisionId ?? null,
             item.claimedBy ?? null,

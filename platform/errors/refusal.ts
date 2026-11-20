@@ -147,6 +147,8 @@ export const REFUSAL_HANDLERS = {
   "request.invalid_body": "message",
   "request.json_too_deep": "message",
   "request.json_too_large": "message",
+  "request.json_number_out_of_range": "message",
+  "request.json_value_not_storable": "message",
   "request.trajectory_full": "message",
   "request.trajectory_chain_full": "message",
   "request.invalid_json": "message",

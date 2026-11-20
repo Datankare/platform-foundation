@@ -39,7 +39,11 @@ import { assertValidSchema, isValidSchema, SchemaValidationError } from "./schem
 import { getTrajectoryStore } from "./trajectory-store";
 import { generateSecureId } from "./utils";
 import { performExternalEffect, type ExternalEffectOutcome } from "./external-effect";
-import { storedJsonViolation } from "@/platform/errors/json-limits";
+import {
+  jsonLimitError,
+  notKeptReason,
+  storedJsonViolation,
+} from "@/platform/errors/json-limits";
 import { logger } from "@/lib/logger";
 import { logCaught } from "@/platform/observability/caught-error";
 import { raiseAlert } from "@/platform/observability/alert";
@@ -129,6 +133,10 @@ export interface InvokeToolResult<TState = unknown> {
    * An `indeterminate` entry here means the downstream neither confirmed nor denied. The
    * ledger row stays unresolved, so executeAgent's D10 check reports the whole workflow
    * indeterminate rather than completed — the propagation path, not a separate one.
+   *
+   * A `confirmed` entry carries `resultKept`: on a replay whose receipt the ledger could not keep
+   * (over the stored-JSON bound, platform TASK-229) it is `false` with `notKept` and no result —
+   * passed through as performExternalEffect gives it; a reader narrows on `resultKept` first.
    */
   readonly effects: readonly ExternalEffectOutcome<Record<string, unknown>>[];
 }
@@ -177,6 +185,20 @@ export async function invokeTool<TState = unknown>(
   // consume budget or occupy an operationId.
   assertValidSchema(tool.inputSchema, input, "input", tool.id);
 
+  // A tool with declared external effects sends its input to the effect ledger as each effect's
+  // request, and the ledger refuses a request over the stored-JSON limits (TASK-229) — which
+  // happens after tool.execute. So the same test is made here, before anything runs (code review
+  // B-3: a schema-valid input holding 1e-30 ran the tool, then was refused "nothing was stored").
+  if (tool.externalEffects?.length) {
+    const requestViolation = storedJsonViolation(input);
+    if (requestViolation) {
+      throw jsonLimitError(
+        requestViolation,
+        `tool ${tool.id}: the input (an effect's request)`
+      );
+    }
+  }
+
   // An atomic tool's effects are all one tenant transaction's writes; an external call cannot be
   // rolled back with them (review 10 H2).
   if (tool.atomic && tool.externalEffects?.length) {
@@ -224,7 +246,9 @@ export async function invokeTool<TState = unknown>(
           }
           const violation = storedJsonViolation(candidate);
           const recorded = violation
-            ? { outputNotRecorded: { code: violation.code, max: violation.max } }
+            ? // The reason as it can itself be stored (TASK-229: the number range's limits
+              // are outside the range the database stores; the code names them).
+              { outputNotRecorded: notKeptReason(violation) }
             : candidate;
           // Declared external effects fire AFTER the tool's own work validates. Firing first
           // would mean a schema failure left a charge behind it, and the retry loop would

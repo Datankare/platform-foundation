@@ -13,6 +13,10 @@ import type { AddressInfo } from "net";
 import { mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { closedPortSync } from "./helpers/closed-port";
+
+/** A loopback port nothing listens on (TASK-229). */
+const CLOSED = closedPortSync();
 
 const SCRIPT = join(__dirname, "..", "scripts/health-watch.mjs");
 
@@ -57,6 +61,7 @@ const healthy = (extra: { name: string; status: string }[] = []) => ({
   status: extra.some((c) => c.status !== "healthy") ? "degraded" : "healthy",
   checks: [
     { name: "job-schedules", status: "healthy" },
+    { name: "json-bound", status: "healthy" },
     { name: "database", status: "healthy" },
     ...extra,
   ],
@@ -108,7 +113,7 @@ describe("scripts/health-watch.mjs", () => {
   });
 
   it("[hostile:store-down] an unreachable deployment is a problem", async () => {
-    const r = await watch("http://127.0.0.1:9");
+    const r = await watch(`http://127.0.0.1:${CLOSED}`);
     expect(r.output).toContain("reason=the deployment could not be reached");
   });
 
@@ -118,5 +123,27 @@ describe("scripts/health-watch.mjs", () => {
     });
     expect(r.output).toContain("reason=cache is degraded");
     expect((await watch("http://x.test/api/health")).code).toBe(2);
+  });
+
+  // TASK-229 (SB-17): by default the watch requires json-bound healthy — the bound on stored JSON
+  // in force (effective at promotion: the scheduled watch runs from main).
+  it("[guard] by default json-bound is watched: degraded or missing is a problem", async () => {
+    const degraded = await against(200, {
+      status: "degraded",
+      checks: [
+        { name: "job-schedules", status: "healthy" },
+        {
+          name: "json-bound",
+          status: "degraded",
+          detail: "074_json_bound.sql: not recorded",
+        },
+      ],
+    });
+    expect(degraded.output).toContain("reason=json-bound is degraded");
+    const missing = await against(200, {
+      status: "healthy",
+      checks: [{ name: "job-schedules", status: "healthy" }],
+    });
+    expect(missing.output).toContain("reason=json-bound: not reported");
   });
 });

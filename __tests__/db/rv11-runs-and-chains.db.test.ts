@@ -14,7 +14,8 @@
  *   M-2  A config write's compare-and-set: refused when the value it replaces changed.
  *   L-6  An atomic run's attempt and failure records survive its rollback; a retry inside a
  *        joined transaction (set_approval_policy's version conflict) runs under a savepoint.
- *   SQL  jsonb_replace_text_value's key collisions (review11 rv11.sql), exactly.
+ *   SQL  the soft delete's rewrite's key collisions (review11 rv11.sql), exactly — 074's
+ *        jsonb_erase_address_text since platform TASK-229 (052's function is no longer called).
  *
  * Recovery here runs as the job runs it — withOwnerTx("platform-job") — scoped to this suite's
  * tenants and with a lease the production job never reaches (review 11 L-5).
@@ -501,7 +502,7 @@ dbDescribe("rv11 L-6 on Postgres: records of an attempt survive the rollback", (
 });
 
 dbDescribe(
-  "rv11 SQL: jsonb_replace_text_value's colliding keys (review11 rv11.sql)",
+  "rv11 SQL: the soft delete's rewrite (jsonb_erase_address_text since 074, TASK-229) and colliding keys (review11 rv11.sql)",
   () => {
     it.each([
       ['{"ann@x.com":"p","U1":"q"}', { U1: "q", "U1#1": "p" }],
@@ -528,7 +529,7 @@ dbDescribe(
     ])("%s: no value lost, free text kept", async (doc, expected) => {
       const rows = await withOwnerTx("tenant-lifecycle", (tx) =>
         tx.query<{ r: unknown }>(
-          "select public.jsonb_replace_text_value($1::jsonb, 'ann@x.com', 'U1') as r",
+          "select public.jsonb_erase_address_text($1::jsonb, 'ann@x.com', 'U1') as r",
           [doc]
         )
       );

@@ -28,6 +28,123 @@ import type { BudgetTracker } from "./budget-tracker";
 import { getAgent } from "./registry";
 import { logger } from "@/lib/logger";
 import { logCaught } from "@/platform/observability/caught-error";
+import {
+  notKeptReason,
+  sliceText,
+  storableText,
+  storedJsonViolation,
+} from "@/platform/errors/json-limits";
+import { recordMetricEvent } from "@/platform/observability/metric-event";
+
+/**
+ * The step a workflow's outcome is recorded as (platform TASK-229, CONFIRM CA3-2). The workflow
+ * has already run: an input or output the trajectory store would refuse — over 64 levels, over
+ * 1 MiB, or holding a number other than 0 or 1e-18 <= |n| < 1e21 (a probability from a model,
+ * an amount in wei) — is recorded as `{ inputNotRecorded: { code, max? } }` /
+ * `{ outputNotRecorded: { code, max? } }` (the shape tool-invoker.ts records a tool's output as;
+ * notKeptReason: the number range's limits are not stored, being outside it),
+ * logged and counted (`trajectory.step_not_recorded`), so the run goes on and its budget is
+ * consumed — never failed after its work was done. Should the step still be refused as a whole
+ * (input and output each within, together over 1 MiB), both are recorded so. What can then still
+ * be over the limits is the step's own fields (code review B-10: a cost of 5e-19, the residue of
+ * ordinary arithmetic on small amounts, or a very long action text, left the step refused and the
+ * run failed after its work): a cost that cannot be stored is recorded as 0 with
+ * `costNotRecorded` in the output, and an action that cannot be is cut to RECORDED_ACTION_MAX
+ * characters (or, holding text jsonb refuses, replaced by a fixed word). The budget is consumed
+ * with the real cost either way.
+ */
+export const RECORDED_ACTION_MAX = 200;
+export function recordableStep(step: Step, trajectoryId: string): Step {
+  const marker = (
+    field: "input" | "output",
+    value: unknown
+  ): Record<string, unknown> | null => {
+    const violation = storedJsonViolation(value);
+    if (!violation) return null;
+    logger.warn(
+      "A workflow step's value is over the stored-JSON limits; recorded as not kept",
+      {
+        trajectoryId,
+        stepIndex: step.stepIndex,
+        field,
+        code: violation.code,
+      }
+    );
+    recordMetricEvent(
+      "trajectory.step_not_recorded",
+      { count: 1 },
+      { field, code: violation.code }
+    );
+    return field === "input"
+      ? { inputNotRecorded: notKeptReason(violation) }
+      : { outputNotRecorded: notKeptReason(violation) };
+  };
+  const input = marker("input", step.input);
+  const output = marker("output", step.output);
+  let recorded: Step = {
+    ...step,
+    ...(input ? { input } : {}),
+    ...(output ? { output } : {}),
+  };
+  const whole = storedJsonViolation(recorded);
+  if (whole) {
+    logger.warn(
+      "A workflow step is over the stored-JSON limits as a whole; recorded as not kept",
+      {
+        trajectoryId,
+        stepIndex: step.stepIndex,
+        code: whole.code,
+      }
+    );
+    recordMetricEvent(
+      "trajectory.step_not_recorded",
+      { count: 1 },
+      { field: "step", code: whole.code }
+    );
+    recorded = {
+      ...recorded,
+      input: { inputNotRecorded: notKeptReason(whole) },
+      output: { outputNotRecorded: notKeptReason(whole) },
+    };
+  }
+  if (!storedJsonViolation(recorded)) return recorded;
+  // What is left over the limits is the step's own fields: its cost and its action.
+  const cost = storedJsonViolation(recorded.cost);
+  if (cost) {
+    recorded = {
+      ...recorded,
+      cost: 0,
+      output: { ...recorded.output, costNotRecorded: notKeptReason(cost) },
+    };
+  }
+  const action = String(recorded.action);
+  if (!storableText(action) || action.length > RECORDED_ACTION_MAX) {
+    recorded = {
+      ...recorded,
+      action: storableText(action)
+        ? sliceText(action, RECORDED_ACTION_MAX)
+        : "(an action whose name cannot be recorded)",
+    };
+  }
+  logger.warn(
+    "A workflow step's cost or action is over the stored-JSON limits; recorded as not kept",
+    {
+      trajectoryId,
+      stepIndex: step.stepIndex,
+      field: cost ? "cost" : "action",
+      code: (cost ?? { code: "request.json_too_large" }).code,
+    }
+  );
+  recordMetricEvent(
+    "trajectory.step_not_recorded",
+    { count: 1 },
+    {
+      field: cost ? "cost" : "action",
+      code: (cost ?? { code: "request.json_too_large" }).code,
+    }
+  );
+  return recorded;
+}
 
 /** A failed run's `error`: what failed is in the log (R-77). */
 export const AGENT_RUN_FAILED = "the run failed (the detail is in the log)";
@@ -225,7 +342,8 @@ export async function executeAgent(
         timestamp: new Date().toISOString(),
       };
 
-      await trajectoryStore.addStep(trajectoryId, step);
+      // Recorded as not kept where over the stored-JSON limits (TASK-229): the work has run.
+      await trajectoryStore.addStep(trajectoryId, recordableStep(step, trajectoryId));
 
       // Consume budget
       await budgetTracker.consume(
@@ -439,16 +557,23 @@ export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResul
       const outcome = await args.workflow(context);
       const durationMs = Date.now() - startMs;
 
-      await trajectoryStore.addStep(args.trajectoryId, {
-        stepIndex: stepCount,
-        action: outcome.action,
-        boundary: outcome.boundary,
-        input: outcome.input,
-        output: outcome.output,
-        cost: outcome.costUsd,
-        durationMs,
-        timestamp: new Date().toISOString(),
-      });
+      // As executeAgent: recorded as not kept where over the stored-JSON limits (TASK-229).
+      await trajectoryStore.addStep(
+        args.trajectoryId,
+        recordableStep(
+          {
+            stepIndex: stepCount,
+            action: outcome.action,
+            boundary: outcome.boundary,
+            input: outcome.input,
+            output: outcome.output,
+            cost: outcome.costUsd,
+            durationMs,
+            timestamp: new Date().toISOString(),
+          },
+          args.trajectoryId
+        )
+      );
 
       await budgetTracker.consume(
         agentId,

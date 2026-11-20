@@ -66,7 +66,11 @@ jest.mock("@/platform/auth/platform-config", () => ({
 
 const mockExpireStrikes = jest.fn();
 
-import { CORE_JOBS, resolveJobRetentionDays } from "@/platform/jobs/duties";
+import {
+  CORE_JOBS,
+  ERASURE_REFUSED_FAILURE,
+  resolveJobRetentionDays,
+} from "@/platform/jobs/duties";
 import {
   InMemoryJobStore,
   JobFailure,
@@ -398,6 +402,53 @@ describe("the core duties", () => {
     } finally {
       resetJobStore();
     }
+  });
+});
+
+describe("the retention duty when erasures are refused (TASK-229, code review B-14)", () => {
+  // TASK-229, code review B-14: a purge (or the pass over other tenants) REFUSED because the
+  // database's erasure functions are not migration 074's returned due 0, purged 0 — the summary
+  // of a run with nothing due. The run now fails, in operators' words, after its other parts ran.
+  it("[guard] the GDPR purge refused (the erasure functions are not 074's): the run fails saying so — never a summary that reads 'nothing due'", async () => {
+    const { reconcileErasures, eraseMentionsInOtherTenants } = jest.requireMock(
+      "@/platform/auth/gdpr-deletion"
+    ) as { reconcileErasures: jest.Mock; eraseMentionsInOtherTenants: jest.Mock };
+    reconcileErasures.mockClear();
+    (purgeDueErasures as jest.Mock).mockResolvedValue({
+      due: 0,
+      purged: 0,
+      failed: 0,
+      stuck: 0,
+      stopped: false,
+      refused: true,
+    });
+    const refused = await duty("gdpr.retention-purge")().then(
+      () => null,
+      (e: unknown) => e
+    );
+    expect(refused).toBeInstanceOf(JobFailure);
+    expect((refused as Error).message).toBe(ERASURE_REFUSED_FAILURE);
+    // The parts that do not need the erasure functions ran first.
+    expect(reconcileErasures).toHaveBeenCalledTimes(1);
+    // The pass over other tenants refused alone fails the run too.
+    (purgeDueErasures as jest.Mock).mockResolvedValue({
+      due: 0,
+      purged: 0,
+      failed: 0,
+      stuck: 0,
+      stopped: false,
+    });
+    eraseMentionsInOtherTenants.mockResolvedValueOnce({
+      due: 0,
+      erased: 0,
+      stopped: false,
+      refused: true,
+    });
+    await expect(duty("gdpr.retention-purge")()).rejects.toBeInstanceOf(JobFailure);
+    // Neither refused: the run reports as before.
+    await expect(duty("gdpr.retention-purge")()).resolves.toMatchObject({
+      summary: { due: 0, purged: 0 },
+    });
   });
 });
 

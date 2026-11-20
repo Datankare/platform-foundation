@@ -1475,6 +1475,25 @@ DELETE FROM public.jobs WHERE kind IN ('replay.job', 'replay.other', 'replay.min
 DELETE FROM public.tenants WHERE slug IN ('replay-jobs-a', 'replay-jobs-b');
 SQL
 
+# A later migration takes back a privilege 049 and 050 grant: their "grant all … to service_role"
+# (user_deletions, tenants, tenant_domains, tenant_config_overrides; jobs) includes TRIGGER, which
+# 074 takes away from the API's roles on every table the JSON bound covers (a role holding it
+# could replace a trigger of the bound: TASK-229). After either is applied again, readiness names
+# those tables and json_bound_install() repairs them — which must be all it does: no trigger
+# (re)made. $1: the migration applied again.
+bound_privileges_again() {
+  local named repaired there
+  there=$("${PSQL[@]}" -At -c "SELECT to_regprocedure('public.json_bound_install(regclass[])') IS NOT NULL")
+  if [ "$there" = t ]; then
+    named=$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.json_bound_missing() m WHERE m LIKE '%holds TRIGGER on it%'")
+    [ "$named" -ge 1 ] || { echo "✗ $1 applied again grants TRIGGER to service_role, and readiness did not name it"; exit 1; }
+    repaired=$("${PSQL[@]}" -At -c "SELECT public.json_bound_install()")
+    case "$repaired" in
+      *", 0 (re)made") ;;
+      *) echo "✗ $1 applied again changed a trigger of the JSON bound: $repaired"; exit 1 ;;
+    esac
+  fi
+}
 step "tenancy: 049 applied again changes nothing (idempotent)"
 # What an operator may have changed since 049 ran, and what a later migration may have added:
 # re-running 049 must keep all of it — a platform history row (tenant_id null by design), a
@@ -1533,6 +1552,7 @@ for r in "${redefines_049[@]}"; do
   "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$r" >/dev/null 2>&1 \
     || { echo "✗ $r failed when applied after 049 again:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$r" >/dev/null; exit 1; }
 done
+bound_privileges_again 049
 after=$(snapshot)
 if [ "$before" != "$after" ]; then
   echo "✗ applying 049 a second time changed the database:"
@@ -1558,6 +1578,7 @@ reapply_050_redefinitions() {
     "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$r" >/dev/null 2>&1 \
       || { echo "✗ $r failed when applied after 050 again:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$r" >/dev/null; exit 1; }
   done
+  bound_privileges_again 050
 }
 dual_before=$("${PSQL[@]}" -At -c "SELECT value::text FROM public.platform_config WHERE key = 'config.dual_control_keys'")
 "${PSQL[@]}" -At <<'SQL' >/dev/null
@@ -2394,6 +2415,14 @@ SQL
 [ "$("${PSQL[@]}" -At -c "SELECT checksum FROM public.applied_migrations WHERE filename = '063_applied_migrations_checksum.sql'")" \
   = "$(node "$ROOT/scripts/migration-checksum.mjs" "$ROOT/supabase/migrations/063_applied_migrations_checksum.sql")" ] \
   || { echo "✗ 063 recorded a checksum other than its file's"; exit 1; }
+
+# TASK-229 (design 56e-3a): after every check above — some re-apply older migrations on purpose —
+# the JSON bound is in force on every jsonb column and the erasure's functions are 074's. The floor
+# for every later migration: one that adds a jsonb column or table without calling
+# public.json_bound_install() and public.json_bound_check(<table>) fails here.
+step "074/075: the JSON bound in force and the erasure's functions as 074 makes them"
+missing=$("${PSQL[@]}" -At -c "SELECT string_agg(m, '; ' ORDER BY m) FROM public.json_bound_missing() m")
+[ -z "$missing" ] || { echo "✗ the JSON bound is not in force after the replay: $missing"; exit 1; }
 
 step "tenancy: signed in as app_tenant, the role cannot be left (ADR-053 D4)"
 # SET ROLE is checked against the role that signed in, so this needs a real app_tenant login —

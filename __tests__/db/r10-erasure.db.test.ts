@@ -7,7 +7,8 @@
  *
  * The reviewer's proofs (review10/__tests__/r10/sql/deep2.sql, r10-sql1.sql case 3):
  *   L7  a document too deep to read back was kept as a JSON string — an array or object became a
- *       string. Now it is redacted to its own type (depth 16 340, at the default stack).
+ *       string. Now it is redacted to its own type (depth 16 340 — now
+ *       refused at write: migration 074 bounds every stored value at 128 levels, TASK-229).
  *   L8  {"ann@x.com":"p","<id>":"q"}: replacing the key collided with the existing one and one
  *       value was lost. Now every replaced key is numbered when a collision would occur: no loss.
  *   L12 user_deletions_email_hash_scheme_known passed a key id with no scheme (CHECK passes on
@@ -54,22 +55,11 @@ const replace = async (doc: unknown, target: string, replacement = "U1") =>
     )
   )[0].r;
 
-dbDescribe("r10 L7: never a change of type", () => {
-  it("depth 16 340 at the default stack: an array stays an array, the address gone", async () => {
-    const [row] = await withOwnerTx("tenant-lifecycle", async (tx) => {
-      await tx.query(
-        "create temp table r10_deep on commit drop as select (repeat('[', 16340) || '\"ann@x.com\"' || repeat(']', 16340))::jsonb as d"
-      );
-      return (
-        await tx.query(
-          `select jsonb_typeof(r) as kind, position('ann@x.com' in r::text) as at
-             from (select public.jsonb_replace_text_value(d, 'ann@x.com', 'U1') as r from r10_deep) x`
-        )
-      ).rows;
-    });
-    expect(row).toEqual({ kind: "array", at: 0 });
-  });
-});
+// r10 L7's "depth 16 340 at the default stack" case is gone (platform TASK-229): no stored value
+// may be nested deeper than 128 levels (migration 074, every jsonb column, every role), so no such
+// document reaches the erasure; that claim is now __tests__/db/json-bound.db.test.ts's (the bound)
+// and __tests__/db/erasure-stack.db.test.ts's (every erasure operation at 128 levels, on a 100 kB
+// stack). The test also failed on arm64, where a level of nesting costs more stack (the Mac gate).
 
 dbDescribe("r10 L8: a replaced key never loses a value", () => {
   it("the reviewer's case: the existing key keeps its value, the replaced one is numbered", async () => {

@@ -26,6 +26,15 @@ import {
   type TenantContext,
 } from "@/platform/tenancy/context";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
+import {
+  sliceText,
+  storableText,
+  withinDatabaseBound,
+  type JsonViolation,
+} from "@/platform/errors/json-limits";
+
+/** The metric that counts events dropped for being over the stored-JSON bound (TASK-229). */
+export const METRIC_DROPPED_OVER_BOUND = "metrics.dropped_over_bound";
 
 // ---------------------------------------------------------------------------
 // In-Memory implementation — tests, dev, fallback
@@ -162,6 +171,7 @@ export class PostgresMetricsSink implements MetricsSink {
   private readonly buffer: Pending[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private dropped = 0;
+  private droppedOverBound = 0;
   /** Runs a function in the async context the sink was built in (no caller's tenant or tx). */
   private readonly detached = AsyncLocalStorage.snapshot();
 
@@ -189,6 +199,41 @@ export class PostgresMetricsSink implements MetricsSink {
   }
 
   record(event: MetricEvent): void {
+    // Each event is checked on its own, before it joins a batch (TASK-229): one event whose
+    // values or tags the database's bound would refuse is dropped, logged and counted
+    // (metrics.dropped_over_bound) — it never takes the rest of its tenant's batch with it.
+    // A name the database cannot store (U+0000, half of a surrogate pair) fails the insert of
+    // the whole batch just the same (code review B-12): dropped alone, like a value over the bound.
+    const badName: JsonViolation | null = storableText(event.name)
+      ? null
+      : { code: "request.json_value_not_storable", max: 0 };
+    const violation =
+      badName ??
+      withinDatabaseBound(event.values) ??
+      withinDatabaseBound(event.tags ?? {});
+    if (violation) {
+      this.droppedOverBound++;
+      logger.warn("Metric over the stored-JSON bound — dropped", {
+        name: event.name,
+        code: violation.code,
+        dropped: this.droppedOverBound,
+      });
+      if (event.name !== METRIC_DROPPED_OVER_BOUND) {
+        this.record({
+          name: METRIC_DROPPED_OVER_BOUND,
+          timestamp: new Date().toISOString(),
+          values: { count: 1 },
+          // Cut without halving a surrogate pair; a name that cannot be stored is not repeated.
+          tags: {
+            metric: badName
+              ? "(a name that cannot be stored)"
+              : sliceText(event.name, 200),
+            code: violation.code,
+          },
+        });
+      }
+      return;
+    }
     const tenant = peekTenant();
     if (!tenant) {
       this.dropped++;
@@ -213,6 +258,11 @@ export class PostgresMetricsSink implements MetricsSink {
         logger.warn("Metrics batch flush failed", { error: String(err) })
       );
     }
+  }
+
+  /** How many metrics were dropped because their values or tags were over the stored-JSON bound. */
+  get droppedOverStoredBound(): number {
+    return this.droppedOverBound;
   }
 
   /** How many metrics were dropped because they were recorded outside any tenant. */

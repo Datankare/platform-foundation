@@ -10,7 +10,10 @@
  * trace — at-most-once if the guess is failure, at-least-once if it is success.
  *
  * The in-memory ledger keeps each tenant's entries in its own partition, as row-level
- * security does for PostgresEffectLedger (ADR-053 D6).
+ * security does for PostgresEffectLedger (ADR-053 D6), and applies the same checks to what it is
+ * given (code review B-26: a stand-in answers as the real store does): a request over the
+ * stored-JSON limits is refused by `begin`, coded; a receipt that cannot be kept is stored as the
+ * "not kept" marker (receiptToStore — one rule for both ledgers).
  *
  * @module platform/agents
  */
@@ -24,6 +27,14 @@ import type {
 import { generateUuid } from "./utils";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
+import {
+  asStoredKept,
+  assertWithinDatabaseBound,
+  effectReceiptViolation,
+  omittedMarker,
+} from "@/platform/errors/json-limits";
+import { recordMetricEvent } from "@/platform/observability/metric-event";
+import { logger } from "@/lib/logger";
 
 export type {
   BeginEffectArgs,
@@ -36,6 +47,35 @@ export type {
 /** The idempotency key handed to a downstream, derived from the operation (D7). */
 export function idempotencyKeyFor(operationId: string, effectKey: string): string {
   return `${operationId}:${effectKey}`;
+}
+
+/**
+ * What a ledger stores for an effect's receipt (platform TASK-229; code reviews B-1, B-11):
+ *   - the receipt itself when it can be kept — nested at most 64 levels, numbers in range, texts
+ *     storable, printing at most EFFECT_RECEIPT_MAX_TEXT (6 MiB) in the database; a receipt that
+ *     has the shape of the "not kept" marker is stored wrapped (asStoredKept), so no provider's
+ *     answer is ever read as the platform's marker;
+ *   - otherwise the "not kept" marker ({"_omitted": {code, max}}), logged and counted
+ *     (`effect.receipt_not_kept`): the effect has happened, and what it returned is not kept.
+ * `undefined` (no receipt) stays undefined.
+ */
+export function receiptToStore(
+  receipt: Record<string, unknown> | undefined,
+  operationId: string,
+  effectKey: string
+): Record<string, unknown> | undefined {
+  if (receipt === undefined || receipt === null) return undefined;
+  const stored = asStoredKept(receipt) as Record<string, unknown>;
+  const violation = effectReceiptViolation(stored);
+  if (!violation) return stored;
+  logger.warn("An effect's receipt cannot be kept; stored as not kept", {
+    operationId,
+    effectKey,
+    code: violation.code,
+    route: "platform/agents/effect-ledger",
+  });
+  recordMetricEvent("effect.receipt_not_kept", { count: 1 }, { code: violation.code });
+  return omittedMarker(violation) as unknown as Record<string, unknown>;
 }
 
 function keyOf(operationId: string, effectKey: string): string {
@@ -51,6 +91,8 @@ export class InMemoryEffectLedger implements EffectLedger {
   }
 
   async begin(args: BeginEffectArgs): Promise<EffectLedgerEntry> {
+    // As PostgresEffectLedger.begin: a request the database would refuse is refused here, coded.
+    assertWithinDatabaseBound(args.request ?? {}, "effect_ledger.request");
     const k = keyOf(args.operationId, args.effectKey);
     const existing = this.entries.get(k);
     if (existing) {
@@ -91,7 +133,7 @@ export class InMemoryEffectLedger implements EffectLedger {
     const resolved: EffectLedgerEntry = {
       ...existing,
       status,
-      receipt: detail?.receipt,
+      receipt: receiptToStore(detail?.receipt, operationId, effectKey),
       error: detail?.error,
       resolvedAt: new Date().toISOString(),
     };

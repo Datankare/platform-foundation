@@ -48,6 +48,7 @@ import {
   type Tx,
 } from "@/platform/data";
 import { peekTenant } from "@/platform/tenancy/context";
+import { storedJsonViolation } from "@/platform/errors/json-limits";
 import { refusesRequiredSchedule } from "@/platform/jobs/required-schedule";
 import {
   isRecordedText,
@@ -596,6 +597,23 @@ export function validateConfigValue(
     }
   } catch {
     refuse("Value cannot be serialized to JSON", { reason: "not_serializable" });
+    return { valid: false, errors, refusal };
+  }
+  // TASK-229: what the database stores — nesting and the number range (every number 0 or
+  // 1e-18 <= |n| < 1e21) — checked here, so a value the database would refuse is refused with
+  // the screens' own reason ("cannot be stored"), not the database's error.
+  const stored = storedJsonViolation(proposedValue);
+  if (stored) {
+    // Its own reason (code review B-25: a number out of range answered "not_serializable" —
+    // "that value cannot be stored", with the real reason only in the log's text).
+    refuse(`Value cannot be stored: ${stored.code}`, {
+      reason:
+        stored.code === "request.json_number_out_of_range"
+          ? "number_out_of_range"
+          : stored.code === "request.json_too_deep"
+            ? "too_deep"
+            : "not_serializable",
+    });
     return { valid: false, errors, refusal };
   }
 

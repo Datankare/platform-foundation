@@ -14,7 +14,7 @@
     "admin": {
       "action_failed": "The action did not complete. Check its screen before you try again.",
       "already_exists": "That already exists: choose another name.",
-      "config_invalid_value": "{reason, select, type {{key} takes {expected, select, number {a number} boolean {true or false} string {text} string_enum {text: the values it takes are {allowed}} json_array {a list} other {a value of its own type}}.} below_min {{key} must be at least {min, number}.} above_max {{key} must be at most {max, number}.} not_allowed {The values {key} takes are {allowed}.} not_serializable {That value cannot be stored for {key}.} too_large {That value is too large to store for {key} (at most {max, number} bytes).} other {That value is not allowed for {key}.}}",
+      "config_invalid_value": "{reason, select, type {{key} takes {expected, select, number {a number} boolean {true or false} string {text} string_enum {text: the values it takes are {allowed}} json_array {a list} other {a value of its own type}}.} below_min {{key} must be at least {min, number}.} above_max {{key} must be at most {max, number}.} not_allowed {The values {key} takes are {allowed}.} not_serializable {That value cannot be stored for {key}.} too_large {That value is too large to store for {key} (at most {max, number} bytes).} number_out_of_range {A number in that value is too small or too large to store for {key}: every number must be 0, or between 1e-18 and 1e21 in size.} too_deep {That value is nested too deeply to store for {key}.} other {That value is not allowed for {key}.}}",
       "kill_switch_failed": "The agents could not all be suspended. Nothing was changed; try again.",
       "operator_only": "Only a platform operator can change this: it is shared by every tenant.",
       "config_scope_refused": "{key} governs the platform, so only an operator can change it.",
@@ -115,6 +115,8 @@
       "invalid_json": "The request body is not valid JSON.",
       "json_too_deep": "The data is nested too deeply to store (at most {max, number} levels).",
       "json_too_large": "The data is too large to store (at most {max, number} bytes).",
+      "json_number_out_of_range": "The data holds a number too small or too large to store: every number must be 0, or between {min} and {max} in size.",
+      "json_value_not_storable": "The data holds something that cannot be stored: a null character or a broken character in a text, or a whole number too large to write.",
       "trajectory_full": "This run has recorded as much as one run may (at most {max, number} steps, 16 MiB in all). Start a new one; nothing was done.",
       "trajectory_chain_full": "This session or run has recorded as much as one may (at most {max, number} segments of up to 1,000 steps each). Start a new one; nothing was done.",
       "invalid_value": "{expected, select, user_id {{field} must be a user id.} account_id {{field} must be an account id.} entitlement_group_id {{field} must be an entitlement group's id.} positive_seconds {{field} must be a positive number of seconds.} features_or_remove {{field} must be a non-empty list of features (or remove: true).} text_or_query {Give one of text or query, not both.} one_value {{field} takes one value.} text_max {{field} must be a text of up to {max, number} characters.} role_max {{field} must be a role's name or display name, up to {max, number} characters.} category {{field} must be a category of up to 64 letters, digits, underscores, full stops or hyphens.} past_birth_date {{field} must be a past date of birth, YYYY-MM-DD.} six_digit_code {{field} must be a 6-digit code.} other {{field} must be one of: {allowed}.}}",
@@ -2507,7 +2509,9 @@
         "committed_approved": "committed (approved)",
         "committed_low": "committed (low risk)",
         "held": "high-risk generation held for Confirm",
-        "held_synthetic": "high-risk generation held for Confirm (synthetic reference input)"
+        "held_synthetic": "high-risk generation held for Confirm (synthetic reference input)",
+        "not_kept": "The earlier image is no longer available; generate it again.",
+        "too_large_to_hold": "withheld: the image is larger than can be held for review (at most {max, number} bytes of image data); ask for a smaller one"
       },
       "profile": {
         "not_text": "{field} must be text.",

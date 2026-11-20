@@ -78,6 +78,8 @@ describe("test isolation from the operator's shell (TASK-181)", () => {
         "probe",
         "--coverage=false",
         "--silent",
+        // Its worker count, never the machine's (TASK-229).
+        "--maxWorkers=2",
       ],
       {
         cwd: root,

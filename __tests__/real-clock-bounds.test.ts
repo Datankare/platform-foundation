@@ -29,10 +29,7 @@ import * as ts from "typescript";
 const ROOT = join(__dirname, "..");
 
 /** Real-elapsed upper bounds that cannot fail by the clock, by file: the reason. */
-const ELAPSED_ALLOWED: Readonly<Record<string, string>> = {
-  "__tests__/db/r13.db.test.ts":
-    "a 10 s ceiling on withdrawing 250 holds (measured well under 1 s): it catches one round trip per hold, not a slow runner — the DB suites' own bound is 30 s",
-};
+const ELAPSED_ALLOWED: Readonly<Record<string, string>> = {};
 
 /** Busy loops whose verdicts cannot depend on scheduling, by file: the reason. */
 const BUSY_LOOP_ALLOWED: Readonly<Record<string, string>> = {

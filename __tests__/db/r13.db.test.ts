@@ -24,6 +24,9 @@
  *       __tests__/db-serial/kill-switch-platform.serial.ts (TASK-204, N-19).
  */
 
+// The real data layer, its writes observed: a bound is asserted in statements, not in time
+// (TASK-229 — a wall-clock bound depends on the machine's load and core count).
+jest.mock("@/platform/data", () => jest.requireActual("../helpers/data-spy").spiedData());
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   generateRequestId: () => "req",
@@ -46,6 +49,7 @@ import {
   setConfigWithHistory,
 } from "@/platform/auth/platform-config";
 import { runWithTenant } from "@/platform/tenancy/context";
+import { dataSpy, resetDataSpy } from "../helpers/data-spy";
 import {
   connectTestDatabase,
   createTestTenant,
@@ -486,15 +490,46 @@ dbDescribe("R13-L7 withdrawing many holds is bounded", () => {
     await dropKey(KEY());
   });
   it("250 holds: withdrawn in 3 batches, one audit record each", async () => {
-    const proposals = new PostgresProposalStore();
+    // The store is loaded here, after this file's mock of the data layer, in a registry of its
+    // own: the copy imported above may have been loaded by jest.setup.ts before the mock (it is
+    // in this repository, through the adaptive reference's registration) and then sends its
+    // statements past the spy — the bound below would be read off the audit records alone.
+    let Spied!: typeof PostgresProposalStore;
+    jest.isolateModules(() => {
+      Spied = (
+        jest.requireActual(
+          "@/platform/agents/postgres-proposal-store"
+        ) as typeof import("@/platform/agents/postgres-proposal-store")
+      ).PostgresProposalStore;
+    });
+    const proposals = new Spied();
     setProposalStore(proposals);
     for (let i = 0; i < 250; i++) await hold(proposals, KEY(), i);
     const reducer = await t.user("red");
-    const started = Date.now();
+    resetDataSpy();
     const out = await t.run(() =>
       withdrawSupersededHolds(KEY(), reducer, POWER_REDUCED, "tenant")
     );
-    expect(Date.now() - started).toBeLessThan(10_000);
+    // Bounded in the work done, whatever the machine (it was a 10 s wall clock, TASK-229; a bound
+    // in time depends on the machine's load and core count): one audited batch of 100 at a time —
+    // three audit records and three updates of proposals, one statement per batch, never one per
+    // hold.
+    const writes = dataSpy().writes;
+    expect(writes.filter(([v, tb]) => v === "insert" && tb === "audit_log")).toHaveLength(
+      3
+    );
+    expect(writes.filter(([v, tb]) => v === "update" && tb === "proposals")).toHaveLength(
+      3
+    );
+    expect(writes).toHaveLength(6);
+    // Every statement sent is counted too (code review B-16: `writes` reads only statements that
+    // begin insert/update/delete, so a store that wrote hold by hold inside a WITH would not show
+    // there). What is sent: each withdrawn hold read once, to end its trajectory (250), and per
+    // batch the page, the audit record and the update (9), then the two-person approvals of the
+    // key (at most 3). More than 250 proves the spy sees the store's statements at all; a store
+    // that withdrew hold by hold would send 250 more.
+    expect(dataSpy().queries).toBeGreaterThan(250);
+    expect(dataSpy().queries).toBeLessThanOrEqual(250 + 9 + 3);
     expect(out.holds).toHaveLength(250);
     expect(
       await sql(

@@ -12,6 +12,10 @@
 import { execFile, type ExecFileException } from "child_process";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { closedPortSync } from "./helpers/closed-port";
+
+/** A loopback port nothing listens on (TASK-229). */
+const CLOSED = closedPortSync();
 
 const SCRIPT = join(process.cwd(), "scripts/relink-identity.mjs");
 /** A stand-in secret (built, so no scanner mistakes it for one), never to appear in output. */
@@ -100,7 +104,7 @@ describe("scripts/relink-identity.mjs", () => {
     const r = await run(
       ["--email", "a@b.co", "--operator", "Raman", "--reason", "pool replaced"],
       {
-        DATABASE_OWNER_URL: "postgresql://owner:Sup3rSecretPw@127.0.0.1:1/postgres",
+        DATABASE_OWNER_URL: `postgresql://owner:Sup3rSecretPw@127.0.0.1:${CLOSED}/postgres`,
         COGNITO_USER_POOL_ID: "not-a-pool",
         COGNITO_ADMIN_ACCESS_KEY_ID: "AKIATESTTESTTESTTEST",
         COGNITO_ADMIN_SECRET_ACCESS_KEY: FAKE_SECRET,
@@ -126,7 +130,7 @@ describe("scripts/relink-identity.mjs", () => {
         "pool replaced",
       ],
       {
-        DATABASE_OWNER_URL: "postgresql://owner:Sup3rSecretPw@127.0.0.1:1/postgres",
+        DATABASE_OWNER_URL: `postgresql://owner:Sup3rSecretPw@127.0.0.1:${CLOSED}/postgres`,
         DATABASE_SSL: "disable",
         COGNITO_USER_POOL_ID: "us-east-1_TestPool1",
         COGNITO_ADMIN_ACCESS_KEY_ID: "AKIATESTTESTTESTTEST",

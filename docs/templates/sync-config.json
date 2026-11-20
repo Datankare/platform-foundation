@@ -25,6 +25,7 @@
     "/messages/app/**",
     "/platform/errors/app-codes.ts",
     "/platform/auth/app-audit-details.ts",
+    "/platform/auth/app-json-columns.ts",
     "/platform/observability/app-log-fields.ts",
     "/platform/tenancy/app-tenant-export.ts",
     "/response-schema-baseline.json",

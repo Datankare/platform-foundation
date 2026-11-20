@@ -107,25 +107,25 @@ begin
        )
   loop
     update public.proposals
-       set payload = public.jsonb_replace_text_value(payload, r.address, 'erased'),
-           effects = public.jsonb_replace_text_value(effects, r.address, 'erased')
+       set payload = public.jsonb_erase_address_text(payload, r.address, 'erased'),
+           effects = public.jsonb_erase_address_text(effects, r.address, 'erased')
      where tenant_id = r.tenant_id
        and (public.jsonb_may_mention_text(payload, r.address)
             or public.jsonb_may_mention_text(effects, r.address));
     update public.agent_trajectories
-       set steps = public.jsonb_replace_text_value(steps, r.address, 'erased')
+       set steps = public.jsonb_erase_address_text(steps, r.address, 'erased')
      where tenant_id = r.tenant_id and public.jsonb_may_mention_text(steps, r.address);
     update public.audit_log
-       set details = public.jsonb_replace_text_value(details, r.address, 'erased')
+       set details = public.jsonb_erase_address_text(details, r.address, 'erased')
      where tenant_id = r.tenant_id and public.jsonb_may_mention_text(details, r.address);
     update public.review_queue
-       set moderation_result = public.jsonb_replace_text_value(moderation_result, r.address, 'erased'),
-           explanation_chain = public.jsonb_replace_text_value(explanation_chain, r.address, 'erased')
+       set moderation_result = public.jsonb_erase_address_text(moderation_result, r.address, 'erased'),
+           explanation_chain = public.jsonb_erase_address_text(explanation_chain, r.address, 'erased')
      where tenant_id = r.tenant_id
        and (public.jsonb_may_mention_text(moderation_result, r.address)
             or public.jsonb_may_mention_text(explanation_chain, r.address));
     update public.app_sessions
-       set state = public.jsonb_replace_text_value(state, r.address, 'erased')
+       set state = public.jsonb_erase_address_text(state, r.address, 'erased')
      where tenant_id = r.tenant_id and public.jsonb_may_mention_text(state, r.address);
     raise notice 'redacted % in tenant %', r.address, r.tenant_id;
   end loop;

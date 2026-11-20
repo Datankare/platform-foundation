@@ -8,11 +8,12 @@
  *   - jsonb_replace_text_value recursed, so another account's proposal nested ~520 deep exceeded
  *     the stack and failed the victim's whole erasure; a 200 000-element document took 4.1 s;
  *   - an address that is an object key ({"invited":{"ann@…":"pending"}}) survived the erasure.
- * Fixed: the function is non-recursive, linear and cannot fail on any jsonb value — proved here on
- * depth 10 000 and on 1 000 000 elements within a stated bound (the call's own time, measured in
- * the database: review 10 L11), and on a document too deep to read back in the caller's stack
- * (redacted to its own type: review 10 L7) — and it replaces a whole string that equals the
- * address as a value or as a key. Free text naming the address is out of scope (documented).
+ * Fixed: the function is non-recursive and linear — proved here on 1 000 000 elements within a
+ * stated bound (the call's own time, measured in the database: review 10 L11) — and it replaces a
+ * whole string that equals the address as a value or as a key. Free text naming the address is
+ * out of scope (documented). Its depth cases (10 000 levels; too deep to read back) are gone:
+ * migration 074 refuses any stored value deeper than 128 levels (platform TASK-229), and
+ * __tests__/db/erasure-stack.db.test.ts drives every erasure operation at 128.
  */
 
 jest.mock("@/lib/logger", () => ({
@@ -84,7 +85,9 @@ async function replaceIn(
 }
 
 dbDescribe("rv9 H2: erasure is not blocked by another row's document", () => {
-  it.each([600, 10_000])(
+  // 600 and 10 000 levels before platform TASK-229; no stored value may now be deeper than 128
+  // (migration 074), so the deepest storable proposal is the case.
+  it.each([128])(
     "another account's proposal nested %i deep: the erasure succeeds and replaces it",
     async (depth) => {
       const { ann } = await accounts();
@@ -139,17 +142,8 @@ async function timedReplace<R>(
 }
 
 dbDescribe("rv9 H2: jsonb_replace_text_value cannot fail, in bounded time", () => {
-  it("depth 10 000: replaced exactly; the call itself well under its bound (≤ 1 s; ~3 ms measured)", async () => {
-    const d = 10_000;
-    const row = await timedReplace<{ same: boolean }>(
-      `(repeat('[', ${d}) || '"Ann@X.com"' || repeat(']', ${d}))::jsonb`,
-      "ann@x.com",
-      `t.o::text = repeat('[', ${d}) || '"ID"' || repeat(']', ${d}) as same`
-    );
-    expect(row.same).toBe(true);
-    expect(row.ms).toBeLessThan(1_000);
-  });
-
+  // The "depth 10 000" case is gone (TASK-229): no stored value is deeper than 128 levels
+  // (migration 074); __tests__/db/erasure-stack.db.test.ts drives every erasure operation at 128.
   it("1 000 000 elements: replaced exactly; the call itself within the stated bound (≤ 30 s; ~3 s measured)", async () => {
     const row = await timedReplace<{ n: number; hits: number; left: number }>(
       `select jsonb_agg(case when i % 1000 = 0 then 'ann@x.com' else 'x' || i end)
@@ -167,44 +161,10 @@ dbDescribe("rv9 H2: jsonb_replace_text_value cannot fail, in bounded time", () =
     expect(row.ms).toBeLessThan(30_000);
   }, 120_000);
 
-  it("a document too deep to read back in this stack keeps its type and its content: wrapped with a marker, never an error (review 10 L7, review 11 L-2)", async () => {
-    // The stack shrunk under the document's own depth: reading the result back must fail here,
-    // and the function still answers — the address gone, the value still an array (an object),
-    // and its whole content kept, as its text with the address replaced (review 11 L-2: it was
-    // replaced by the marker alone, wiping a whole audit record or a whole run's steps).
-    const rows = await withOwnerTx("tenant-lifecycle", async (tx) => {
-      await tx.query(
-        "create temp table rv9_deep on commit drop as select (repeat('[', 10000) || '\"ann@x.com\"' || repeat(']', 10000))::jsonb as d, (repeat('{\"a\": ', 10000) || '\"ann@x.com\"' || repeat('}', 10000))::jsonb as o"
-      );
-      await tx.query("set local max_stack_depth = '200kB'");
-      return (
-        await tx.query(
-          `select jsonb_typeof(r) as kind, position('ann@x.com' in r::text) as at,
-                  jsonb_array_length(r) as n, r->>0 as marker,
-                  r->>1 = (repeat('[', 10000) || '"ID"' || repeat(']', 10000)) as kept,
-                  jsonb_typeof(ro) as okind, position('ann@x.com' in ro::text) as oat,
-                  ro->>'_redacted' as omarker,
-                  ro->>'text' = (repeat('{"a": ', 10000) || '"ID"' || repeat('}', 10000)) as okept
-             from (select public.jsonb_replace_text_value(d, 'ann@x.com', 'ID') as r,
-                          public.jsonb_replace_text_value(o, 'ann@x.com', 'ID') as ro
-                     from rv9_deep) x`
-        )
-      ).rows;
-    });
-    expect(rows).toEqual([
-      {
-        kind: "array",
-        at: 0,
-        n: 2,
-        marker: "_redacted: erasure: too deep to rewrite",
-        kept: true,
-        okind: "object",
-        oat: 0,
-        omarker: "erasure: too deep to rewrite",
-        okept: true,
-      },
-    ]);
-  });
+  // The "too deep to read back at 200 kB" case is gone (TASK-229): no stored value is deeper than
+  // 128 levels, and every erasure operation is driven at 128 on a 100 kB stack
+  // (__tests__/db/erasure-stack.db.test.ts); the soft delete's rewrite is now
+  // jsonb_erase_address_text, which puts no stand-in in place of a document (review A-2).
 });
 
 dbDescribe(

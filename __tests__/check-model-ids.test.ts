@@ -15,6 +15,10 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { MODEL_REGISTRY } from "@/platform/ai/types";
+import { closedPortSync } from "./helpers/closed-port";
+
+/** A loopback port nothing listens on (TASK-229). */
+const CLOSED = closedPortSync();
 
 const ROOT = join(__dirname, "..");
 const SCRIPT = join(ROOT, "scripts/check-model-ids.mjs");
@@ -34,8 +38,8 @@ function run(env: Record<string, string>): Promise<{ code: number | null; out: s
         // The repository's own workflows are checked in their own tests (TASK-197, below).
         MODEL_CHECK_WORKFLOWS_DIR: NO_WORKFLOWS,
         // No test reads an action's real source from GitHub: unreadable unless a test serves it.
-        MODEL_CHECK_ACTION_SOURCE_BASE: "http://127.0.0.1:9",
-        MODEL_CHECK_ACTION_API_BASE: "http://127.0.0.1:9",
+        MODEL_CHECK_ACTION_SOURCE_BASE: `http://127.0.0.1:${CLOSED}`,
+        MODEL_CHECK_ACTION_API_BASE: `http://127.0.0.1:${CLOSED}`,
         ...env,
       } as unknown as NodeJS.ProcessEnv,
     });
@@ -127,8 +131,8 @@ function exported(expr: string): unknown {
       encoding: "utf8",
       env: {
         ...process.env,
-        MODEL_CHECK_ACTION_SOURCE_BASE: "http://127.0.0.1:9",
-        MODEL_CHECK_ACTION_API_BASE: "http://127.0.0.1:9",
+        MODEL_CHECK_ACTION_SOURCE_BASE: `http://127.0.0.1:${CLOSED}`,
+        MODEL_CHECK_ACTION_API_BASE: `http://127.0.0.1:${CLOSED}`,
       },
     }
   );
@@ -256,7 +260,7 @@ describe("check-model-ids", () => {
   it("fails when the API cannot be reached", async () => {
     const r = await run({
       ANTHROPIC_API_KEY: KEY,
-      ANTHROPIC_BASE_URL: "http://127.0.0.1:9",
+      ANTHROPIC_BASE_URL: `http://127.0.0.1:${CLOSED}`,
     });
     expect(r.code).toBe(1);
     expect(r.out).toContain("unreachable");

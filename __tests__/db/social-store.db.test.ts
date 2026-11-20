@@ -20,6 +20,7 @@ import { socialIsolation } from "../helpers/social-isolation-fixtures";
 import { clearFaults, faults } from "../helpers/data-faults";
 import { PostgresSocialStore, type CreateGroupInput } from "@/platform/social";
 import { DataUnavailableError, withTenantTx } from "@/platform/data";
+import { isJsonLimitError } from "@/platform/errors/json-limits";
 import { peekTenant, runWithoutTenant } from "@/platform/tenancy/context";
 import {
   connectTestDatabase,
@@ -293,6 +294,38 @@ dbDescribe("PostgresSocialStore", () => {
         expect(await store.getGroupById(randomUUID())).toBeUndefined();
         expect(await store.listGroupsForUser(randomUUID())).toEqual([]);
       });
+    });
+  });
+
+  // Platform TASK-229 (ADR-058): a group's metadata the database would refuse — too deep, or a
+  // number other than 0 or 1e-18 <= |n| < 1e21 — is refused, coded, before anything is written.
+  describe("TASK-229: a group's metadata within the stored-JSON bound", () => {
+    it.each([
+      ["a number below 1e-18", { p: 1e-20 }, "request.json_number_out_of_range"],
+      ["a number at 1e21 or more", { wei: 1e25 }, "request.json_number_out_of_range"],
+      [
+        "nested past 64 levels",
+        { x: JSON.parse("[".repeat(65) + "]".repeat(65)) },
+        "request.json_too_deep",
+      ],
+    ])("%s: refused coded, no group written", async (_label, metadata, code) => {
+      const t = await tenant();
+      const owner = await t.user("owner");
+      const store = inTenant(new PostgresSocialStore(), t);
+      const err = await store
+        .createGroup({
+          name: "t229",
+          description: "",
+          ownerId: owner,
+          metadata,
+        } as CreateGroupInput)
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+      expect(isJsonLimitError(err)).toBe(true);
+      expect((err as { code: string }).code).toBe(code);
+      expect(await store.listGroupsForUser(owner)).toEqual([]);
     });
   });
 });

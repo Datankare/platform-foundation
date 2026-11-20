@@ -20,6 +20,13 @@ import type { AgentIdentity } from "@/platform/agents/types";
 import type { ShownText } from "@/platform/errors/shown-text";
 import type { RecordedFactor, RecordedReasons } from "./reasons";
 
+/** Why a classifier output was not kept: the stored-JSON refusal's code and limit (TASK-229). */
+export interface ClassifierOutputNotKept {
+  readonly code: string;
+  /** The limit for depth and size; absent for the number range (its code names it). */
+  readonly max?: number;
+}
+
 // ---------------------------------------------------------------------------
 // Content rating levels — from platform/auth/coppa.ts
 // ---------------------------------------------------------------------------
@@ -131,6 +138,18 @@ export interface ModerationResult {
   /** Classifier output (if classifier was invoked) */
   classifierOutput?: ClassifierOutput;
   /**
+   * Set instead of classifierOutput when the classifier's output was over the stored-JSON bound
+   * and was not kept (platform TASK-229: the decision is kept; the output's refusal code and
+   * limit say why it is absent — never read as an output).
+   */
+  classifierOutputNotKept?: ClassifierOutputNotKept;
+  /**
+   * The other fields of this result that were over the stored-JSON bound when it was put in the
+   * review queue and were stored in their empty form (code review B-13), each with the refusal's
+   * code and limit. The decision's own fields (action, triggeredBy, trajectoryId, …) are never here.
+   */
+  fieldsNotKept?: Readonly<Record<string, ClassifierOutputNotKept>>;
+  /**
    * Why it decided, line by line: catalog keys and values (./reasons.ts, TASK-209), worded by a
    * reader; a record from before the keys holds its stored text.
    */
@@ -182,6 +201,8 @@ export interface ModerationAuditRecord {
   triggeredBy: ModerationResult["triggeredBy"];
   /** Full classifier output (if invoked) */
   classifierOutput?: ClassifierOutput;
+  /** Set instead of classifierOutput when it was not kept (over the stored-JSON bound, TASK-229). */
+  classifierOutputNotKept?: ClassifierOutputNotKept;
   /** Categories flagged (convenience — also in classifierOutput) */
   categoriesFlagged: string[];
   /** Confidence score (0–1) */

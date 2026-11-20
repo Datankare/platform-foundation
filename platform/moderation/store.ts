@@ -16,6 +16,18 @@ import { isRecordedFactor, isRecordedReasons, type RecordedReasons } from "./rea
 import type { ModerationStore, ModerationAuditRecord, AuditQueryOptions } from "./types";
 import { logger } from "@/lib/logger";
 import { withTenantTx } from "@/platform/data";
+import {
+  asStoredKept,
+  fromStoredKept,
+  isOmittedMarker,
+  jsonLimitError,
+  notKeptReason,
+  omittedMarker,
+  storedJsonViolation,
+  withinDatabaseBound,
+  type NotKeptReason,
+} from "@/platform/errors/json-limits";
+import { recordMetricEvent } from "@/platform/observability/metric-event";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
@@ -109,6 +121,108 @@ export class InMemoryModerationStore implements ModerationStore {
 // PostgresModerationStore
 // ---------------------------------------------------------------------------
 
+/**
+ * A classifier's output (or a copy of it) as it is stored (platform TASK-229, review TA-a-4): the
+ * value itself when it is within the stored-JSON bound; otherwise the "not kept" marker, logged
+ * and counted (`moderation.output_not_kept`) — the decision is kept either way. `column` names
+ * where it goes.
+ */
+export function storedClassifierJson(value: unknown, column: string): unknown {
+  // A value that has the marker's own shape is stored wrapped, so a classifier's (a provider's)
+  // answer is never read back as the platform's "not kept" marker (code review B-11).
+  const kept = asStoredKept(value);
+  const violation = withinDatabaseBound(kept);
+  if (!violation) return kept;
+  logger.warn("A classifier output is over the stored-JSON bound; stored as not kept", {
+    field: column,
+    code: violation.code,
+    route: "platform/moderation/store",
+  });
+  recordMetricEvent(
+    "moderation.output_not_kept",
+    { count: 1 },
+    { column, code: violation.code }
+  );
+  return omittedMarker(violation);
+}
+
+/**
+ * `result` with its classifierOutput replaced by classifierOutputNotKept when the output is over
+ * the stored-JSON bound (the rest of the result is the platform's own, small, fields).
+ */
+export function withClassifierOutputKept<
+  T extends { classifierOutput?: unknown; classifierOutputNotKept?: unknown },
+>(result: T, column: string): T {
+  if (result.classifierOutput === undefined) return result;
+  const stored = storedClassifierJson(result.classifierOutput, column);
+  if (!isOmittedMarker(stored)) return result;
+  const { classifierOutput: _dropped, ...rest } = result;
+  void _dropped;
+  return { ...rest, classifierOutputNotKept: stored._omitted } as T;
+}
+
+/** The fields of a moderation result that others shape, with what stands for each when not kept. */
+const RESULT_FIELDS_NOT_KEPT_AS: Readonly<Record<string, unknown>> = {
+  blocklistMatches: [],
+  reasoning: [],
+  contextFactors: [],
+  severityAdjustment: 0,
+  pipelineLatencyMs: 0,
+  classifierCostUsd: 0,
+};
+
+/**
+ * A moderation result as the review queue stores it (code review B-13): the decision's own
+ * fields — action, triggeredBy, the trajectory — are always kept. The classifier's output over
+ * the stored-JSON limits is replaced by classifierOutputNotKept (withClassifierOutputKept); if
+ * the result is then still over them, each other field that is over them by itself (a long
+ * blocklistMatches, a number out of range) — and, if that is not enough, each remaining list —
+ * is replaced by its empty form and named in `fieldsNotKept` with the refusal's code, logged and
+ * counted. Before, the whole result became the bare marker and read back with no action and no
+ * trajectory. A result still over the limits after that (never seen: what is left is the
+ * platform's own short fields) refuses the enqueue, coded — it is never stored as a marker.
+ */
+export function storableModerationResult<T extends object>(result: T, column: string): T {
+  let out = withClassifierOutputKept(
+    result as T & { classifierOutput?: unknown },
+    column
+  ) as T & Record<string, unknown>;
+  let whole = storedJsonViolation(out);
+  if (!whole) return out;
+  const notKept: Record<string, { code: string; max?: number }> = {
+    ...((out.fieldsNotKept as
+      Record<string, { code: string; max?: number }> | undefined) ?? {}),
+  };
+  const drop = (field: string, reason: NotKeptReason) => {
+    notKept[field] = reason;
+    out = { ...out, [field]: RESULT_FIELDS_NOT_KEPT_AS[field], fieldsNotKept: notKept };
+    logger.warn("A moderation result's field is over the stored-JSON bound; not kept", {
+      field: `${column}.${field}`,
+      code: reason.code,
+      route: "platform/moderation/store",
+    });
+    recordMetricEvent(
+      "moderation.output_not_kept",
+      { count: 1 },
+      { column: `${column}.${field}`, code: reason.code }
+    );
+  };
+  for (const field of Object.keys(RESULT_FIELDS_NOT_KEPT_AS)) {
+    if (!(field in out)) continue;
+    const own = storedJsonViolation(out[field]);
+    if (own) drop(field, notKeptReason(own));
+  }
+  whole = storedJsonViolation(out);
+  for (const field of ["contextFactors", "reasoning", "blocklistMatches"]) {
+    if (!whole) break;
+    if (!(field in out) || field in notKept) continue;
+    drop(field, notKeptReason(whole));
+    whole = storedJsonViolation(out);
+  }
+  if (whole) throw jsonLimitError(whole, column);
+  return out;
+}
+
 /** One content_safety_audit row as pg returns it (timestamptz → Date, jsonb parsed). */
 interface AuditRow {
   input_hash: string;
@@ -163,7 +277,14 @@ export class PostgresModerationStore implements ModerationStore {
             record.contentRatingLevel,
             record.userId ?? null,
             record.triggeredBy,
-            record.classifierOutput ? JSON.stringify(record.classifierOutput) : null,
+            record.classifierOutput
+              ? JSON.stringify(
+                  storedClassifierJson(
+                    record.classifierOutput,
+                    "content_safety_audit.classifier_output"
+                  )
+                )
+              : null,
             record.categoriesFlagged,
             record.confidence,
             record.severity,
@@ -263,8 +384,13 @@ function mapRowToRecord(row: AuditRow): ModerationAuditRecord {
       row.content_rating_level as ModerationAuditRecord["contentRatingLevel"],
     userId: row.user_id ?? undefined,
     triggeredBy: row.triggered_by as ModerationAuditRecord["triggeredBy"],
-    classifierOutput: (row.classifier_output ?? undefined) as
-      ModerationAuditRecord["classifierOutput"] | undefined,
+    // An output that was not kept (TASK-229) is said so — never returned as an output.
+    ...(isOmittedMarker(row.classifier_output)
+      ? { classifierOutputNotKept: row.classifier_output._omitted }
+      : {
+          classifierOutput: (fromStoredKept(row.classifier_output) ?? undefined) as
+            ModerationAuditRecord["classifierOutput"] | undefined,
+        }),
     categoriesFlagged: row.categories_flagged ?? [],
     confidence: row.confidence,
     severity: row.severity,

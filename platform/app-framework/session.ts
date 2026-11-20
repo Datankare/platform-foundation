@@ -35,9 +35,11 @@ import type {
   DispatchOptions,
   SessionEvent,
   SessionEventSubscriber,
+  SessionMeta,
   VersionedState,
 } from "./types";
 import { sameId } from "@/platform/auth/same-id";
+import { assertWithinDatabaseBound } from "@/platform/errors/json-limits";
 import { assertDistinctParticipants, initTurnState } from "./turn";
 import { logger } from "@/lib/logger";
 
@@ -147,6 +149,23 @@ export async function createSession<TState, TAction, TConfig>(
 
   const store = getActivityStateStore<TState>();
   const initial = definition.initialState(config);
+
+  const turnBased = definition.capabilities.includes("turn-based");
+  const turn = turnBased ? initTurnState(participants) : undefined;
+  // The session's metadata holds what the caller gave — the participants, the budget's numbers —
+  // so it is tested against the stored-JSON limits before anything is stored (code review B-7:
+  // a budget of 1e21 or Number.MAX_VALUE "for no cap" was refused by the database after the state
+  // row and the trajectory existed, leaving a session with no metadata).
+  const meta: SessionMeta = {
+    definitionId: definition.id,
+    status: "active",
+    capabilities: definition.capabilities as readonly Capability[],
+    participants,
+    budget,
+    turn,
+  };
+  assertWithinDatabaseBound(meta, "app_sessions.meta");
+
   const current = await store.create(sessionId, initial);
 
   const record = await getTrajectoryStore().create(
@@ -155,21 +174,9 @@ export async function createSession<TState, TAction, TConfig>(
     "user"
   );
 
-  const turnBased = definition.capabilities.includes("turn-based");
-  const turn = turnBased ? initTurnState(participants) : undefined;
-
   // Persisted so the session can be reconstructed later (TASK-071). Without it,
   // state exists and the session shape does not.
-  if (store.saveMeta) {
-    await store.saveMeta(sessionId, {
-      definitionId: definition.id,
-      status: "active",
-      capabilities: definition.capabilities as readonly Capability[],
-      participants,
-      budget,
-      turn,
-    });
-  }
+  if (store.saveMeta) await store.saveMeta(sessionId, meta);
 
   return {
     sessionId,

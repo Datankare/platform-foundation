@@ -153,3 +153,110 @@ parental-consent flow ships. Before turning it on, count what it would erase:
 `select count(*) from users where parental_consent_status in ('pending', 'denied') and deleted_at is null and coalesce(age_verified_at, created_at) < now() - interval '14 days';`
 
 Check: `select count(*) filter (where purged_at is null and purge_after <= now()) as due, count(*) filter (where purge_attempts >= 5) as stuck, count(*) filter (where external_erasures -> 'identity-provider' ->> 'doneAt' is null) as identity_pending from user_deletions;`
+
+## 7. The JSON bound and the erasure's functions (TASK-229, ADR-058)
+
+### json-bound degraded
+
+`/api/health` shows the probe `json-bound` degraded, and the deploy smoke fails, whenever the bound
+on stored JSON is not in force; its detail names each line. Read them in the SQL Editor:
+`select m from public.json_bound_missing() m;` — then, by what it says:
+
+- `public.<table>: trigger … missing / not as migration 074 makes it` — repair that table:
+  `select public.json_bound_install(array['public.<table>'::regclass]);` then
+  `select public.json_bound_check('public.<table>');`. A line that reads
+  `public.<table> (its partition public.<part>): …` is repaired through the table before the
+  brackets (the partition's triggers are its clones; `json_bound_install` refuses a partition's
+  own name).
+- `… not enabled ALWAYS (the bound is off)` — someone ran `json_bound_off`; put it back as above
+  when the reason for the switch is gone.
+- `… existing rows not checked against the bound` — `select public.json_bound_check('public.<table>');`
+  (rows it names: `select public.json_bound_convert('public.<table>');`, then the check again —
+  docs/MIGRATION_v5_to_v6.md, "A row over the JSON bound"). Also what a table reads after a
+  partition was attached to it, and what every table reads after a restore (below).
+- `… service_role holds TRIGGER on it and could replace the bound's triggers` (or `anon`,
+  `authenticated`) — an older migration applied again, or a grant by hand, gave the privilege
+  back: `select public.json_bound_install(array['public.<table>'::regclass]);` takes it away (it
+  re-makes no trigger and no row needs reading again).
+- `… fires after the bound`, `… rewrite rule …`, `… holds JSON the bound cannot check` — a change
+  outside the platform's migrations went round the bound: undo it, or make the column `jsonb`.
+- `public.json_bound_…(): not as migration 074 makes it`, `… executable by anon` — one of the
+  nine functions that decide a refusal or what is installed (`json_bound_refuse`, `_reason`,
+  `_depth_path`, `_number_path`, `_limit`, `_term`, `_ddl`, `_tables`, `_mark`), or a grant, was
+  changed: restore it (re-applying 074 is refused after 075; restore by hand to 074's text, or
+  ask before changing it). A later migration that replaces one of them on purpose (076 replaces
+  `json_bound_limit`) re-makes `json_bound_missing` with its own fingerprints.
+- `07x_….sql: not recorded` — apply 074 and 075 (docs/MIGRATION_v5_to_v6.md).
+
+Check: `select count(*) from public.json_bound_missing();` answers `0`.
+
+### After a restore or an upgrade
+
+- **A restore, a Supabase branch, a copy made with dump and restore:** every trigger row has a
+  new catalogue version, so every covered table reads "existing rows not checked" and the deploy
+  smoke fails. Run `select public.json_bound_check();` (as `postgres`; it reads every row once).
+- **A major PostgreSQL version** may print a function's definition differently: then readiness
+  names the nine functions ("not as migration 074 makes it") and — more seriously —
+  `public.erasure_functions_missing()` names the two rewrites, so **every erasure is refused**
+  (alert `gdpr.erasure_schema_missing`) until they are made again. Before upgrading a database,
+  try it on a copy and run both checks above; if they name functions, the upgrade needs a
+  migration that re-makes 074's functions and readiness on the new version — do not edit them by
+  hand. Not tried here: only PostgreSQL 17.6 has run this code.
+
+### Erasure refused: functions missing
+
+Alert `gdpr.erasure_schema_missing` (at most once per ten minutes per process): the soft delete,
+the purge or the cross-tenant pass refused because `jsonb_erase_id_text` or
+`jsonb_erase_address_text` is missing or not as migration 074 made it (definition, owner or
+grants). Nothing was written and no purge attempt was counted: every erasure stays due. Read
+`select m from public.erasure_functions_missing() m;` — `…: missing` means 074 is not applied
+(apply it); `… not as migration 074 makes it` means the function was changed (restore it). The
+next run proceeds on its own.
+
+### Erasures refused
+
+While that is so, each run of the job `gdpr.retention-purge` **fails** with "Erasures were not
+run: the database's erasure functions are not as migration 074 makes them …" (its other parts —
+reconciliation, consent expiry, external stores — have run): the Jobs console shows the failed
+runs and, after its attempts, a dead letter. Fix the functions as above; the next scheduled run
+succeeds, and a dead-lettered run needs nothing (the schedule enqueues the next).
+
+Check: `select count(*) from public.erasure_functions_missing();` answers `0`.
+
+### An erasure refused by the bound (a row stored before it)
+
+A purge or soft delete failed with `23514` and constraint `json_bound` ("a JSON value over the
+bound is refused"): the erasure had to update a row that was stored before migration 074 (or
+while the bound was off) and holds a value over it — a number outside 1e-18…1e21, most likely.
+The erasure is deferred and retried (`last_purge_error`, then `gdpr.erasure_stuck` after 5); it
+cannot complete until the row is converted. As `postgres`:
+`select public.json_bound_convert();` (nothing is deleted: docs/MIGRATION_v5_to_v6.md, "A row over
+the JSON bound"), then `select public.json_bound_check();`. The erasure completes at its next
+retry. Check: `select count(*) from public.json_bound_missing();` answers `0`, and the account's
+`user_deletions.purged_at` is set after the next run.
+
+### An erasure refused a key collision
+
+A purge or soft delete failed with `erasure: replacing an account id (an address) would merge two
+keys of one object even when numbered` (data_exception). Never seen in the fuzz: one document holds
+keys that, with the id or address replaced, would still collide after numbering. The purge is
+deferred (`last_purge_error`, then `gdpr.erasure_stuck` after 5). Find the row:
+`select ctid from public.<table> where <column>::text ~* '<id>';` (as postgres), read it, and edit
+that one document by hand so its keys differ, then let the purge run again.
+
+### A receipt, a classifier output, a step or a metric was not kept
+
+Five counters (each logged at warn, with the refusal's code — never the value):
+
+| Counter                            | What happened                                                                                                                                                                                                   | What a reader gets                                                                                                                                                                                              |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `effect.receipt_not_kept`          | An effect's receipt could not be kept: over 6 MiB as printed (an image over about 4.4 MiB), nested over 64 levels, a number outside 1e-18…1e21, or a text jsonb refuses. Stored as `{"_omitted": {"code": …}}`. | The effect happened. A generation that needed approval is `withheld`, saying the largest image a held generation keeps.                                                                                         |
+| `effect.receipt_not_kept_replayed` | Such an effect was asked for again with the same operation id.                                                                                                                                                  | `resultKept: false` (image generation: "The earlier image is no longer available; generate it again."); nothing is fired again.                                                                                 |
+| `moderation.output_not_kept`       | A classifier's output — or another field of a moderation result, named in the counter's `column` — was over the stored-JSON limits.                                                                             | The decision stands with its own fields; the record carries `classifierOutputNotKept` / `fieldsNotKept`. The review screen shows the decision without the classifier's detail (no screen words the reason yet). |
+| `trajectory.step_not_recorded`     | A run's step, an action's result or a compensation's result (the counter's `field`: input, output, step, cost, action) could not be stored after the work.                                                      | The run or action went on; the step holds `inputNotRecorded` / `outputNotRecorded` / `costNotRecorded` with the code.                                                                                           |
+| `metrics.dropped_over_bound`       | One metric event's name, values or tags could not be stored.                                                                                                                                                    | That event alone is dropped; the rest of its batch is written.                                                                                                                                                  |
+
+Nothing to repair. If one recurs, a provider or a tool is returning values outside the limits (a
+number below 1e-18 or at 1e21 and above — often the residue of arithmetic on small amounts, which
+a writer rounds before storing; more than 1 MiB; a text cut inside an emoji): look at which one.
+Check: `select count(*) from public.effect_ledger where receipt ? '_omitted';`.

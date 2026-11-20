@@ -112,7 +112,16 @@ export type ConfigScope = "platform" | "tenant";
  */
 export interface ConfigValueRefusal {
   readonly reason:
-    "type" | "below_min" | "above_max" | "not_allowed" | "not_serializable" | "too_large";
+    | "type"
+    | "below_min"
+    | "above_max"
+    | "not_allowed"
+    | "not_serializable"
+    | "too_large"
+    /** A number in the value is other than 0 or 1e-18 <= |n| < 1e21 (TASK-229; code review B-25). */
+    | "number_out_of_range"
+    /** The value is nested deeper than a stored value may be (TASK-229). */
+    | "too_deep";
   /** For below_min. */
   readonly min?: number;
   /** For above_max (the maximum value), and too_large (the maximum bytes). */

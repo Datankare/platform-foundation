@@ -47,6 +47,7 @@ import NotFound, { metadata as notFoundMeta } from "@/app/not-found";
 import PageError from "@/app/error";
 import GlobalError from "@/app/global-error";
 import { SESSION_END_EVENT } from "@/platform/errors/refusal";
+import { signedInLine } from "./helpers/app-shell-text";
 
 function at(path: string) {
   mockPath = path.split("?")[0]!;
@@ -85,13 +86,24 @@ describe("the app's frame (TASK-224)", () => {
     );
     expect(nav.getByRole("link", { name: "Home" })).not.toHaveAttribute("aria-current");
     expect(nav.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
-    expect(screen.getByText("Signed in as me@example.test")).toBeInTheDocument();
+    expect(screen.getByText(signedInLine("me@example.test"))).toBeInTheDocument();
     expect(screen.getAllByRole("main")).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute(
       "href",
       "#main"
     );
     expect(screen.getByRole("main")).toHaveAttribute("id", "main");
+  });
+
+  // Code review B-29: the address was handed to String.replace as the replacement text, where
+  // "$&", "$1" and "$$" are patterns — "a$&b@…" was shown as "a{email}b@…".
+  it("the signed-in line holds an address with $&, $1 or $$ in it exactly as typed", () => {
+    for (const email of ["a$&b@example.test", "a$1b@example.test", "a$$b@example.test"]) {
+      expect(signedInLine(email)).toBe(
+        signedInLine("me@example.test").replace("me@example.test", () => email)
+      );
+      expect(signedInLine(email)).toContain(email);
+    }
   });
 
   it("a guest: Home and Sign in (back to this page), never the account's pages", () => {

@@ -63,6 +63,7 @@ jest.mock("@/platform/modules/app-account", () => {
 import AccountClient from "@/app/account/AccountClient";
 import AccountPage, { metadata } from "@/app/account/page";
 import HomeClient from "@/app/HomeClient";
+import { signedInLine } from "./helpers/app-shell-text";
 
 const fetchMock = jest.fn();
 /** Every route the page reads, answered with its own fixture. */
@@ -135,7 +136,7 @@ describe("the account page (TASK-210)", () => {
     render(<AccountClient />);
     const section = screen.getByRole("region", { name: "Decisions about your content" });
     expect(await within(section).findByTestId("decision-traj-1")).toBeInTheDocument();
-    expect(screen.getByText("Signed in as me@example.test")).toBeInTheDocument();
+    expect(screen.getByText(signedInLine("me@example.test"))).toBeInTheDocument();
     // The app's header is the way home (SF-app-001): the page has no link of its own.
     expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/");
     expect(screen.queryByRole("link", { name: "← Back to home" })).toBeNull();

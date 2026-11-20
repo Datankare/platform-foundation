@@ -9,6 +9,7 @@
  * another, and the server is ready only when it answers AUTH with its own password over TLS
  * verified against its own CA.
  */
+import { X509Certificate } from "node:crypto";
 import { createServer, type Server } from "node:net";
 import {
   answersAsOwn,
@@ -50,5 +51,30 @@ valkeyDescribe("the test Valkey server (helpers/valkey-server.ts)", () => {
     // The other server refuses this one's password and certificate authority.
     expect(await answersAsOwn(other.port, mine.password, other.caPem)).toBe(false);
     expect(await answersAsOwn(other.port, other.password, mine.caPem)).toBe(false);
+  });
+
+  it("its certificates carry every extension themselves — the same with OpenSSL and LibreSSL (macOS), whatever openssl.cnf holds (TASK-229)", async () => {
+    // A system configuration that says nothing (as a minimal openssl.cnf would): the certificates
+    // must not depend on it.
+    const saved = process.env.OPENSSL_CONF;
+    process.env.OPENSSL_CONF = "/dev/null";
+    let v: RunningValkey;
+    try {
+      v = await startValkey();
+    } finally {
+      if (saved === undefined) delete process.env.OPENSSL_CONF;
+      else process.env.OPENSSL_CONF = saved;
+    }
+    running.push(v);
+    const ca = new X509Certificate(v.caPem);
+    const server = new X509Certificate(v.serverPem);
+    expect(ca.ca).toBe(true);
+    expect(server.ca).toBe(false);
+    expect(server.keyUsage).toEqual(["1.3.6.1.5.5.7.3.1"]);
+    expect(server.subjectAltName).toBe("DNS:localhost");
+    expect(server.checkIssued(ca)).toBe(true);
+    expect(server.verify(ca.publicKey)).toBe(true);
+    expect(server.checkHost("localhost")).toBe("localhost");
+    expect(server.checkHost("127.0.0.1")).toBeUndefined();
   });
 });

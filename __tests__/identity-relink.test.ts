@@ -45,6 +45,7 @@ import {
   SUBJECT_FLAG_DEPRECATED,
 } from "@/platform/auth/identity-relink-command";
 import { storedEmail } from "@/platform/auth/user-provisioning";
+import { closedPort } from "./helpers/closed-port";
 
 fc.configureGlobal(fuzzParams());
 
@@ -307,7 +308,9 @@ describe("the pool client (Cognito ListUsers, against a local stand-in)", () => 
 
   it("unreachable or silent: unavailable", async () => {
     await expect(
-      directory({ endpoint: "http://127.0.0.1:1/" }).findByEmail("a@b.co")
+      directory({ endpoint: `http://127.0.0.1:${await closedPort()}/` }).findByEmail(
+        "a@b.co"
+      )
     ).rejects.toThrow("the pool could not be reached");
     const slow = directory({
       fetch: ((_u: unknown, init: RequestInit) =>

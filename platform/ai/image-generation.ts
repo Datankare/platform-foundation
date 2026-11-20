@@ -19,6 +19,7 @@
 import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { performExternalEffect, getProposalStore } from "@/platform/agents";
 import { logger } from "@/lib/logger";
+import { EFFECT_RECEIPT_MAX_IMAGE_BYTES } from "@/platform/errors/json-limits";
 import type { AgentIdentity } from "@/platform/kernel/types";
 import { screenModality, screenPermits } from "@/platform/moderation";
 import type { ModalityScreenResult } from "@/platform/moderation";
@@ -173,6 +174,14 @@ export async function generateGoverned(
       reason: shown("screens.moderation.image.indeterminate"),
     };
   }
+  // A replay whose receipt the ledger could not keep (over the stored-JSON bound, TASK-229):
+  // there is no earlier image to give — held, saying so, never the marker as an image.
+  if (!effect.resultKept) {
+    return {
+      status: "held",
+      reason: shown("screens.moderation.image.not_kept"),
+    };
+  }
   const draft = effect.result;
 
   // 2. Screen the draft before commit (ADR-046, output direction). Fail-closed.
@@ -217,6 +226,19 @@ export async function generateGoverned(
       tier,
       provenance,
       reason: shown("screens.moderation.image.committed_approved"),
+    };
+  }
+  if (tier === "high" && !effect.replayable) {
+    // The image is larger than the ledger keeps (EFFECT_RECEIPT_MAX_TEXT): held, an approval
+    // could never be given it — the approved call would find no image, answer "generate it
+    // again", and every round would pay for a generation (code review B-1). It is withheld,
+    // saying the largest image a held generation can keep; no approval is asked for.
+    return {
+      status: "withheld",
+      tier,
+      reason: shown("screens.moderation.image.too_large_to_hold", {
+        max: EFFECT_RECEIPT_MAX_IMAGE_BYTES,
+      }),
     };
   }
   if (tier === "high") {

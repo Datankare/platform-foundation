@@ -62,6 +62,7 @@ import {
   type RecordedNote,
 } from "@/platform/errors/recorded-text";
 import { shown, type ShownText } from "@/platform/errors/shown-text";
+import { assertWithinDatabaseBound } from "@/platform/errors/json-limits";
 
 // ---------------------------------------------------------------------------
 // DB row shape
@@ -248,6 +249,17 @@ export async function requestApproval(params: {
       );
       if (existing.rowCount > 0)
         return existing.rows[0]?.status === "pending" ? null : SETTLING;
+      // The two values as the database stores them (TASK-229): the handlers have validated the
+      // proposed one (validateConfigValue); this writer tests both itself, so it does not depend
+      // on its callers (code review B-8).
+      assertWithinDatabaseBound(
+        params.currentValue ?? null,
+        "config_pending_approvals.current_value"
+      );
+      assertWithinDatabaseBound(
+        params.proposedValue ?? null,
+        "config_pending_approvals.proposed_value"
+      );
       const { rows } = await tx.query<ApprovalRow>(
         `insert into config_pending_approvals
            (config_key, current_value, proposed_value, requested_by, change_comment, change_shown, scope, action)

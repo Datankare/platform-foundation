@@ -49,9 +49,40 @@ import { sameId } from "@/platform/auth/same-id";
 import { WRITE_FAILED, logCaught } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
 import { REVISED, staleState } from "@/platform/errors/recorded-text";
+import {
+  jsonLimitError,
+  notKeptReason,
+  storedJsonViolation,
+  type NotKeptReason,
+} from "@/platform/errors/json-limits";
+import { recordMetricEvent } from "@/platform/observability/metric-event";
 
 /** The log's name for the pipeline. */
 const PIPELINE_ROUTE = "platform/action-pipeline";
+
+/**
+ * What a step records in place of a result the trajectory store would refuse, once the work is
+ * done (code review B-2): the refusal's code and limit, never any of the result; logged and
+ * counted (`trajectory.step_not_recorded`).
+ */
+function resultNotRecorded(
+  violation: Parameters<typeof notKeptReason>[0],
+  label: string,
+  operationId: string
+): { outputNotRecorded: NotKeptReason } {
+  logger.warn("An action's result is over the stored-JSON limits; recorded as not kept", {
+    label,
+    operationId,
+    code: violation.code,
+    route: PIPELINE_ROUTE,
+  });
+  recordMetricEvent(
+    "trajectory.step_not_recorded",
+    { count: 1 },
+    { field: "output", code: violation.code }
+  );
+  return { outputNotRecorded: notKeptReason(violation) };
+}
 
 /**
  * A run's reason when what failed was another error: its text is logged here, and the reason —
@@ -437,6 +468,32 @@ export async function executeActionPipeline<TState>(
   // for an action whose effect IS the state transition, it is computed here.
   // With rollover, a full tail has room while the chain may still grow a segment; past its cap
   // (agent.trajectory_max_segments, review 12 M2) the action is refused before it runs too.
+  // The step's input as it will be recorded, and an output known before the work, that the
+  // trajectory store would refuse — over 64 levels, over 1 MiB, or holding a number other than 0
+  // or 1e-18 <= |n| < 1e21 (platform TASK-229, CONFIRM CA3-2: the tool input a model chose) —
+  // are refused now, coded, before anything performs or commits: never an ActionNotRecordedError
+  // after the action took effect.
+  // The step is tested as the store will test it — as a whole (code review B-2: the input and the
+  // declared output were tested apart, and the cost and the label not at all): everything of it
+  // that is known before the work. What perform() returns is not known yet; it is recorded as
+  // kept or not kept below.
+  const skeletonViolation = storedJsonViolation({
+    stepIndex: req.stepIndex,
+    action: req.label,
+    input: { operationId, actorId: req.actor.actorId, ...(req.stepInput ?? {}) },
+    output: { version: 0, ...(req.stepOutput ?? {}) },
+    cost: req.cost,
+    durationMs: 0,
+    timestamp: new Date().toISOString(),
+    boundary: context.boundary,
+    operationId: context.operationId,
+    proposalId: context.proposalId,
+    actor: context.actor,
+    effects: context.effects,
+    effectiveRisk: context.effectiveRisk,
+  });
+  if (skeletonViolation)
+    throw jsonLimitError(skeletonViolation, `${req.label}: the step`);
   await req.trajectoryStore.assertRoomForStep?.(
     req.trajectoryId,
     req.rolloverTrajectory ? { rollover: true } : undefined
@@ -686,13 +743,13 @@ async function commitAndRecord<TState>(
   }
 
   // 7. Trajectory append, derived from the authoritative commit and keyed by operationId.
-  const step: Step = {
+  const stepWith = (result: Record<string, unknown> | undefined): Step => ({
     stepIndex: req.stepIndex,
     action: req.label,
     input: { operationId, actorId: req.actor.actorId, ...(req.stepInput ?? {}) },
     output: {
       ...(committed ? { version: committed.version } : {}),
-      ...(performed ?? {}),
+      ...(result ?? {}),
       ...(req.stepOutput ?? {}),
     },
     cost: req.cost,
@@ -704,7 +761,19 @@ async function commitAndRecord<TState>(
     actor: context.actor,
     effects: context.effects,
     effectiveRisk: context.effectiveRisk,
-  };
+  });
+  // What the action returned is recorded if the store can keep it (code review B-2). The action
+  // has taken effect: a result the store would refuse — over 64 levels, over 1 MiB with the rest
+  // of the step, or holding a number other than 0 or 1e-18 <= |n| < 1e21 — is recorded as
+  // `{ outputNotRecorded: { code, max? } }`, logged and counted, as the tool invoker records a
+  // tool's output; never an ActionNotRecordedError after the effect for that reason.
+  let step = stepWith(performed);
+  if (performed !== undefined) {
+    const resultViolation = storedJsonViolation(performed) ?? storedJsonViolation(step);
+    if (resultViolation) {
+      step = stepWith(resultNotRecorded(resultViolation, req.label, operationId));
+    }
+  }
   let record: Awaited<ReturnType<TrajectoryStore["addStep"]>>;
   try {
     record = await req.trajectoryStore.addStep(
@@ -1022,6 +1091,12 @@ export async function compensateTrajectory(
     let error: string | undefined;
     try {
       output = await plan.perform();
+      // The compensation has run: what it returned is recorded if the store can keep it, else as
+      // not kept (code review B-2) — its step must be stored, or the next walk would run it again.
+      const resultViolation = storedJsonViolation(output);
+      if (resultViolation) {
+        output = resultNotRecorded(resultViolation, plan.label, operationId);
+      }
     } catch (err) {
       // The step is stored in the trajectory, read on the admin console: a fixed reason (R-77).
       error = loggedReason("Compensation failed", err, {
@@ -1031,21 +1106,38 @@ export async function compensateTrajectory(
       failures.push({ operationId: step.operationId ?? "(none)", error });
     }
 
-    await req.trajectoryStore.addStep(req.trajectoryId, {
-      stepIndex: nextIndex,
-      action: plan.label,
-      input: { operationId, actorId: req.actor.actorId, compensating: step.action },
-      output: error ? { error, compensated: false } : { ...output, compensated: true },
-      cost: 0,
-      durationMs: 0,
-      timestamp: new Date().toISOString(),
-      boundary: "commitment",
-      operationId,
-      actor: context.actor,
-      effects: context.effects,
-      effectiveRisk: context.effectiveRisk,
-      compensates: step.operationId,
-    });
+    try {
+      await req.trajectoryStore.addStep(req.trajectoryId, {
+        stepIndex: nextIndex,
+        action: plan.label,
+        input: { operationId, actorId: req.actor.actorId, compensating: step.action },
+        output: error ? { error, compensated: false } : { ...output, compensated: true },
+        cost: 0,
+        durationMs: 0,
+        timestamp: new Date().toISOString(),
+        boundary: "commitment",
+        operationId,
+        actor: context.actor,
+        effects: context.effects,
+        effectiveRisk: context.effectiveRisk,
+        compensates: step.operationId,
+      });
+    } catch (err) {
+      // The step could not be stored (a full trajectory, the store unreachable). The walk goes
+      // on — stopping here left every remaining step uncompensated (code review B-2) — and this
+      // step is reported as a failure: whether its compensation ran is said, never guessed.
+      failures.push({
+        operationId: step.operationId ?? "(none)",
+        error: loggedReason(
+          error
+            ? "Compensation failed, and its step was not recorded"
+            : "Compensation ran, and its step was not recorded",
+          err,
+          { label: plan.label, operationId }
+        ),
+      });
+      continue;
+    }
     nextIndex += 1;
 
     req.emit?.({

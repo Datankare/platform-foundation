@@ -43,6 +43,7 @@ export const REAPED_ACTION = "trajectory-abandoned";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 import {
+  assertStorableJson,
   jsonBytes,
   TRAJECTORY_MAX_BYTES,
   TRAJECTORY_MAX_STEPS,
@@ -205,6 +206,10 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     step: Step,
     options: AddStepOptions = {}
   ): Promise<TrajectoryRecord | undefined> {
+    // As PostgresTrajectoryStore.addStep: a step over the stored-JSON limits is refused, coded
+    // (code review B-26: the stand-in stored what the real store refuses, so no test without a
+    // database could show a step refused after its work).
+    assertStorableJson(step, "agent_trajectories.steps[]");
     const current = this.parts.current().get(trajectoryId);
     if (!current) return undefined;
     const size = stepBytes(step);

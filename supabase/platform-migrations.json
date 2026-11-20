@@ -74,6 +74,8 @@
     "070_auth_sessions.sql",
     "071_tenant_export_named_columns.sql",
     "072_record_text_and_hashes.sql",
-    "073_retention_lifecycles.sql"
+    "073_retention_lifecycles.sql",
+    "074_json_bound.sql",
+    "075_json_bound_existing_rows.sql"
   ]
 }

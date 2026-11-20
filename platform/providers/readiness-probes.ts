@@ -29,6 +29,7 @@ import { createCacheReadinessProbe, getCache } from "@/platform/cache";
 import { createRealtimeServiceProbe } from "@/platform/realtime/service-probe";
 import { createScheduleFreshnessProbe } from "@/platform/jobs/schedule-probe";
 import { createAuthPoolShapeProbe } from "@/platform/auth/pool-shape-probe";
+import { createJsonBoundProbe } from "@/platform/auth/erasure-schema";
 import { createModuleHealthProbes } from "@/platform/modules/contributions";
 import { createAIProviderReadinessProbe } from "@/platform/ai/readiness-probe";
 import { createRateLimitStoreProbe } from "@/platform/rate-limit/store-probe";
@@ -65,6 +66,12 @@ export function buildReadinessProbes(
     // ADR-056 D4/D6: a deployment whose ticks never arrive reports it (degraded), naming the
     // duties that have stopped.
     createScheduleFreshnessProbe(),
+    // TASK-229 (ADR-058): every way the bound on stored JSON is not in force, by name (degraded
+    // only; the deploy smoke requires it healthy). Registered whether or not there is a database
+    // — without one it answers healthy, "nothing is stored" — because the health watch's default
+    // checks name it and report a check that is not there as a problem (code review A-9: an
+    // adopter without a database had a standing false alarm).
+    createJsonBoundProbe(),
     // TASK-197: the AI provider with this deployment's key and models (cached: it is billed).
     ...((env.AI_PROVIDER ?? "anthropic") === "anthropic"
       ? [createAIProviderReadinessProbe(env)]

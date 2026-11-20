@@ -12,6 +12,10 @@ import { setDataPoolFactory } from "@/platform/data";
 import { poolConfig } from "@/platform/data/pool";
 import { runWithoutTenant } from "@/platform/tenancy/context";
 import { connectTestDatabase, dbDescribe, disconnectTestDatabase } from "../helpers/db";
+import { closedPortSync } from "../helpers/closed-port";
+
+/** A loopback port nothing listens on (TASK-229). */
+const CLOSED = closedPortSync();
 
 dbDescribe("PostgresHealthProbe", () => {
   beforeAll(connectTestDatabase);
@@ -28,7 +32,7 @@ dbDescribe("PostgresHealthProbe", () => {
       (role) =>
         new Pool({
           ...poolConfig(role),
-          connectionString: "postgresql://nobody:x@127.0.0.1:1/none",
+          connectionString: `postgresql://nobody:x@127.0.0.1:${CLOSED}/none`,
           connectionTimeoutMillis: 500,
         })
     );

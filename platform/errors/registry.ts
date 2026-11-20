@@ -571,6 +571,29 @@ export const PLATFORM_ERROR_CODES = {
     params: [{ name: "max", kind: "number" }],
     action: "Send less data in one record; nothing was stored.",
   },
+  // TASK-229 (ADR-058): a stored number is 0 or 1e-18 <= |n| < 1e21 — outside that range the
+  // database prints it in full (hundreds of characters from a few bytes), so it is refused, as
+  // the database's bound refuses it (migration 074).
+  "request.json_number_out_of_range": {
+    status: 422,
+    // The bounds as written ("1e-18", "1e21"): a number format would print 1e-18 as 0.
+    params: [
+      { name: "min", kind: "id" },
+      { name: "max", kind: "id" },
+    ],
+    // Code review B-6: the common cause is not an exotic value but the residue of ordinary
+    // arithmetic on small amounts — (a + b) - a - b is often non-zero and under 1e-18.
+    action:
+      "Send numbers that are 0 or between 1e-18 and 1e21 in size — round a computed amount first: arithmetic on small amounts leaves residues under 1e-18; nothing was stored.",
+  },
+  // TASK-229 (code review B-12, B-30): a text holding U+0000 or half of a surrogate pair is
+  // written by JSON.stringify and refused by jsonb; a BigInt cannot be written as JSON at all.
+  "request.json_value_not_storable": {
+    status: 422,
+    params: [],
+    action:
+      "Remove the null character or the broken character from the text, and send whole numbers JSON can write; nothing was stored.",
+  },
   // Review 10 L10: one trajectory records at most so many steps and bytes; refused before the
   // action runs, so nothing was done.
   "request.trajectory_full": {

@@ -31,6 +31,7 @@ import {
 } from "./approval-policy-store";
 import { generateUuid } from "./utils";
 import { withSavepoint, withTenantTx } from "@/platform/data";
+import { assertWithinDatabaseBound } from "@/platform/errors/json-limits";
 
 const MAX_VERSION_CONFLICT_RETRIES = 5;
 
@@ -76,6 +77,8 @@ export class PostgresApprovalPolicyStore implements ApprovalPolicyStore {
   ): Promise<ApprovalPolicy> {
     const problem = approvalPolicyProblem(rules, defaultApprover);
     if (problem) throw new Error(`approval-policy setRules refused: ${problem}`);
+    // Rules the database would refuse are refused here, coded (platform TASK-229).
+    assertWithinDatabaseBound(rules, "agent_approval_policy.rules");
     let lastErr: unknown = null;
     for (let attempt = 0; attempt < MAX_VERSION_CONFLICT_RETRIES; attempt++) {
       try {

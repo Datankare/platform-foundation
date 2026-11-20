@@ -72,6 +72,10 @@ const PRUNE_BATCH = 5000;
 export const JOB_RETENTION_KEY = "jobs.retention_days";
 export const DEFAULT_JOB_RETENTION_DAYS = 30;
 
+/** A retention-purge run whose erasures were refused: what its failure records (operators read it). */
+export const ERASURE_REFUSED_FAILURE =
+  'Erasures were not run: the database\'s erasure functions are not as migration 074 makes them, so no account was tried and no attempt was counted. Readiness names what is missing (probe json-bound); docs/runbooks/jobs.md, "Erasures refused".';
+
 const more = (full: boolean): Pick<JobResult, "continueWith"> =>
   full ? { continueWith: { part: "next" } } : {};
 
@@ -166,6 +170,14 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
       const r = await purgeDueErasures(ctx.agent, ERASURE_BATCH, ctx.signal);
       // An erased account's mentions in other tenants' audit records (an operator's act) (A-3).
       const mentions = await eraseMentionsInOtherTenants(ERASURE_BATCH, ctx.signal);
+      // The purge or the pass over other tenants was REFUSED (the database's erasure functions
+      // are not migration 074's: nothing was tried, no attempt counted). Every other part above
+      // has run; the run itself fails, saying so — a summary of "due 0, purged 0" read exactly
+      // as "nothing was due" (code review B-14: only an alert, once per ten minutes per process,
+      // said erasures were not running). The job is retried and, still refused, dead-lettered.
+      if (r.refused || mentions.refused) {
+        throw new JobFailure(ERASURE_REFUSED_FAILURE);
+      }
       // A failed erasure is retried later with a growing interval and alerted once it keeps
       // failing (purgeDueErasures); the run goes on to the next part, so the erasures that always
       // fail never hold the others back (B-7: the run failed before it could continue).

@@ -17,11 +17,19 @@
 //   reason=<one line>   (with a problem)
 //
 // A problem: the deployment cannot be reached, answers anything but 200 or 503, says it is
-// unhealthy, or a watched probe (WATCH_CHECKS, comma-separated; default "job-schedules") is not
+// unhealthy, or a watched probe (WATCH_CHECKS, comma-separated; default "job-schedules,json-bound"
+// — json-bound: the bound on stored JSON in force, platform TASK-229) is not
 // healthy or is missing. Other degraded probes are listed as a notice, not a problem (an optional
 // provider is allowed to be degraded). Exit 0 either way, 2 on a usage error.
 import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+/**
+ * The probes watched when WATCH_CHECKS is not set. json-bound (TASK-229): every stored JSON value
+ * bounded and the erasure's functions as migration 074 makes them. The scheduled watch runs from
+ * main, so this takes effect at promotion; before it, the deploy smoke requires json-bound.
+ */
+export const DEFAULT_WATCH_CHECKS = "job-schedules,json-bound";
 
 /** The verdict on one /api/health answer: { state, reason, notices }. */
 export function verdict(status, body, watched) {
@@ -82,7 +90,7 @@ async function main() {
     console.log("usage: health-watch.mjs <base-url> (scheme and host only)");
     return 2;
   }
-  const watched = (process.env.WATCH_CHECKS || "job-schedules")
+  const watched = (process.env.WATCH_CHECKS || DEFAULT_WATCH_CHECKS)
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);

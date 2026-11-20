@@ -40,6 +40,13 @@ import {
 } from "@/platform/auth/user-data";
 import { raiseAlert } from "@/platform/observability/alert";
 import {
+  ERASURE_SCHEMA_MISSING,
+  ErasureSchemaMissing,
+  alertErasureSchemaMissing,
+  missingErasureFunctions,
+  requireErasureFunctions,
+} from "@/platform/auth/erasure-schema";
+import {
   EXTERNAL_ERASURE_ALERT_ATTEMPTS,
   provenIdentityPool,
   listExternalErasures,
@@ -63,19 +70,25 @@ const registeredModules: DeletionModule[] = [];
 /**
  * Where an account's address can stand for the account, replaced by its id at the soft delete:
  * only whole JSON strings equal to the address ($1, ignoring case) — values and object keys —
- * become the id ($2) (public.jsonb_replace_text_value, migration 052; review 9 L7 added keys).
+ * become the id ($2) (public.jsonb_erase_address_text, migration 074 — 052's
+ * jsonb_replace_text_value with its two faults removed: keys are compared by the text's length,
+ * so a string beginning ": " can no longer make it lose a value or put a stand-in in place of a
+ * whole document, and a key that would merge with another is numbered, never dropped — reviews
+ * A-2, platform TASK-229; review 9 L7 added keys).
  * An address inside a longer text — a note quoting it — is free text, another person's writing,
  * and stays; a near miss (joann@ for ann@, a plus or sub-domain variant) is another address and
- * stays. The function is non-recursive and cannot fail on any document (review 9 H2), so one
- * row's document can never block another account's erasure; jsonb_may_mention_text is its cheap,
- * sound pre-filter (false only where nothing can be replaced).
+ * stays. The function is non-recursive; every stored value is at most 128 levels deep (074's
+ * bound), so no document can reach the server's stack limit. It raises only where keys would
+ * still merge once numbered (never reached in the fuzz: design 56e-3a §2.4); the statement then
+ * fails loudly (runbook "An erasure refused a key collision"). jsonb_may_mention_text is its
+ * cheap, sound pre-filter (false only where nothing can be replaced).
  */
 export const ADDRESS_REPLACEMENTS: readonly string[] = [
-  "update proposals set payload = jsonb_replace_text_value(payload, $1::text, $2::text), effects = jsonb_replace_text_value(effects, $1::text, $2::text) where jsonb_may_mention_text(payload, $1::text) or jsonb_may_mention_text(effects, $1::text)",
-  "update agent_trajectories set steps = jsonb_replace_text_value(steps, $1::text, $2::text) where jsonb_may_mention_text(steps, $1::text)",
-  "update audit_log set details = jsonb_replace_text_value(details, $1::text, $2::text) where jsonb_may_mention_text(details, $1::text)",
-  "update review_queue set moderation_result = jsonb_replace_text_value(moderation_result, $1::text, $2::text), explanation_chain = jsonb_replace_text_value(explanation_chain, $1::text, $2::text) where jsonb_may_mention_text(moderation_result, $1::text) or jsonb_may_mention_text(explanation_chain, $1::text)",
-  "update app_sessions set state = jsonb_replace_text_value(state, $1::text, $2::text) where jsonb_may_mention_text(state, $1::text)",
+  "update proposals set payload = jsonb_erase_address_text(payload, $1::text, $2::text), effects = jsonb_erase_address_text(effects, $1::text, $2::text) where jsonb_may_mention_text(payload, $1::text) or jsonb_may_mention_text(effects, $1::text)",
+  "update agent_trajectories set steps = jsonb_erase_address_text(steps, $1::text, $2::text) where jsonb_may_mention_text(steps, $1::text)",
+  "update audit_log set details = jsonb_erase_address_text(details, $1::text, $2::text) where jsonb_may_mention_text(details, $1::text)",
+  "update review_queue set moderation_result = jsonb_erase_address_text(moderation_result, $1::text, $2::text), explanation_chain = jsonb_erase_address_text(explanation_chain, $1::text, $2::text) where jsonb_may_mention_text(moderation_result, $1::text) or jsonb_may_mention_text(explanation_chain, $1::text)",
+  "update app_sessions set state = jsonb_erase_address_text(state, $1::text, $2::text) where jsonb_may_mention_text(state, $1::text)",
 ];
 
 /** The soft delete found no account with the id. */
@@ -100,6 +113,20 @@ async function failure(
     // The account is not there: the result says so in this module's words (the delete route
     // answers it as not found), never a store's text.
     if (err instanceof NoSuchUser) return NO_SUCH_USER;
+    // The erasure's functions are not 074's (TASK-229): said in this module's words, and logged
+    // as an error for the operator (alerted by requireErasureFunctions; readiness says it too).
+    if (err instanceof ErasureSchemaMissing) {
+      logger.error(
+        "Erasure refused: the database's erasure functions are not migration 074's",
+        {
+          step,
+          error: ERASURE_SCHEMA_MISSING,
+          what: err.missing.slice(0, 10),
+          route: "platform/auth/gdpr-deletion",
+        }
+      );
+      return ERASURE_SCHEMA_MISSING;
+    }
     logCaught(logger, "Erasure write failed", err, {
       step,
       route: "platform/auth/gdpr-deletion",
@@ -251,6 +278,9 @@ export async function softDeleteUser(
         let subject: string | null = null;
         const userError = await failure("soft delete: the account's rows", () =>
           withTenantTx(async (tx) => {
+            // The rewrites below call 074's jsonb_erase_address_text: refused before anything is
+            // written when it is missing or not as 074 made it (TASK-229, erasure-schema.ts).
+            await requireErasureFunctions(tx, "Account erasure (soft delete)");
             const before = await tx.query<{
               email: string | null;
               status: string;
@@ -722,6 +752,11 @@ export interface ErasureRunResult {
   readonly stuck: number;
   /** The run was told to stop (its signal) before every due account was handled. */
   readonly stopped: boolean;
+  /**
+   * True: the erasure's functions are not as migration 074 makes them (TASK-229) — no account was
+   * tried and none counted as an attempt; alerted as gdpr.erasure_schema_missing.
+   */
+  readonly refused?: boolean;
 }
 
 /** After this many failed purges an erasure is alerted (gdpr.erasure_stuck). */
@@ -745,6 +780,22 @@ export async function purgeDueErasures(
   limit = 100,
   signal?: AbortSignal
 ): Promise<ErasureRunResult> {
+  // The erasure's functions not 074's (TASK-229): no account is tried and none is counted as an
+  // attempt — every erasure stays due as it was (review B-13: a refusal counted against each
+  // account would back it off up to 7 days and raise a false gdpr.erasure_stuck).
+  const missing = await withTenantTx((tx) => missingErasureFunctions(tx));
+  if (missing.length > 0) {
+    alertErasureSchemaMissing("Retention purge", missing);
+    logger.error(
+      "Erasures not run: the database's erasure functions are not migration 074's",
+      {
+        error: ERASURE_SCHEMA_MISSING,
+        what: missing.slice(0, 10),
+        route: "platform/auth/gdpr-deletion",
+      }
+    );
+    return { due: 0, purged: 0, failed: 0, stuck: 0, stopped: false, refused: true };
+  }
   const { rows } = await withTenantTx((tx) =>
     tx.query<{ user_id: string }>(
       `select user_id from user_deletions
@@ -856,7 +907,28 @@ async function deferPurge(userId: string, steps: string): Promise<void> {
 export async function eraseMentionsInOtherTenants(
   limit = 100,
   signal?: AbortSignal
-): Promise<{ readonly due: number; readonly erased: number; readonly stopped: boolean }> {
+): Promise<{
+  readonly due: number;
+  readonly erased: number;
+  readonly stopped: boolean;
+  /** True: the erasure's functions are not 074's (TASK-229); nothing was tried. */
+  readonly refused?: boolean;
+}> {
+  // CROSS_TENANT_ERASURE calls 074's jsonb_erase_id_text (review A-6: without it each account
+  // failed on "function does not exist" instead): refused up front, every account stays due.
+  const missing = await withOwnerTx("platform-job", (tx) => missingErasureFunctions(tx));
+  if (missing.length > 0) {
+    alertErasureSchemaMissing("Mentions in other tenants", missing);
+    logger.error(
+      "Mentions in other tenants not erased: the erasure functions are not 074's",
+      {
+        error: ERASURE_SCHEMA_MISSING,
+        what: missing.slice(0, 10),
+        route: "platform/auth/gdpr-deletion",
+      }
+    );
+    return { due: 0, erased: 0, stopped: false, refused: true };
+  }
   const { rows } = await withTenantTx((tx) =>
     tx.query<{ user_id: string }>(
       `select user_id from user_deletions

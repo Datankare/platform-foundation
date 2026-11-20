@@ -28,6 +28,7 @@ import type {
 } from "./types";
 import { scopeKey } from "./scope";
 import { logger } from "@/lib/logger";
+import { assertWithinDatabaseBound } from "@/platform/errors/json-limits";
 import { DataUnavailableError, withTenantTx } from "@/platform/data";
 import { TenantContextError } from "@/platform/tenancy/context";
 
@@ -82,6 +83,9 @@ export class PostgresEmbeddingStore implements EmbeddingStore {
     embedding: readonly number[],
     chunk: Chunk
   ): Promise<void> {
+    // Metadata the database would refuse is refused here, coded, before anything is written
+    // (platform TASK-229: depth, size and the number range of the stored-JSON bound).
+    assertWithinDatabaseBound(chunk.metadata ?? {}, "document_embeddings.metadata");
     try {
       await withTenantTx((tx) =>
         tx.query(

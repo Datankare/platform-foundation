@@ -21,6 +21,7 @@
  */
 
 import { withOwnerTx, withTenantTx, type Tx } from "@/platform/data";
+import { assertWithinDatabaseBound } from "@/platform/errors/json-limits";
 import { peekTenant } from "@/platform/tenancy/context";
 import type {
   ClaimedJob,
@@ -127,6 +128,9 @@ const LIST_SQL = `select id, tenant_id, kind, status, attempts, max_attempts, so
 
 export class PostgresJobStore implements JobStore {
   async enqueue(request: EnqueueRequest): Promise<EnqueueResult> {
+    // A payload the database would refuse is refused here, coded, before anything is queued
+    // (platform TASK-229: depth, size and the number range of the stored-JSON bound).
+    assertWithinDatabaseBound(request.payload ?? {}, "jobs.payload");
     const payload = JSON.stringify(request.payload ?? {});
     // The database clamps a past run_at to now() (050's jobs_on_write), on its own clock.
     const runAt = request.runAt ? request.runAt.toISOString() : null;

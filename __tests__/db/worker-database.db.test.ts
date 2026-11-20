@@ -194,6 +194,8 @@ dbDescribe("each jest worker has a database of its own (TASK-218)", () => {
           "probe: the database a nested run is given",
           "--coverage=false",
           "--silent",
+          // Its worker count, never the machine's (TASK-229).
+          "--maxWorkers=2",
         ],
         {
           cwd: root,
@@ -376,9 +378,28 @@ dbDescribe("no copy outlives its run unseen (TASK-223)", () => {
         "probe: the database a nested run is given",
         "--coverage=false",
         "--silent",
+        // Twelve workers on every machine (TASK-229): the names of ten or more copies sort apart
+        // from worker order, and this run is where that is exercised — on a 2-core runner too.
+        "--maxWorkers=12",
       ],
-      { cwd: join(__dirname, "..", ".."), env: { ...process.env, ...probe } }
+      // Its own process group (TASK-229): a killed run is killed whole — its jest workers with
+      // it, as a machine's crash or a CI cancel does. Killing the parent alone left its workers
+      // orphaned for a moment, one of them still connected to its copy, and the reclaim below
+      // (rightly) left that copy (seen once under a 4-worker test:db).
+      {
+        cwd: join(__dirname, "..", ".."),
+        env: { ...process.env, ...probe },
+        detached: true,
+      }
     );
+  /** Kill a nested run and every process of its group. */
+  const killRun = (child: ReturnType<typeof nested>) => {
+    try {
+      process.kill(-child.pid!, "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  };
 
   it("a run killed after its setup leaves its copy — marked as its own — and the next setup drops it (the 56d-3 leftover)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "killed-run-"));
@@ -398,19 +419,72 @@ dbDescribe("no copy outlives its run unseen (TASK-223)", () => {
         names: string[];
         owner: number;
       };
-      child.kill("SIGKILL");
-      await new Promise((r) => child.once("exit", r));
+      const exited = new Promise((r) => child.once("exit", r));
+      killRun(child);
+      await exited;
+      // The server ends a killed process's sessions when it next reads their closed sockets —
+      // soon, not at once — and a copy with a session is (rightly) not reclaimed. With twelve
+      // copies the reclaim below once looked while one was still ending (TASK-229): it waits,
+      // bounded, until none has a session, as the next run's setup would come later still.
       await admin(async (c) => {
+        for (let i = 0; i < 150; i++) {
+          const { rows } = await c.query<{ n: number }>(
+            "select count(*)::int as n from pg_stat_activity where datname = any($1)",
+            [probe.names]
+          );
+          if (rows[0].n === 0) return;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        throw new Error("the killed run's sessions did not end within 15 s");
+      });
+      await admin(async (c) => {
+        // remainingCopies answers in the database's name order (`order by datname`, collation C):
+        // with ten or more workers that is _w1, _w10, _w11 … _w2 — not worker order (the Mac test
+        // pass, 15 workers). Which copies are left is the point, not their order.
         const left = await remainingCopies(c, probe.names);
-        expect(left).toEqual(probe.names);
+        expect(probe.names.length).toBe(12);
+        expect([...left].sort()).toEqual([...probe.names].sort());
         expect(readCopyMark(await comment(c, probe.names[0]))?.pid).toBe(probe.owner);
-        // The next setup on this database: the killed run's copy is dropped.
-        const dropped = await reclaimKilledCopies(c, workers().base);
+        // The next setup on this database: the killed run's copies are dropped. A copy the server
+        // is still touching at that moment — an autovacuum worker connects to a freshly filled
+        // database on its own schedule — is (rightly) left for the next setup, which drops it; so
+        // the setups are repeated, bounded, as successive runs would (TASK-229: under the
+        // time-zone pass one of twelve copies was busy for an instant).
+        // What each pass must show (code review B-15: the loop only asserted that every copy was
+        // gone in the end, so a reclaim that dropped one copy per call — or left copies for any
+        // other reason — passed): every one of the run's copies is either dropped by the pass or
+        // named by the pass itself as in use at that moment, and nothing else.
+        const dropped: string[] = [];
+        for (
+          let i = 0;
+          i < 50 && (await remainingCopies(c, probe.names)).length > 0;
+          i++
+        ) {
+          if (i > 0) await new Promise((r) => setTimeout(r, 100));
+          const before = await remainingCopies(c, probe.names);
+          const left: { name: string; why: string }[] = [];
+          const pass = await reclaimKilledCopies(
+            c,
+            workers().base,
+            undefined,
+            undefined,
+            left
+          );
+          dropped.push(...pass);
+          const mine = left.filter((l) => probe.names.includes(l.name));
+          expect(mine.filter((l) => l.why !== "in use")).toEqual([]);
+          expect(
+            [
+              ...pass.filter((n) => probe.names.includes(n)),
+              ...mine.map((l) => l.name),
+            ].sort()
+          ).toEqual([...before].sort());
+        }
         expect(dropped).toEqual(expect.arrayContaining(probe.names));
         expect(await remainingCopies(c, probe.names)).toEqual([]);
       });
     } finally {
-      if (child.exitCode === null) child.kill("SIGKILL");
+      killRun(child);
       rmSync(dir, { recursive: true, force: true });
     }
   }, 150_000);
@@ -429,6 +503,8 @@ dbDescribe("no copy outlives its run unseen (TASK-223)", () => {
           "probe: the database a nested run is given",
           "--coverage=false",
           "--silent",
+          // Its worker count, never the machine's (TASK-229).
+          "--maxWorkers=2",
         ],
         {
           cwd: join(__dirname, "..", ".."),
