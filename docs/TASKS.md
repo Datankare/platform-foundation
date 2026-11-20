@@ -7,6 +7,72 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-237 — The image's build context keeps no test code: `e2e-live/` left out, and a guard for every file the context keeps
+
+| Field        | Detail                                                                                           |
+| ------------ | ------------------------------------------------------------------------------------------------ |
+| **ID**       | TASK-237                                                                                         |
+| **Type**     | Build (the container image) and a guard                                                          |
+| **Severity** | High (Playform's image did not build: CI on develop red at "Container image")                    |
+| **Phase**    | Phase 5                                                                                          |
+| **Target**   | v6.0.0 (RC)                                                                                      |
+| **Status**   | Fixed on develop (batch 56e-3a-fix)                                                              |
+| **Logged**   | 2026-11-19 (Playform CI run 44646122500 on develop c6b531d, "Container image → Build the image") |
+
+Batch 56e-3a-fix, in both repositories (Playform: its TASK-5039). The cause, plainly: batch
+56e-3a (TASK-229) made Playform's three live journeys (`e2e-live/*.live.spec.ts`) import the
+test helper `__tests__/helpers/app-shell-text.ts`. `.dockerignore` left `**/__tests__` out of the
+image's build context but kept `e2e-live/`, and `next build` type-checks every `.ts` file
+tsconfig.json includes, so the build inside the image read the specs and could not find the
+helper (TS2307, three times). Nothing else builds from the context, so no other gate saw it.
+
+| Finding                                  | Before                                                                                                          | After                                                                                                                                                                     |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `e2e-live/` in the image's build context | Kept: test code type-checked by the image's build, importing a helper the context drops                         | `.dockerignore` leaves `e2e-live` out with the other tests (same text in both repositories: synced)                                                                       |
+| Nothing checked the context              | A file the context keeps could import one it drops, and test code could enter it, unnoticed until the image job | `__tests__/docker-context.test.ts` applies `.dockerignore` as Docker does and refuses both, naming the file and the import; a path alias it cannot resolve is refused too |
+
+**Design check**
+
+- **Reach:** `.dockerignore` (one line) and `__tests__/docker-context.test.ts` (new, synced); the
+  image's build context loses `e2e-live/` (7 files in Playform; Platform Foundation has no such
+  directory, and its context is unchanged: 853 files before and after, listed by Docker). No
+  route, migration, setting or runtime file changes: the image's runtime stage copies only the
+  build output.
+- **Races:** none — a build input list.
+- **Dependencies down:** none at run time. The guard reads the working tree; a `.dockerignore`
+  pattern form it would read differently from Docker's matcher is covered by its self-test
+  (anchored at the root, `**` across segments, a parent directory, `!`, the last match).
+- **Erasure leftovers:** none — nothing is stored.
+- **Screens × responses:** no screen or response changes: only build inputs.
+- **Journeys touched:** none: the live journeys still run from the repository in CI's deploy
+  smoke, never from the image.
+- **Weakens a tenant's protection?** No: the image holds less.
+- _Credits._ "Dockerfile reference — .dockerignore file" by Docker Inc.; the matching rules of
+  moby/patternmatcher (Apache-2.0) by the Moby project authors, which the guard follows.
+
+**Threat model**
+
+- **Boundary:** the repository's files ↔ what `docker build` sends and the image's build reads.
+- **Actors that exist today:** none who can do harm with this: the failure was a build that
+  stopped, and a contributor adding test code that reaches the build is the only way in — the
+  guard refuses it in `npm test`.
+- **Bypasses:** a file loaded through an alias other than `@/` is refused as unreadable until the
+  guard is taught it; a non-literal `import()` is not resolved (it is not type-checked either).
+- **Forgeries:** none — the input is repository files.
+- **Legitimate flows:** every file the app builds from stays in the context; the guard was
+  checked against Docker's own context (exported by BuildKit) in both repositories: the same
+  file list.
+- **Agreed before code:** the coordinator's addendum to batch 56f-1 R5 (2026-11-19 ~19:55 ET).
+
+**Self-review**
+
+- **Consumers checked:** the Dockerfile's two `COPY` steps of the context (`package*.json`, then
+  `.`), CI's "Container image" job, the deploy smoke's live journeys (run from the checkout).
+- **Hostile re-read:** without the `.dockerignore` line the guard fails on Playform's tree naming
+  the three specs, their import and every `e2e-live` file; a real `npm run build` of the context
+  Docker exported from develop c6b531d fails with the three TS2307 errors CI showed, and passes
+  on this tree.
+
 ### TASK-229 — Every stored JSON value bounded (128 levels, numbers that print short, 8 MiB of text); today's erasure lossless and escape-safe; tests independent of workers, architecture and clock
 
 | Field        | Detail                                                                                                                                                       |

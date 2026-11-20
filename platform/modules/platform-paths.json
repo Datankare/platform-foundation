@@ -334,6 +334,7 @@
     "__tests__/decision-outcome.test.ts",
     "__tests__/dependency-probe-coverage.test.ts",
     "__tests__/deploy-smoke.test.ts",
+    "__tests__/docker-context.test.ts",
     "__tests__/docs-integrity.test.ts",
     "__tests__/dual-control-keys-panel.test.tsx",
     "__tests__/dual-control-readiness.test.ts",

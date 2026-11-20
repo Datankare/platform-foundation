@@ -128,6 +128,12 @@ candidate" rows.
   passing `Number.MAX_VALUE`); `admin.config_invalid_value` has two more reasons
   (`number_out_of_range`, `too_deep`).
 
+- **The image builds from a context with no test code (TASK-237).** `.dockerignore` leaves
+  `e2e-live/` out: an app's live journeys that import a `__tests__` helper stopped the image's
+  `next build` (TS2307). `__tests__/docker-context.test.ts` applies `.dockerignore` as Docker
+  does and refuses a kept file that loads a dropped one, and test code the context keeps.
+  Consumer steps: none (`.dockerignore` and the guard sync).
+
 - **Axe measures a still page; the return path refuses more (TASK-226).** `checkA11y`
   (`e2e/helpers/a11y.ts`) waits until no CSS transition or animation runs before axe measures,
   and fails, naming them, when the page does not come to rest within 5 s (an option,

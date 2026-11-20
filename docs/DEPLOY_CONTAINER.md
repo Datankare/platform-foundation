@@ -21,7 +21,9 @@ it against a replayed database and passes the deploy smoke test against it (`ci.
 | Baked settings  | `NODE_ENV=production`, `DEPLOYMENT_HOST=container`, `NEXT_MANUAL_SIG_HANDLE=true`, `HOSTNAME=0.0.0.0`, `PORT=3000`, `HOME=/tmp`, `GIT_COMMIT_SHA` (a build argument)      |
 
 The image contains no secrets and reads no `.env` file: `.dockerignore` keeps `.env*`, `.git`,
-`node_modules`, build output, tests and docs out of the build context. Every setting is given
+`node_modules`, build output, tests and docs out of the build context. Test code stays out whole, `e2e-live/` included:
+the image's `next build` type-checks every `.ts` file it is given, and a kept spec importing a
+`__tests__` helper stopped the build (TASK-237); `__tests__/docker-context.test.ts` refuses that. Every setting is given
 when the image runs. The one exception is Next.js's own build keys: every Next.js build writes
 random preview-mode and Server Action keys into its output, and so into the image. The platform
 uses neither feature (no draft mode, no `"use server"`), so they protect nothing here. Even so,
