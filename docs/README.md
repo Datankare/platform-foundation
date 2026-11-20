@@ -39,7 +39,7 @@ graph TD
         PLAT[PLATFORM_ARCHITECTURE<br/>the layers]
         AGENT[AGENT_ARCHITECTURE<br/>agents + governed authority]
         AUX[AUX_DESIGN<br/>agent UX surface]
-        ADR[(adr/ · 58 ADRs<br/>every decision + rationale)]
+        ADR[(adr/ · 59 ADRs<br/>every decision + rationale)]
     end
 
     subgraph GUIDES["Developer Guides"]
@@ -113,7 +113,7 @@ graph TD
 | [PLATFORM_ARCHITECTURE.md](PLATFORM_ARCHITECTURE.md) | The platform layers and how they compose.                                  |
 | [AGENT_ARCHITECTURE.md](AGENT_ARCHITECTURE.md)       | Agent clusters, workflow, and the governed-authority layer.                |
 | [AUX_DESIGN.md](AUX_DESIGN.md)                       | The agent user-experience surface.                                         |
-| [adr/](adr/)                                         | 58 Architecture Decision Records — every decision and its rationale.       |
+| [adr/](adr/)                                         | 59 Architecture Decision Records — every decision and its rationale.       |
 
 ### Developer Guides
 
@@ -121,6 +121,7 @@ graph TD
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | [AGENT_DELEGATION_GUIDE.md](AGENT_DELEGATION_GUIDE.md)               | Build agents that act on a user's behalf (PKCE flow, token lifetime, failure reference).                |
 | [ROTATION_RUNBOOK.md](ROTATION_RUNBOOK.md)                           | Operational runbook for key/secret rotation.                                                            |
+| [AUDIO_CONVERSION.md](AUDIO_CONVERSION.md)                           | Audio in the browser (ADR-061): the checked WAV, converting, browsers, every failure.                   |
 | [credential-register.json](credential-register.json)                 | Every credential this repository holds and when it expires (never a value); checked weekly (TASK-197).  |
 | [runbooks/jobs.md](runbooks/jobs.md)                                 | Background jobs (ADR-056): dead letters, stuck jobs, pausing a schedule, nothing runs.                  |
 | [runbooks/approvals-and-agents.md](runbooks/approvals-and-agents.md) | Undecided approvals (a run whose outcome is unknown) and the agent kill switch (review 11).             |

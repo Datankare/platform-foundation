@@ -26,7 +26,8 @@
  *     `platform/ai/instrumentation.ts` (or any future file of that name) out of the consumer.
  *     A root file is written `/package.json`.
  *   - Every job runs on the pinned runner image, `ubuntu-24.04` (TASK-201, S2-C1) — or, in
- *     .github/workflows/macos.yml only, the pinned macOS image `macos-26` (TASK-213): GitHub began
+ *     .github/workflows/macos.yml and .github/workflows/browser-audio.yml only, the pinned macOS
+ *     image `macos-26` (TASK-213; TASK-234: real Safari runs only on macOS): GitHub began
  *     moving `ubuntu-latest` to Ubuntu 26.04 on 2026-10-19, which changes every job at once. A
  *     `-latest` label, an expression, a missing `runs-on` or another image is refused; and the
  *     Postgres apt source names the image's release (`PGDG_CODENAME: noble`), checked against the
@@ -780,7 +781,7 @@ export function jestPassProblems(
       for (const flag of ["REQUIRE_DB_TESTS", "REQUIRE_VALKEY_TESTS"]) {
         // TASK-213: the macOS job is the owner's run — npm test with no database and no cache, as
         // on his Mac; CI's Linux jobs run those suites. There, the flags must be absent.
-        if (file === MACOS_WORKFLOW) {
+        if (file === MACOS_WORKFLOWS[0]) {
           if ((step.env?.[flag] ?? job.env?.[flag]) !== undefined)
             out.push(
               `${label} sets ${flag}: the macOS job is the owner's run, with no database or cache (TASK-213)`
@@ -1000,9 +1001,9 @@ describe("fail on absence (TASK-198, D-16, D-20)", () => {
         },
       },
     });
-    expect(jestPassProblems(MACOS_WORKFLOW, owners(), scripts)).toEqual([]);
+    expect(jestPassProblems(MACOS_WORKFLOWS[0], owners(), scripts)).toEqual([]);
     expect(
-      jestPassProblems(MACOS_WORKFLOW, owners({ REQUIRE_DB_TESTS: "1" }), scripts)
+      jestPassProblems(MACOS_WORKFLOWS[0], owners({ REQUIRE_DB_TESTS: "1" }), scripts)
     ).toEqual([
       expect.stringMatching(/sets REQUIRE_DB_TESTS: the macOS job is the owner's run/),
     ]);
@@ -1561,16 +1562,39 @@ export const RUNNER_CODENAME = "noble";
  * TASK-213 (T-1): the one other image — macOS, pinned like the Ubuntu one (macos-26 is macos-latest's
  * image today: Apple silicon, bash 3.2.57) — and the one workflow allowed to use it. The owner runs
  * every commit script on a Mac; this job runs the tests there (__tests__/shell-portability.test.ts
- * checks what it runs). Anywhere else a macOS label is refused: macOS minutes are billed at a
- * multiple on a private repository.
+ * checks what it runs). TASK-234: the browser-audio gate's macOS job (platform-foundation's
+ * .github/workflows/browser-audio.yml: Chromium, Firefox, WebKit and real Safari, which exists only
+ * on macOS) is the second. Anywhere else a macOS label is refused: macOS minutes are billed at a
+ * multiple on a private repository, so the second is allowed in platform-foundation only (keyed by
+ * package name; Playform, private, runs no browser job). The owner's-run rules (no database,
+ * `env -u CI npm test`) hold for macos.yml only (MACOS_WORKFLOWS[0]).
  */
 export const MACOS_RUNNER_IMAGE = "macos-26";
-export const MACOS_WORKFLOW = ".github/workflows/macos.yml";
+export const MACOS_WORKFLOWS_BY_REPO: Readonly<Record<string, readonly string[]>> = {
+  "platform-foundation": [
+    ".github/workflows/macos.yml",
+    ".github/workflows/browser-audio.yml",
+  ],
+  playform: [".github/workflows/macos.yml"],
+};
+const THIS_PACKAGE = (
+  JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
+    name: string;
+  }
+).name;
+/** This repository's macOS workflows (an unknown package gets only macos.yml). */
+export const MACOS_WORKFLOWS: readonly string[] = MACOS_WORKFLOWS_BY_REPO[
+  THIS_PACKAGE
+] ?? [".github/workflows/macos.yml"];
 /** How the apt source names the release: the step's own PGDG_CODENAME (built: not a template). */
 const PGDG_SUITE = ["$", "{PGDG_CODENAME}-pgdg"].join("");
 
 /** A job's `runs-on` that is not the pinned image, as messages (a reusable workflow's has none). */
-export function runnerProblems(file: string, wf: Workflow): string[] {
+export function runnerProblems(
+  file: string,
+  wf: Workflow,
+  macosWorkflows: readonly string[] = MACOS_WORKFLOWS
+): string[] {
   const out: string[] = [];
   for (const [id, job] of Object.entries(wf.jobs ?? {})) {
     const j = job as { "runs-on"?: unknown; uses?: unknown };
@@ -1603,13 +1627,13 @@ export function runnerProblems(file: string, wf: Workflow): string[] {
           `${label}: runs-on "${l}" moves to a new image when GitHub moves the label (ubuntu-latest began moving to Ubuntu 26.04 on 2026-10-19) — write runs-on: ${RUNNER_IMAGE}`
         );
       } else if (l === MACOS_RUNNER_IMAGE) {
-        if (file !== MACOS_WORKFLOW)
+        if (!macosWorkflows.includes(file))
           out.push(
-            `${label}: runs-on "${l}" — macOS runs only in ${MACOS_WORKFLOW} (TASK-213); write runs-on: ${RUNNER_IMAGE}`
+            `${label}: runs-on "${l}" — macOS runs only in ${macosWorkflows.join(" and ")} (TASK-213, TASK-234); write runs-on: ${RUNNER_IMAGE}`
           );
       } else if (l !== RUNNER_IMAGE) {
         out.push(
-          `${label}: runs-on "${l}" is not a pinned image — write runs-on: ${RUNNER_IMAGE} (or move every job, RUNNER_IMAGE and PGDG_CODENAME together; macOS: ${MACOS_RUNNER_IMAGE}, in ${MACOS_WORKFLOW} only)`
+          `${label}: runs-on "${l}" is not a pinned image — write runs-on: ${RUNNER_IMAGE} (or move every job, RUNNER_IMAGE and PGDG_CODENAME together; macOS: ${MACOS_RUNNER_IMAGE}, in ${macosWorkflows.join(" and ")} only)`
         );
       }
     }
@@ -1692,7 +1716,9 @@ describe("runner images are pinned (TASK-201, S2-C1)", () => {
         "    runs-on: macos-15",
       ].join("\n")
     ).toJS() as Workflow;
-    expect(runnerProblems("w.yml", wf)).toEqual([
+    expect(
+      runnerProblems("w.yml", wf, MACOS_WORKFLOWS_BY_REPO["platform-foundation"])
+    ).toEqual([
       expect.stringMatching(
         /^w\.yml job latest: runs-on "ubuntu-latest" moves to a new image/
       ),
@@ -1708,7 +1734,7 @@ describe("runner images are pinned (TASK-201, S2-C1)", () => {
       expect.stringMatching(
         /^w\.yml job group: runs-on \{"group":"big"\} names no image/
       ),
-      'w.yml job mac: runs-on "macos-26" — macOS runs only in .github/workflows/macos.yml (TASK-213); write runs-on: ubuntu-24.04',
+      'w.yml job mac: runs-on "macos-26" — macOS runs only in .github/workflows/macos.yml and .github/workflows/browser-audio.yml (TASK-213, TASK-234); write runs-on: ubuntu-24.04',
       expect.stringMatching(
         /^w\.yml job maclatest: runs-on "macos-latest" moves to a new image/
       ),
@@ -1716,13 +1742,35 @@ describe("runner images are pinned (TASK-201, S2-C1)", () => {
         /^w\.yml job macold: runs-on "macos-15" is not a pinned image/
       ),
     ]);
-    // In the macOS workflow, macos-26 (and only it) is pinned.
-    expect(
-      runnerProblems(MACOS_WORKFLOW, wf).filter((p) => /job mac(?:latest|old)?:/.test(p))
-    ).toEqual([
-      expect.stringMatching(/job maclatest: runs-on "macos-latest" moves/),
-      expect.stringMatching(/job macold: runs-on "macos-15" is not a pinned image/),
+    // In the two macOS workflows, macos-26 (and only it) is pinned.
+    const pf = MACOS_WORKFLOWS_BY_REPO["platform-foundation"];
+    for (const file of pf) {
+      expect(
+        runnerProblems(file, wf, pf).filter((p) => /job mac(?:latest|old)?:/.test(p))
+      ).toEqual([
+        expect.stringMatching(/job maclatest: runs-on "macos-latest" moves/),
+        expect.stringMatching(/job macold: runs-on "macos-15" is not a pinned image/),
+      ]);
+    }
+    // TASK-234: macos-26 in browser-audio.yml passes; in any other file it is refused.
+    const mac = parseDocument("jobs:\n  mac:\n    runs-on: macos-26").toJS() as Workflow;
+    expect(runnerProblems(".github/workflows/browser-audio.yml", mac, pf)).toEqual([]);
+    expect(runnerProblems(".github/workflows/ci.yml", mac, pf)).toEqual([
+      expect.stringMatching(
+        /macOS runs only in .github\/workflows\/macos\.yml and .github\/workflows\/browser-audio\.yml/
+      ),
     ]);
+    // RB-14: in Playform (private, macOS billed) browser-audio.yml may not run on macOS.
+    expect(
+      runnerProblems(
+        ".github/workflows/browser-audio.yml",
+        mac,
+        MACOS_WORKFLOWS_BY_REPO.playform
+      )
+    ).toEqual([
+      expect.stringMatching(/macOS runs only in .github\/workflows\/macos\.yml \(/),
+    ]);
+    expect(MACOS_WORKFLOWS).toEqual(MACOS_WORKFLOWS_BY_REPO[THIS_PACKAGE]);
   });
 
   it("[self-test] refuses a Postgres apt source read from the runner, or not checked against it", () => {

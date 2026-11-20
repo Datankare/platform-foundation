@@ -28,6 +28,21 @@ Editor ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2 lists each wit
 `REFRESH_COOKIE_KEY` for 30 days more), then the code. Consumer steps: §1b, the twelve "Release
 candidate" rows.
 
+- **Audio in the browser, part 1: the modules, the strict check and the cross-browser gate
+  (TASK-234, ADR-061).** `platform/voice/canonical-wav.ts` is the one place a WAV header is read
+  or written: `checkCanonicalWav` accepts exactly the canonical 16 kHz mono 16-bit WAV and
+  nothing else, limits that are not usable numbers throw, and the `CanonicalWav` it returns
+  cannot be forged or changed (`requireCanonicalWav` at a provider's boundary).
+  `platform/voice/browser-audio.ts` converts a recording or a picked file in the browser —
+  an upload's container named from its own first bytes (never from the type it declares), its
+  length known before it is decoded, a recording trimmed rather than refused, every failure
+  coded and carrying the step that ended it — and `detectAudioSupport()` decides by capability (Safari 18.4 or later;
+  older Safari is told it needs a newer browser). `platform/voice/browser-recorder.ts` is the
+  recorder core. Nothing calls them yet; the next audio batch wires them. The test audio is
+  generated or made bit-exact, with two recordings real Safari made, all checked by checksum;
+  `test-fixtures/audio/` is gone. A new
+  workflow, `browser-audio.yml`, runs the modules in Chromium on Linux and in Chromium, Firefox,
+  WebKit and real Safari on macOS. Guide: [AUDIO_CONVERSION.md](AUDIO_CONVERSION.md).
 - **The admin console on shared parts, pass 1 of 3 (TASK-216).** The console's core — its
   shell, the command bar and Users — is rebuilt on one set of shared parts
   (`components/admin/ui/`: the table, the panel state, the outcome display, the confirmation

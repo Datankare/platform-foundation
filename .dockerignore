@@ -28,7 +28,6 @@ next-env.d.ts
 **/*.test.tsx
 e2e
 e2e-live
-test-fixtures
 k6
 k6-results
 coverage

@@ -46,6 +46,9 @@
         "platform/voice/audio-convert-module.ts",
         "platform/voice/audio-converter-readiness.ts",
         "platform/voice/audio-format-types.ts",
+        "platform/voice/browser-audio.ts",
+        "platform/voice/browser-recorder.ts",
+        "platform/voice/canonical-wav.ts",
         "platform/voice/ffmpeg-converter.ts",
         "platform/voice/mock-audio-converter.ts",
         "platform/voice/passthrough-converter.ts"
@@ -56,6 +59,10 @@
       "components": [],
       "tests": [
         "__tests__/audio-converter.test.ts",
+        "__tests__/browser-audio-imports.test.ts",
+        "__tests__/browser-audio.test.ts",
+        "__tests__/browser-recorder.test.ts",
+        "__tests__/canonical-wav.test.ts",
         "__tests__/modules/audio-convert.module.test.ts"
       ],
       "kits": ["__tests__/contract/audio-converter-contract.ts"],

@@ -1,0 +1,157 @@
+name: Browser audio
+
+# TASK-234 (ADR-061 Part 1): the browser turns audio into canonical WAV (platform/voice/
+# browser-audio.ts, browser-recorder.ts, canonical-wav.ts). This gate runs those shipped modules in
+# real engines and asserts every cell of e2e/audio/expect.json: Chromium on Linux; Chromium,
+# Firefox, WebKit and real Safari (safaridriver) on macOS. It fails, it never skips: no
+# continue-on-error, no `|| true`. Engines are installed in each job with no cache (no cache key
+# could hold a Chromium-only entry and leave Firefox or WebKit missing), tried three times.
+#
+# platform-foundation is public, so the macOS minutes cost nothing here. Playform runs no browser
+# job (private repository; the shared modules are byte-identical, so this run proves them).
+on:
+  push:
+    branches: [main, staging, develop]
+  pull_request:
+    branches: [main, staging, develop]
+    types: [opened, synchronize, reopened]
+  # The ten consecutive green macOS runs required before the jobs become required checks
+  # (DESIGN-56f1 O-F1-4, runner-images #13668).
+  workflow_dispatch:
+
+# Least privilege (audit H-5): read the code, nothing else.
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Browser audio — Linux (Chromium)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      # As ci.yml (TASK-198): a registry blip is tried again; a third failure fails the job.
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            echo "::warning::npm ci failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      - name: Install Chromium
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npx playwright install --with-deps chromium && exit 0
+            echo "::warning::playwright install failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      - name: The browser-audio gate — Chromium
+        run: npx playwright test -c e2e/audio/playwright.config.ts --project=chromium
+
+  macos:
+    name: Browser audio — macOS (Chromium, Firefox, WebKit, Safari)
+    # Pinned, as every job is (workflow-hygiene, TASK-201/213/234): macos-26.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # CONFIRM-56f1 CF-1: a realtime AudioContext on macOS renders through Core Audio's output
+      # device, and GitHub's macOS runners sometimes start without their "Null Audio Device"
+      # (actions/runner-images #13668). Require one; restart coreaudiod up to three times; else fail
+      # with that reason (never a table mismatch, never continue-on-error).
+      - name: Audio output device present
+        run: |
+          set -euo pipefail
+          has_device() {
+            out=$(system_profiler SPAudioDataType 2>/dev/null || true)
+            grep -qE 'Output Channels:|Default Output Device: Yes' <<<"$out"
+          }
+          restart=0
+          while [ "$restart" -le 3 ]; do
+            poll=1
+            while [ "$poll" -le 10 ]; do
+              if has_device; then
+                system_profiler SPAudioDataType
+                echo "audio output device present (coreaudiod restarts: $restart)"
+                exit 0
+              fi
+              sleep 2
+              poll=$((poll + 1))
+            done
+            if [ "$restart" -lt 3 ]; then
+              echo "::warning::no audio output device; restarting coreaudiod ($((restart + 1)) of 3)"
+              sudo killall coreaudiod || true
+            fi
+            restart=$((restart + 1))
+          done
+          echo "::error::no audio device on this runner (runner-images #13668) — re-run the job"
+          exit 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            echo "::warning::npm ci failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      - name: Install Chromium, Firefox and WebKit
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npx playwright install --with-deps chromium firefox webkit && exit 0
+            echo "::warning::playwright install failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      - name: The browser-audio gate — Chromium, Firefox, WebKit
+        run: npx playwright test -c e2e/audio/playwright.config.ts
+
+      # GitHub's macOS runners have passwordless sudo; the image already enables it, and this
+      # makes the job independent of that.
+      - name: Allow Safari to be driven by safaridriver
+        run: |
+          set -euo pipefail
+          safaridriver --version
+          sudo safaridriver --enable
+
+      - name: The browser-audio gate — real Safari
+        run: node e2e/audio/safari-check.mjs --out "$RUNNER_TEMP/safari"
+
+      - name: Safari's recordings and the run's facts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: browser-audio-safari
+          path: ${{ runner.temp }}/safari
+          if-no-files-found: ignore
+          retention-days: 14

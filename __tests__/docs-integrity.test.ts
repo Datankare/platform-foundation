@@ -76,6 +76,37 @@ function adrRefsInDocs(): string[] {
   return [...out];
 }
 
+/** The one line that reserves ADR numbers for batches not yet landed (exact form, own line). */
+export const RESERVATION_LINE =
+  /^Reserved ADR numbers \(batches not yet landed\): (ADR-\d{3}(?:, ADR-\d{3})*)\.$/gm;
+
+/**
+ * ADR numbers docs/TASKS.md reserves for a batch not yet landed (TASK-234). Batches land in
+ * parallel, so a later number (ADR-061) can exist before earlier ones; task-register-integrity's
+ * gap test needs TASKS.md to name each gap, which would otherwise read here as a dangling
+ * reference. Only ONE line of the exact form above reserves, and only the numbers on it; each must
+ * be a real gap below the last ADR file. A reserved number whose ADR now exists is stale: it is
+ * reported (remove it from the line), as an exception that matches nothing is.
+ */
+export function reservations(
+  tasks: string,
+  existing: readonly string[]
+): { reserved: string[]; problems: string[] } {
+  const lines = [...tasks.matchAll(RESERVATION_LINE)];
+  const problems: string[] = [];
+  if (lines.length > 1) problems.push("more than one reservation line in docs/TASKS.md");
+  const last = Math.max(0, ...existing.map((id) => Number(id.slice(4))));
+  const reserved: string[] = [];
+  for (const id of lines[0]?.[1].split(", ") ?? []) {
+    if (existing.includes(id))
+      problems.push(`${id} exists now: remove it from the reservation line`);
+    else if (Number(id.slice(4)) >= last)
+      problems.push(`${id} is not a gap below the last ADR: write the ADR`);
+    else reserved.push(id);
+  }
+  return { reserved: reserved.sort(), problems };
+}
+
 describe("docs integrity — ADRs", () => {
   const files = adrFilesIds();
 
@@ -83,10 +114,52 @@ describe("docs integrity — ADRs", () => {
     expect(files.length).toBeGreaterThan(30);
   });
 
-  it("has no dangling ADR references — every ADR-NNN mentioned in docs exists as a file", () => {
+  it("has no dangling ADR references — every ADR-NNN mentioned in docs exists as a file (or is a reserved gap)", () => {
     const fileSet = new Set(files);
-    const dangling = adrRefsInDocs().filter((id) => !fileSet.has(id));
+    const r = reservations(read("docs/TASKS.md"), files);
+    expect(r.problems).toEqual([]);
+    const reserved = new Set(r.reserved);
+    const dangling = adrRefsInDocs().filter(
+      (id) => !fileSet.has(id) && !reserved.has(id)
+    );
     expect(dangling).toEqual([]);
+  });
+
+  it("[self-test] only the one structured line reserves; prose, other numbers, stale and non-gap entries do not", () => {
+    const existing = ["ADR-056", "ADR-057", "ADR-061"];
+    const line =
+      "Reserved ADR numbers (batches not yet landed): ADR-058, ADR-059, ADR-060.";
+    expect(reservations(`Intro.\n\n${line}\n\nSee ADR-044.`, existing)).toEqual({
+      reserved: ["ADR-058", "ADR-059", "ADR-060"],
+      problems: [],
+    });
+    // RB-8's plants: a prose sentence reserves nothing, and names nothing else.
+    expect(
+      reservations(
+        "ADR-058 is reserved for 3a; the decision itself is in ADR-044.",
+        existing
+      ).reserved
+    ).toEqual([]);
+    expect(
+      reservations(
+        "Nothing is reserved for ADR-050 — it was deleted by mistake.",
+        existing
+      ).reserved
+    ).toEqual([]);
+    expect(reservations(`  ${line}`, existing).reserved).toEqual([]);
+    // Stale: the ADR exists now. Not a gap: above the last ADR.
+    expect(
+      reservations(
+        "Reserved ADR numbers (batches not yet landed): ADR-057, ADR-099.",
+        existing
+      ).problems
+    ).toEqual([
+      "ADR-057 exists now: remove it from the reservation line",
+      "ADR-099 is not a gap below the last ADR: write the ADR",
+    ]);
+    expect(reservations(`${line}\n${line}`, existing).problems).toEqual([
+      "more than one reservation line in docs/TASKS.md",
+    ]);
   });
 
   it("lists every ADR file in the TAD index (the index cannot fall behind the files)", () => {

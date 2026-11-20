@@ -47,6 +47,9 @@ const E2E_DURABLE_STORES = Object.fromEntries(
 
 export default defineConfig({
   testDir: "./e2e",
+  // The browser-audio gate has its own config and workflow (e2e/audio/playwright.config.ts,
+  // .github/workflows/browser-audio.yml, TASK-234): never part of this run (CI Layer 3).
+  testIgnore: ["audio/**"],
   // Records the test double's age through the app's own route, once the server is up (CI only).
   globalSetup: "./e2e/global-setup.ts",
   fullyParallel: false,

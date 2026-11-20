@@ -10,6 +10,10 @@ the lint boundary allows each to import only the modules it declares.
 | `song-id`       | `song-id.ts`       | `song-id-module.ts`       | audio-convert              | Song identification providers, the active provider, its probe |
 | `audio-convert` | `audio-convert.ts` | `audio-convert-module.ts` | —                          | Canonical format, converters, readiness, probe                |
 
+Audio in the browser (TASK-234, ADR-061): `canonical-wav.ts` (the canonical WAV and its strict
+check), `browser-audio.ts` and `browser-recorder.ts` (converting and recording in the browser) — see
+[docs/AUDIO_CONVERSION.md](../../docs/AUDIO_CONVERSION.md).
+
 Import a module through its entry: `@/platform/voice` (voice), `@/platform/voice/song-id`,
 `@/platform/voice/audio-convert`. `@/platform/voice` no longer re-exports song identification or
 audio conversion.

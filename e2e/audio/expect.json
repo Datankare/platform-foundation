@@ -1,0 +1,493 @@
+{
+  "about": [
+    "The per-engine expectation table of the browser-audio gate (TASK-234; DESIGN-56f1 §9.1).",
+    "Every cell is asserted. 'decodes' = a valid canonical WAV, its length as the case says (exact to one sample for generated WAVs, within 0.05 s for compressed files, after the trim rules; 'withinFor' gives one engine its own measured tolerance, with 'withinReason'), its check passed (tone: peak 1234 ± 4 Hz; alias: RMS < 0.001; silence), no 'absent' text in it, and — for an upload — its length known from the probe before the one decode. 'refused:<code>@<stage>:0-decodes' = that code, raised at that step of the product (input, container, probe), and decodeAudioData called zero times. A recorder type true = it records a valid file of length in [timer − 0.5 s, timer] with the tone; every engine records at least one type of the product's RECORDER_TYPES; 'recordedAs' is the type each recording's Blob carries (spaces ignored).",
+    "'refused-after-decode:<code>|<code>' = the probe let the file through, the one decode ran, and the conversion ended in one of the codes NAMED, at the decode or the length check — never accepted, never another error. Two kinds of file end here. (1) One whose container lies about its length (lying-length.flac declares 10 s and holds about 575 s; ADR-061 D4), in an engine that reads the whole stream: Chromium decodes all of it and the decoded-length check refuses it (too_long; the limit is 60 s, so a result of 575 s can only be refused), and Firefox's decoder refuses the file itself (undecodable at the decode, after one decode call — observed in run b56f1r3-mac-pf-1 (the owner's Mac, 2026-11-18, the second Mac run, on tree 869f978a6109); its cell names that code beside the two an engine that decodes everything can end in). (2) One whose declared length is within the probe's 1 s tolerance of the limit while its decoded length is over the 0.25 s tolerance (tone-fmp4-60s.m4a with a limit of 59 s in WebKit and Safari, whose media element reports it as 59.98 s; Chromium and Firefox report over 60 s and refuse it at the probe).",
+    "'bounded-by-declared-length' = the same lying file in an engine that decodes ONLY the length the container declares (WebKit and Safari, observed in run b56f1r3-mac-pf-1 (the owner's Mac, 2026-11-18, the second Mac run, on tree 869f978a6109): the probe answered 10.008 s, the decode gave exactly 10 s of the file's silence, nothing beyond). There the file converts, and that is safe only while the bound is real, so the cell asserts it: exactly one decode, the length known from the probe first and no longer than declared, and the DECODED length (before any trim) and the converted length both within 'declaredWithin' of the case's 'declaredSeconds' and never over 'maxSeconds'. A decoded or converted length beyond the declared one fails — an engine that starts reading the whole stream must end in a refusal (the cell is then changed to 'refused-after-decode', with the run that shows it), never in an accepted longer result.",
+    "A case with a 'pickerType' is converted twice — as a Blob with no type, and as a Blob typed as a file picker types it — and both results must hold the same cell and must have given the probe's media element the same type: the product names the container from the file's first bytes and never uses the declared type (garbage.bin declared audio/mpeg stays refused).",
+    "'diagnostics' is reported, never asserted beyond being present: for each listed file, what a bare media element does with it untyped, typed application/octet-stream (as run b56f1-mac-1's files were: the gate server's Content-Type) and typed as a picker types it (the product's probe and an event trace with the element's error code and message) and, where asked, whether decodeAudioData alone decodes it and to what length. It separates a fact about an engine from an artefact of this harness. Two entries exist only to answer a question in the next run: lying-length.flac (how much each engine's decoder alone makes of it, and Firefox's error text) and nodur-80s-safari-form.webm — Safari's own duration-less recording 20 times over (80.2 s, made in code by generate.ts's repeatedLiveWebm): whether the probe in WebKit and Safari finds the real end of a LONG duration-less WebM of the form a real recorder writes, which the generated nodur files could not show there.",
+    "A mismatch fails. Changing a cell is a reviewed commit with the run that shows the new behaviour.",
+    "EVIDENCE. chromium: run on Linux (here and in CI) and on macOS (both Mac runs). firefox (Firefox 157, Playwright's build): every cell held in run b56f1-mac-1 and in run b56f1r3-mac-pf-1 (the owner's Mac, 2026-11-18, the second Mac run, on tree 869f978a6109), except lying-length.flac, corrected from the second run (the row did not exist in the first). webkit (Playwright's WebKit 27.2) and safari (real Safari 26.6.2): corrected from the first run — fragmented MP4 comes out up to 25 ms short ('withinFor'); tone-fmp4-60s.m4a with a limit of 59 s is refused after one decode; both recorder types record, as 'recordedAs' says — and from the second: lying-length.flac converts to its declared 10 s. OBSERVED IN THE SECOND RUN (they were predictions before it): with the container named from the file's first bytes and the probe's Blob typed from it, webkit and safari convert tone.mp3, tone.flac and wide-8ch-192k.flac and refuse bomb-1h.flac as too_long at the probe with no decode; every typed result equals its untyped one in all four engines; all four convert both of Safari's recordings; 'recordedAs' holds. nodur-30min.webm and nodur-3s.webm are refused by webkit and safari as undecodable at the probe, with no decode: the media element raises error 4 (source not supported) before the metadata arrives, the same whether it is told audio/webm, application/octet-stream or nothing, while decodeAudioData alone decodes nodur-3s.webm. That is a fact about this generated form, not about every WebM without a duration: the same run's diagnostics show the product's probe MEASURING Safari's own duration-less recording in webkit and safari (4.0025 s through the seek probe, told audio/webm) and decodeAudioData decoding it (4.01 s).",
+    "FIRST TESTED BY THE THIRD MAC RUN, job b56f1r4-mac-pf-1: (1) 'safari-26.6.2-webm.webm as an upload, max 60' in firefox, webkit and safari — a new case; its cell is written from the second run's diagnostics for the same file (the probe's answer, typed audio/webm: 4.004 s from the metadata in Firefox, 4.0025 s through the seek probe in WebKit and Safari; decodeAudioData alone: 4.01 s in all four), which observed each step of an upload but not the conversion as one; chromium is observed on Linux. (2) The 'bounded-by-declared-length' cell as an assertion (its values are the second run's). (3) Information only, no cell: the diagnostics for lying-length.flac and for nodur-80s-safari-form.webm. Still NOT known, and no cell guesses it: why WebKit and Safari refuse the generated nodur form, and what they do with a duration-less WebM written by another recorder (Firefox's; Chromium 153's recorder, examined on Linux, writes a WebM that states its duration)."
+  ],
+  "recordingSeconds": 4,
+  "probeTimeoutMs": 30000,
+  "diagnostics": {
+    "probeTimeoutMs": 10000,
+    "files": {
+      "tone.mp3": {
+        "pickerType": "audio/mpeg",
+        "rawDecode": true
+      },
+      "tone.flac": {
+        "pickerType": "audio/flac",
+        "rawDecode": true
+      },
+      "bomb-1h.flac": {
+        "pickerType": "audio/flac"
+      },
+      "tone.webm": {
+        "pickerType": "audio/webm",
+        "rawDecode": true
+      },
+      "nodur-3s.webm": {
+        "pickerType": "audio/webm",
+        "rawDecode": true
+      },
+      "nodur-30min.webm": {
+        "pickerType": "audio/webm"
+      },
+      "safari-26.6.2-webm.webm": {
+        "pickerType": "audio/webm",
+        "rawDecode": true
+      },
+      "safari-26.6.2-mp4.m4a": {
+        "pickerType": "audio/mp4",
+        "rawDecode": true
+      },
+      "lying-length.flac": {
+        "pickerType": "audio/flac",
+        "rawDecode": true
+      },
+      "nodur-80s-safari-form.webm": {
+        "pickerType": "audio/webm",
+        "rawDecode": true
+      }
+    }
+  },
+  "cases": {
+    "tone.webm": {
+      "fixture": "tone.webm",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 0.05,
+      "check": "tone",
+      "pickerType": "audio/webm"
+    },
+    "tagged.webm": {
+      "fixture": "tagged.webm",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 0.05,
+      "check": "tone",
+      "absent": ["SECRETTITLE", "SECRETARTIST"],
+      "pickerType": "audio/webm"
+    },
+    "tone-opus.ogg": {
+      "fixture": "tone-opus.ogg",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 0.05,
+      "check": "tone",
+      "pickerType": "audio/ogg"
+    },
+    "tone-vorbis.ogg": {
+      "fixture": "tone-vorbis.ogg",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 0.05,
+      "check": "tone",
+      "pickerType": "audio/ogg"
+    },
+    "tone.m4a": {
+      "fixture": "tone.m4a",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 0.05,
+      "check": "tone",
+      "pickerType": "audio/mp4"
+    },
+    "tone-fmp4.m4a": {
+      "fixture": "tone-fmp4.m4a",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 0.05,
+      "check": "tone",
+      "pickerType": "audio/mp4"
+    },
+    "tone-fmp4-20s.m4a as a recording, max 20": {
+      "fixture": "tone-fmp4-20s.m4a",
+      "source": "recording",
+      "maxSeconds": 20,
+      "minSeconds": 10,
+      "seconds": 20,
+      "within": 0,
+      "check": "tone",
+      "withinFor": {
+        "webkit": 0.05,
+        "safari": 0.05
+      },
+      "withinReason": "Measured in run b56f1-mac-1 (WebKit 27.2 and Safari 26.6.2): an AAC stream in fragmented MP4 decodes 6 to 25 ms SHORTER than its nominal length there (2.9939 s for 3, 19.9909 s for 20, 59.9757 s for 60), while Chromium decodes it 23 ms longer and Firefox 24 to 42 ms longer (run b56f1r3-mac-pf-1), and the trim then gives the exact length. Consistent with WebKit dropping the encoder's priming samples and ending on a whole AAC frame; the cause is not proven here, the measured values are."
+    },
+    "tone-fmp4-60s.m4a, max 60": {
+      "fixture": "tone-fmp4-60s.m4a",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 60,
+      "within": 0,
+      "check": "tone",
+      "pickerType": "audio/mp4",
+      "withinFor": {
+        "webkit": 0.05,
+        "safari": 0.05
+      },
+      "withinReason": "Measured in run b56f1-mac-1 (WebKit 27.2 and Safari 26.6.2): an AAC stream in fragmented MP4 decodes 6 to 25 ms SHORTER than its nominal length there (2.9939 s for 3, 19.9909 s for 20, 59.9757 s for 60), while Chromium decodes it 23 ms longer and Firefox 24 to 42 ms longer (run b56f1r3-mac-pf-1), and the trim then gives the exact length. Consistent with WebKit dropping the encoder's priming samples and ending on a whole AAC frame; the cause is not proven here, the measured values are."
+    },
+    "tone-fmp4-60s.m4a, max 59": {
+      "fixture": "tone-fmp4-60s.m4a",
+      "source": "upload",
+      "maxSeconds": 59,
+      "minSeconds": 0.5,
+      "pickerType": "audio/mp4"
+    },
+    "tone.mp3": {
+      "fixture": "tone.mp3",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 0.05,
+      "check": "tone",
+      "pickerType": "audio/mpeg"
+    },
+    "tone.flac": {
+      "fixture": "tone.flac",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 0.05,
+      "check": "tone",
+      "pickerType": "audio/flac"
+    },
+    "bomb-1h.flac": {
+      "fixture": "bomb-1h.flac",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "pickerType": "audio/flac"
+    },
+    "wide-8ch-192k.flac": {
+      "fixture": "wide-8ch-192k.flac",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 5,
+      "within": 0.05,
+      "check": "tone",
+      "pickerType": "audio/flac"
+    },
+    "safari-26.6.2-webm.webm as a recording, max 4": {
+      "fixture": "safari-26.6.2-webm.webm",
+      "source": "recording",
+      "maxSeconds": 4,
+      "minSeconds": 1,
+      "seconds": 4,
+      "within": 0.05,
+      "check": "tone"
+    },
+    "safari-26.6.2-mp4.m4a as a recording, max 4": {
+      "fixture": "safari-26.6.2-mp4.m4a",
+      "source": "recording",
+      "maxSeconds": 4,
+      "minSeconds": 1,
+      "seconds": 4,
+      "within": 0.05,
+      "check": "tone"
+    },
+    "safari-26.6.2-webm.webm as an upload, max 60": {
+      "fixture": "safari-26.6.2-webm.webm",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 4.01,
+      "within": 0.05,
+      "check": "tone",
+      "pickerType": "audio/webm"
+    },
+    "tone-44k-s16.wav": {
+      "fixture": "tone-44k-s16.wav",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 6.25e-5,
+      "check": "tone"
+    },
+    "tone-48k-s24.wav": {
+      "fixture": "tone-48k-s24.wav",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 6.25e-5,
+      "check": "tone"
+    },
+    "alias-12k.wav": {
+      "fixture": "alias-12k.wav",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 6.25e-5,
+      "check": "alias"
+    },
+    "tone-59s-48k-stereo.wav": {
+      "fixture": "tone-59s-48k-stereo.wav",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 59,
+      "within": 6.25e-5,
+      "check": "tone"
+    },
+    "nodur-30min.webm": {
+      "fixture": "nodur-30min.webm",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "pickerType": "audio/webm"
+    },
+    "nodur-3s.webm": {
+      "fixture": "nodur-3s.webm",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "seconds": 3,
+      "within": 0.05,
+      "check": "silence",
+      "pickerType": "audio/webm"
+    },
+    "garbage.bin": {
+      "fixture": "garbage.bin",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "pickerType": "audio/mpeg"
+    },
+    "empty.bin": {
+      "fixture": "empty.bin",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5
+    },
+    "25 MiB + 1 byte of zeros": {
+      "fixture": "@zeros:26214401",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5
+    },
+    "lying-length.flac": {
+      "fixture": "lying-length.flac",
+      "source": "upload",
+      "maxSeconds": 60,
+      "minSeconds": 0.5,
+      "pickerType": "audio/flac",
+      "declaredSeconds": 10,
+      "declaredWithin": 0.05,
+      "check": "silence"
+    }
+  },
+  "engines": {
+    "chromium": {
+      "recorderTypes": {
+        "audio/webm;codecs=opus": true,
+        "audio/ogg;codecs=opus": false,
+        "audio/mp4": true
+      },
+      "detect": {
+        "music": true,
+        "upload": true
+      },
+      "files": {
+        "tone.webm": "decodes",
+        "tagged.webm": "decodes",
+        "tone-opus.ogg": "decodes",
+        "tone-vorbis.ogg": "decodes",
+        "tone.m4a": "decodes",
+        "tone-fmp4.m4a": "decodes",
+        "tone-fmp4-20s.m4a as a recording, max 20": "decodes",
+        "tone-fmp4-60s.m4a, max 60": "decodes",
+        "tone-fmp4-60s.m4a, max 59": "refused:too_long@probe:0-decodes",
+        "tone.mp3": "decodes",
+        "tone.flac": "decodes",
+        "bomb-1h.flac": "refused:too_long@probe:0-decodes",
+        "wide-8ch-192k.flac": "decodes",
+        "safari-26.6.2-webm.webm as a recording, max 4": "decodes",
+        "safari-26.6.2-mp4.m4a as a recording, max 4": "decodes",
+        "safari-26.6.2-webm.webm as an upload, max 60": "decodes",
+        "tone-44k-s16.wav": "decodes",
+        "tone-48k-s24.wav": "decodes",
+        "alias-12k.wav": "decodes",
+        "tone-59s-48k-stereo.wav": "decodes",
+        "nodur-30min.webm": "refused:too_long@probe:0-decodes",
+        "nodur-3s.webm": "decodes",
+        "garbage.bin": "refused:undecodable@container:0-decodes",
+        "empty.bin": "refused:empty@input:0-decodes",
+        "25 MiB + 1 byte of zeros": "refused:too_large@input:0-decodes",
+        "lying-length.flac": "refused-after-decode:too_long|out_of_memory"
+      },
+      "recordings": {
+        "default": "valid",
+        "audio/mp4": "valid"
+      },
+      "recordedAs": {
+        "default": "audio/webm;codecs=opus",
+        "audio/mp4": "audio/mp4;codecs=opus"
+      }
+    },
+    "firefox": {
+      "recorderTypes": {
+        "audio/webm;codecs=opus": true,
+        "audio/ogg;codecs=opus": true,
+        "audio/mp4": false
+      },
+      "detect": {
+        "music": true,
+        "upload": true
+      },
+      "files": {
+        "tone.webm": "decodes",
+        "tagged.webm": "decodes",
+        "tone-opus.ogg": "decodes",
+        "tone-vorbis.ogg": "decodes",
+        "tone.m4a": "decodes",
+        "tone-fmp4.m4a": "decodes",
+        "tone-fmp4-20s.m4a as a recording, max 20": "decodes",
+        "tone-fmp4-60s.m4a, max 60": "decodes",
+        "tone-fmp4-60s.m4a, max 59": "refused:too_long@probe:0-decodes",
+        "tone.mp3": "decodes",
+        "tone.flac": "decodes",
+        "bomb-1h.flac": "refused:too_long@probe:0-decodes",
+        "wide-8ch-192k.flac": "decodes",
+        "safari-26.6.2-webm.webm as a recording, max 4": "decodes",
+        "safari-26.6.2-mp4.m4a as a recording, max 4": "decodes",
+        "safari-26.6.2-webm.webm as an upload, max 60": "decodes",
+        "tone-44k-s16.wav": "decodes",
+        "tone-48k-s24.wav": "decodes",
+        "alias-12k.wav": "decodes",
+        "tone-59s-48k-stereo.wav": "decodes",
+        "nodur-30min.webm": "refused:too_long@probe:0-decodes",
+        "nodur-3s.webm": "decodes",
+        "garbage.bin": "refused:undecodable@container:0-decodes",
+        "empty.bin": "refused:empty@input:0-decodes",
+        "25 MiB + 1 byte of zeros": "refused:too_large@input:0-decodes",
+        "lying-length.flac": "refused-after-decode:undecodable|too_long|out_of_memory"
+      },
+      "recordings": {
+        "default": "valid",
+        "audio/mp4": "unsupported"
+      },
+      "recordedAs": {
+        "default": "audio/webm;codecs=opus"
+      }
+    },
+    "webkit": {
+      "recorderTypes": {
+        "audio/webm;codecs=opus": true,
+        "audio/ogg;codecs=opus": false,
+        "audio/mp4": true
+      },
+      "detect": {
+        "music": true,
+        "upload": true
+      },
+      "files": {
+        "tone.webm": "decodes",
+        "tagged.webm": "decodes",
+        "tone-opus.ogg": "decodes",
+        "tone-vorbis.ogg": "decodes",
+        "tone.m4a": "decodes",
+        "tone-fmp4.m4a": "decodes",
+        "tone-fmp4-20s.m4a as a recording, max 20": "decodes",
+        "tone-fmp4-60s.m4a, max 60": "decodes",
+        "tone-fmp4-60s.m4a, max 59": "refused-after-decode:too_long",
+        "tone.mp3": "decodes",
+        "tone.flac": "decodes",
+        "bomb-1h.flac": "refused:too_long@probe:0-decodes",
+        "wide-8ch-192k.flac": "decodes",
+        "safari-26.6.2-webm.webm as a recording, max 4": "decodes",
+        "safari-26.6.2-mp4.m4a as a recording, max 4": "decodes",
+        "safari-26.6.2-webm.webm as an upload, max 60": "decodes",
+        "tone-44k-s16.wav": "decodes",
+        "tone-48k-s24.wav": "decodes",
+        "alias-12k.wav": "decodes",
+        "tone-59s-48k-stereo.wav": "decodes",
+        "nodur-30min.webm": "refused:undecodable@probe:0-decodes",
+        "nodur-3s.webm": "refused:undecodable@probe:0-decodes",
+        "garbage.bin": "refused:undecodable@container:0-decodes",
+        "empty.bin": "refused:empty@input:0-decodes",
+        "25 MiB + 1 byte of zeros": "refused:too_large@input:0-decodes",
+        "lying-length.flac": "bounded-by-declared-length"
+      },
+      "recordings": {
+        "default": "valid",
+        "audio/mp4": "valid"
+      },
+      "recordedAs": {
+        "default": "audio/webm;codecs=opus",
+        "audio/mp4": "audio/mp4;codecs=mp4a.40.2"
+      }
+    },
+    "safari": {
+      "recorderTypes": {
+        "audio/webm;codecs=opus": true,
+        "audio/ogg;codecs=opus": false,
+        "audio/mp4": true
+      },
+      "detect": {
+        "music": true,
+        "upload": true
+      },
+      "files": {
+        "tone.webm": "decodes",
+        "tagged.webm": "decodes",
+        "tone-opus.ogg": "decodes",
+        "tone-vorbis.ogg": "decodes",
+        "tone.m4a": "decodes",
+        "tone-fmp4.m4a": "decodes",
+        "tone-fmp4-20s.m4a as a recording, max 20": "decodes",
+        "tone-fmp4-60s.m4a, max 60": "decodes",
+        "tone-fmp4-60s.m4a, max 59": "refused-after-decode:too_long",
+        "tone.mp3": "decodes",
+        "tone.flac": "decodes",
+        "bomb-1h.flac": "refused:too_long@probe:0-decodes",
+        "wide-8ch-192k.flac": "decodes",
+        "safari-26.6.2-webm.webm as a recording, max 4": "decodes",
+        "safari-26.6.2-mp4.m4a as a recording, max 4": "decodes",
+        "safari-26.6.2-webm.webm as an upload, max 60": "decodes",
+        "tone-44k-s16.wav": "decodes",
+        "tone-48k-s24.wav": "decodes",
+        "alias-12k.wav": "decodes",
+        "tone-59s-48k-stereo.wav": "decodes",
+        "nodur-30min.webm": "refused:undecodable@probe:0-decodes",
+        "nodur-3s.webm": "refused:undecodable@probe:0-decodes",
+        "garbage.bin": "refused:undecodable@container:0-decodes",
+        "empty.bin": "refused:empty@input:0-decodes",
+        "25 MiB + 1 byte of zeros": "refused:too_large@input:0-decodes",
+        "lying-length.flac": "bounded-by-declared-length"
+      },
+      "recordings": {
+        "default": "valid",
+        "audio/mp4": "valid"
+      },
+      "recordedAs": {
+        "default": "audio/webm;codecs=opus",
+        "audio/mp4": "audio/mp4;codecs=mp4a.40.2"
+      }
+    }
+  }
+}

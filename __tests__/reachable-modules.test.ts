@@ -111,6 +111,18 @@ export const KNOWN_UNREACHED: Readonly<Record<string, Readonly<Record<string, st
       "platform/auth/app-json-columns.ts":
         "consumer-owned register read by __tests__/db/json-columns.db.test.ts (@guard): the " +
         "app's own jsonb columns (TASK-229)",
+      "platform/voice/canonical-wav.ts":
+        "shipped ahead of its callers (TASK-234): the browser audio module that 56f-2 wires " +
+        "into the recorder hook and the upload screen — this entry then fails until removed; " +
+        "read by __tests__/browser-audio-imports.test.ts",
+      "platform/voice/browser-audio.ts":
+        "shipped ahead of its callers (TASK-234): the browser audio module that 56f-2 wires " +
+        "into the recorder hook and the upload screen — this entry then fails until removed; " +
+        "read by __tests__/browser-audio-imports.test.ts",
+      "platform/voice/browser-recorder.ts":
+        "shipped ahead of its callers (TASK-234): the browser audio module that 56f-2 wires " +
+        "into the recorder hook and the upload screen — this entry then fails until removed; " +
+        "read by __tests__/browser-audio-imports.test.ts",
     },
     playform: {
       "platform/route-policy/app-route-policy.ts":
@@ -126,6 +138,18 @@ export const KNOWN_UNREACHED: Readonly<Record<string, Readonly<Record<string, st
       "platform/auth/app-json-columns.ts":
         "consumer-owned register read by __tests__/db/json-columns.db.test.ts (@guard): " +
         "Playform's own jsonb columns (TASK-229)",
+      "platform/voice/canonical-wav.ts":
+        "shipped ahead of its callers (TASK-234): the browser audio module that 56f-2 wires " +
+        "into the recorder hook and the upload screen — this entry then fails until removed; " +
+        "read by __tests__/browser-audio-imports.test.ts",
+      "platform/voice/browser-audio.ts":
+        "shipped ahead of its callers (TASK-234): the browser audio module that 56f-2 wires " +
+        "into the recorder hook and the upload screen — this entry then fails until removed; " +
+        "read by __tests__/browser-audio-imports.test.ts",
+      "platform/voice/browser-recorder.ts":
+        "shipped ahead of its callers (TASK-234): the browser audio module that 56f-2 wires " +
+        "into the recorder hook and the upload screen — this entry then fails until removed; " +
+        "read by __tests__/browser-audio-imports.test.ts",
     },
   };
 

@@ -7,6 +7,127 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-234 — Audio in the browser: the strict canonical-WAV check, the browser converter and recorder, deterministic test audio, and the cross-browser gate (observed in Chromium, Firefox, WebKit and real Safari; two runs on the owner's Mac, corrected from each)
+
+| Field        | Detail                                                                                                                      |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-234                                                                                                                    |
+| **Type**     | Architecture and test (ADR-061 Part 1)                                                                                      |
+| **Severity** | High (the base of the audio fixes: today's production converter returns silence; an m4a reaches speech-to-text mislabelled) |
+| **Phase**    | Phase 5                                                                                                                     |
+| **Target**   | v6.0.0 (RC)                                                                                                                 |
+| **Status**   | Built (batch 56f-1); corrected from two Mac runs; lands only after the third Mac run holds; the app is wired next           |
+| **Logged**   | 2026-11-17 (owner's decision 18:02: audio is converted in the browser, the server checks it strictly)                       |
+
+Batch 56f-1, in both repositories (Playform: its TASK-5036). Nothing a person sees changes: no
+route, screen, message or setting. The ADR numbers on the next line are held for the erasure
+batches 56e-3a, 56e-3b and 56e-3c (IDS.md); each is removed from it when its ADR lands
+(`__tests__/docs-integrity.test.ts` fails on a stale one).
+
+Reserved ADR numbers (batches not yet landed): ADR-059, ADR-060.
+
+| Finding (review)                   | Before                                                                                                                                                                                                                                                                 | After                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WA-1 a checked WAV forged          | The first design branded the checked audio by type only: raw bytes cast to it, or a JSON body, reached a provider                                                                                                                                                      | `CanonicalWav` is a class: a module-private mint, ES-private bytes, frozen object, class and prototype; `requireCanonicalWav` throws `TypeError` for 14 forgery forms                                                                                                                                                                                                                                                                                                                                                                                            |
+| WA-3 limits                        | A `NaN` maximum accepted a 200-second file; a `NaN` minimum accepted none                                                                                                                                                                                              | `validateAudioLimits` first: anything not finite and in range throws `misconfigured`; the converter's options too                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| WA-4 the 30-minute 1.1 MB WebM     | A file without a duration was decoded whole (about 115 MB in the person's tab)                                                                                                                                                                                         | An upload's declared length is checked before decoding (metadata, then a seek past the end; 3 s); unknown is refused; 0 decodes for every unbounded file (all four engines, first Mac run). A file that lies about its length reaches the decode: it is refused, or (WebKit, Safari) converted to no more than the length it declares — ADR-061 D4 and §6, with a gate row that asserts each                                                                                                                                                                     |
+| WA-5, WB-4 a hidden tab            | Timer yields, clamped to once a second when hidden; a long-task count asserted                                                                                                                                                                                         | One second per slice, a `MessageChannel` yield; slicing asserted structurally; timings logged only                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| WA-11, WB-1, WB-14 the test audio  | Fixtures with `LIST` chunks the check refuses, one a commercial clip; evidence files rewritten by a storage (C2PA)                                                                                                                                                     | `test-fixtures/audio/` removed; WAVs and damaged input made in code; 12 encoder-made files, bit-exact, and Safari's 2 recordings, in `SHA256SUMS`; a test fails on a changed byte, a C2PA/JUMBF marker or audio anywhere else                                                                                                                                                                                                                                                                                                                                    |
+| WA-17, WB-11 the pick limit        | The 4 MiB server cap applied to the picked file: a 59-second stereo WAV (11.3 MB) refused                                                                                                                                                                              | 25 MiB pick limit, checked before a byte is read; the 4 MiB cap stays on the converted WAV                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| WA-20 failure codes                | A file moved or in iCloud, an unmeasurable file, a bug: all "damaged file"                                                                                                                                                                                             | `read_failed`, `unmeasurable`, `out_of_memory`, `browser_unsupported`; a bug is rethrown for the error reporter                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| WB-2, WB-5, WB-19 length           | Safari's AAC recording (20.023 s for a 20 s timer) refused as too long; a wall-clock minimum                                                                                                                                                                           | A recording is trimmed to its limit, never refused for length; an upload may be 0.25 s over and is trimmed; one minimum, on the decoded length                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| WB-3, WB-20 browsers               | The browser's support was assumed                                                                                                                                                                                                                                      | `detectAudioSupport()` by capability, never by name; Safari before 18.4 not claimed (D-3, one switch); per-browser formats in docs/AUDIO_CONVERSION.md                                                                                                                                                                                                                                                                                                                                                                                                           |
+| WB-6, WB-7, WB-21 the gate         | No browser ever ran the converter                                                                                                                                                                                                                                      | `e2e/audio/` (platform-foundation): the shipped modules against `e2e/audio/expect.json`, every cell asserted — Chromium and Firefox observed; WebKit and real Safari observed in the first Mac run and corrected from it (ADR-061 §5); Safari's own two recordings from that run are committed test files                                                                                                                                                                                                                                                        |
+| WB-8 the recorder                  | `start(100)`: WebKit bug 301507 gave empty Blobs                                                                                                                                                                                                                       | `browser-recorder.ts`: `start()` with no timeslice, one stop, interruptions refused, microphone failures told apart                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| R3 the first Mac run (2026-11-18)  | In WebKit and Safari an MP3 — and in Safari a FLAC — was called damaged in 2 ms: the length probe's media element had been told `application/octet-stream` and those engines do not recognise the format from the bytes. The gate could not say which step had refused | An upload's container is named from its first 16 bytes (a strict table of the six claimed containers) and the probe is given a Blob typed from it; the declared type is never used and never widens what is accepted. Every refusal carries its step (`BrowserAudioError.stage`); the probe reports the media element's error code. The gate runs each compressed upload untyped and typed, asserts the step, and reports eight files' bare media-element behaviour. Cells corrected from the run's evidence; Safari's two recordings are test files. ADR-061 §5 |
+| R4 the second Mac run (2026-11-18) | A file declaring 10 s and holding 575 s had one expected outcome in every engine (refused `too_long` or `out_of_memory`); Firefox refused it as `undecodable`, and WebKit and Safari converted its declared 10 s. The table still marked observed cells as predictions | The cell says what each engine does: Chromium refused after a whole decode; Firefox refused, its codes named; WebKit and Safari `bounded-by-declared-length` — accepted only when the decoded and converted lengths are the declared one (± 0.05 s), within the limit, after one decode. Predictions the run observed are recorded as observed; Safari's refusal of the generated duration-less WebM files is recorded as its behaviour, with what a person meets. Safari's own WebM recording is also an upload case. ADR-061 §6                                |
+| WB-12 the probe's budget           | No timeout                                                                                                                                                                                                                                                             | 3 s, refused when passed (the gate itself waits 30 s, so a slow machine cannot turn a refusal into "unmeasurable")                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+
+**Design check**
+
+- **Reach:** three new `platform/voice` modules (`canonical-wav.ts`, `browser-audio.ts`,
+  `browser-recorder.ts`), their tests, the test audio, `scripts/make-audio-fixtures.mjs`, a
+  platform-only `e2e/audio/` and `.github/workflows/browser-audio.yml`; nothing calls the modules
+  yet (`KNOWN_UNREACHED` in `__tests__/reachable-modules.test.ts`).
+- **Races:** the recorder's timer against a manual stop (one stop, a guard flag); the probe's
+  budget against a late `durationchange` (the first outcome wins, listeners and timer released).
+  Naming the container reads 16 bytes before the probe; the file is read whole only for the
+  decoder, as before.
+- **Dependencies down:** none at run time; the workflow's engine downloads are tried three times,
+  then the job fails.
+- **Erasure leftovers:** none — audio is never stored anywhere.
+- **Screens × responses:** none change in this batch; the codes and their messages are defined
+  for the next audio batch's screens.
+- **Journeys touched:** none yet — nothing calls these modules until the next audio batch.
+- **Weakens a tenant's protection?** No — it touches no tenant data, route or store.
+- _Credits._ "Web Audio API" (W3C; P. Adenot, H. Choi); "Multimedia Programming Interface and
+  Data Specifications 1.0" (IBM and Microsoft); RFC 9559 (S. Lhomme, M. Bunkus, D. Rice); RFC
+  6716 (J.-M. Valin, K. Vos, T. Terriberry); RFC 7845 (T. Terriberry, R. Lee, R. Giles);
+  "MediaStream Recording" (W3C; M. Casas-Sanchez, J. Barnett, T. Leithead); "WebDriver" (W3C; S.
+  Stewart, D. Burns); BROWSER-AUDIO-REVIEW-A and -B, CONFIRM-56f1 (Datankare); WebKit Bugzilla
+  198015 "Cannot play audio created from blob" (jordan.michael.last; Jer Noble); "MIME Sniffing"
+  (WHATWG; Gordon P. Hemsley).
+
+**Threat model**
+
+- **Boundary:** (1) a person's browser converting a file that person picked or recorded; (2) the
+  new public workflow `browser-audio.yml` (runs on push, pull request — including from a fork —
+  and by hand); (3) the owner's Mac runner (macgate), whose browser-audio unit may run one
+  command, `safari-check.mjs`, with the owner's real home folder.
+- **Actors that exist today:** none — no screen or route calls these modules in this batch. (Once
+  wired, the person choosing a file is the only party whose tab decodes it; a crafted file can at
+  worst exhaust that person's own tab.)
+- **Bypasses:** none yet — nothing on the server relies on this batch; the strict check is ready
+  for the route that will. The workflow has `permissions: contents: read`, no secrets,
+  `persist-credentials: false` and actions pinned by full SHA, so a fork's pull request runs it
+  read-only with nothing to take; its one artefact holds only Safari's synthetic test recordings.
+  A file that lies about its length bypasses the check before decoding; it is then refused, or
+  in WebKit and Safari converted to no more than the length it declares (ADR-061 D4, §6): it
+  costs only the picking person's tab and never yields more than the limits allow. A file's declared type cannot widen what
+  is accepted: the container is named from the bytes, and unknown bytes are refused before a
+  media element or the decoder sees them.
+- **Forgeries:** a `CanonicalWav` not made by the module is refused at run time by
+  `requireCanonicalWav` (14 forms tested); no empty one can be made; the two forms that make
+  genuine objects (a route checking for itself, silence sent to a paid provider) are closed by the
+  next batch's guards. On the Mac runner, a job runs only scripts whose sha256 the owner listed;
+  the real-home fallback is taken only after "no Safari session", for that one command, and the
+  log says so — the job's code always runs as the owner and was never a sandbox.
+- **Legitimate flows:** recordings and uploads in current Chrome, Edge, Firefox and Safari 18.4 or
+  later — proved by the gate's table in Chromium, Firefox, WebKit and Safari (the second Mac
+  run, `b56f1r3-mac-pf-1`, observed MP3 and FLAC converting in WebKit and Safari; ADR-061 §6).
+  One limit, observed and stated: in Safari, a picked WebM file that states no length may be
+  refused with the "couldn't be read" message — the two this repository generates are, every
+  time, while the WebM Safari's own recorder writes is measured; which other files are refused
+  is not known. Recording in the page is not affected: a recording is never probed (the code
+  runs that step for uploads only, the gate fails any recording that was probed, and Safari's
+  own WebM recordings converted in both runs). A
+  file that starts with padding or another container, which an engine might have recognised, is
+  now refused as damaged — the price of a strict table.
+- **Agreed before code:** the owner's decisions of 2026-11-17 (18:02: convert in the browser; one
+  documented abstraction; D-3 default, Safari before 18.4 not claimed; D-1 15 s; D-7 25 MB).
+
+**Self-review**
+
+- **Consumers checked:** the shared modules have no caller yet; `reachable-modules`,
+  `module-boundary`, the manifest and `platform-paths.json`, `workflow-hygiene` (macOS now allowed
+  in `browser-audio.yml` too), `docs-integrity` (a reserved ADR gap is not a dangling reference)
+  and Playform's copies were each run.
+- **Hostile re-read:** each fix's test was run with the fix taken out (type-only brand, `NaN`
+  limits, no pre-decode bound, timer yield, no trim, `start(100)`, always-true detection, a
+  flipped table cell) and failed; the macOS job becomes a required check only after ten
+  consecutive green runs (the runner's audio device, runner-images #13668). Review round 1 (two
+  independent finders, 2 Medium, 22 Low, 10 Nit) fixed in full, each with a test that fails
+  without its fix. The first Mac run (`b56f1-mac-1`, 2026-11-18) contradicted five kinds of cell
+  in WebKit and Safari; each was corrected from its evidence or fixed at the root (the probe's
+  dependence on a Blob's type), with tests that fail without the fix, and the gate now names
+  the step of every refusal. The second Mac run (`b56f1r3-mac-pf-1`, 2026-11-18) observed every
+  predicted cell and contradicted one case, the file that lies about its length: Firefox refuses
+  it as `undecodable`, and WebKit and Safari convert exactly the length it declares. Neither is
+  unsafe, but the second was only safe by observation, so the gate now asserts it (a conversion
+  of that file is accepted only at its declared length; a mutant that accepts a longer decode
+  fails), and the Firefox cell names its codes. Landing waits for the third Mac run on the final
+  tree; neither WebKit nor Safari can run where this is built.
+
 ### TASK-237 — The image's build context keeps no test code: `e2e-live/` left out, and a guard for every file the context keeps
 
 | Field        | Detail                                                                                           |
