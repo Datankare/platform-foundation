@@ -890,10 +890,11 @@ select (select rolsuper or rolbypassrls from pg_catalog.pg_roles where rolname =
 -- Exact for stand-ins. 0 at_risk means "no document of the at-risk shape" — a value 052 dropped leaves
 -- no trace, so 0 is NOT "no damage" (RA2-5). Rate: ~94.6 s per 1.4 GB (RB2-11); above ~0.8 GB of these
 -- columns run one table's line at a time (or with psql) — the SQL Editor stops a statement at 60 s.
+-- Asked before 074; after 076 (TASK-230) the steps are rows and the steps line reads nothing.
 with docs(tbl, doc) as (
   select 'proposals.payload', payload from public.proposals union all
   select 'proposals.effects', effects from public.proposals union all
-  select 'agent_trajectories.steps', steps from public.agent_trajectories union all
+  select 'agent_trajectories.steps', to_jsonb(t) -> 'steps' from public.agent_trajectories t union all
   select 'audit_log.details', details from public.audit_log union all
   select 'review_queue.moderation_result', moderation_result from public.review_queue union all
   select 'review_queue.explanation_chain', explanation_chain from public.review_queue union all
@@ -1029,6 +1030,105 @@ health is degraded and the deploy smoke fails until it is put back. Restore per 
 `select public.json_bound_check('public.<table>');`. Above ~3 GB of JSON the SQL Editor's time
 limit can stop 075: run `select public.json_bound_check('public.<table>');` per table with psql,
 then paste 075.
+
+#### 076 — an agent run's steps as rows; the stored steps converted (platform TASK-230, ADR-059)
+
+The release carries **074–077** after 064–073: 076 is the third of the four, after 074 and 075
+are applied and their release deployed. Paste it as `postgres`, **only with this release's build
+ready to push** — from 076 until the push, the build before it cannot create, read or append to an
+agent run (every statement naming `agent_trajectories.steps` fails: its runs, sessions and agent
+features answer errors, its soft delete fails whole and its purge backs off with an attempt
+counted; nothing is lost or written wrongly). 076 is one statement: it applies whole or not at
+all. Every reader and writer of trajectories waits while it converts (~18 MB of step text per
+second measured; ADR-059 D3).
+
+**Step 0 — the state check (read-only, one row).** Staging stays paused (the 074 section, step 0).
+
+```sql
+-- precheck (read-only): b1_applied 2 | before_076 t | trajectories n | steps m | step_text_mb | not_arrays 0 | steps_over_bound 0 | sees_every_row t
+select (select count(*) from public.applied_migrations where filename in ('074_json_bound.sql','075_json_bound_existing_rows.sql')) as b1_applied,
+       to_regclass('public.agent_trajectory_steps') is null as before_076,
+       (select count(*) from public.agent_trajectories) as trajectories,
+       (select coalesce(sum(jsonb_array_length(steps)), 0) from public.agent_trajectories where jsonb_typeof(steps) = 'array') as steps,
+       (select round(coalesce(sum(octet_length(steps::text)), 0) / 1048576.0) from public.agent_trajectories) as step_text_mb,
+       (select count(*) from public.agent_trajectories where jsonb_typeof(steps) <> 'array') as not_arrays,
+       (select count(*) from public.agent_trajectories t, jsonb_array_elements(case when jsonb_typeof(t.steps) = 'array' then t.steps else jsonb_build_array(t.steps) end) e(s)
+         where public.json_bound_reason(e.s, 8388608) is not null) as steps_over_bound,
+       (select rolsuper or rolbypassrls from pg_roles where rolname = current_user) as sees_every_row;
+```
+
+Keep `n` and `m`. `step_text_mb` over 800: the SQL Editor's 60 s may not cover the conversion —
+run step 1 with psql instead (`psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/076_trajectory_steps_as_rows.sql`,
+the connection string read with `read -rs DATABASE_URL`). `steps_over_bound` above 0: 076 would
+stop naming the first such step — see "A row over the JSON bound" above, and correct the step
+(nothing converts a step inside a run's document for you: 074 bounds that column in depth only).
+
+**Step 1 — 076.** Answers `DO`. Pasted again it returns at once (it finds everything as it makes
+it, and takes no lock); after 077 it is refused by 064's order guard, changing nothing.
+
+```bash
+pbcopy < supabase/migrations/076_trajectory_steps_as_rows.sql
+```
+
+**Step 2 — the check (one row; read-only in effect).** Expected: `step_rows = counted` = the
+pre-check's `steps` + `not_arrays` (normally `not_arrays 0`), `trajectories` as before,
+`old_column 0`, `continued_wrong 0`, `missing 0`, `steps_missing 0`, `steps_refused 3`,
+`app_inserts t`, `app_deletes f`, `service_reads f`.
+
+```sql
+select (select count(*) from public.agent_trajectory_steps) as step_rows,
+       (select coalesce(sum(step_count), 0) from public.agent_trajectories) as counted,
+       (select count(*) from public.agent_trajectories) as trajectories,
+       (select count(*) from pg_attribute where attrelid = 'public.agent_trajectories'::regclass and attname = 'steps' and not attisdropped) as old_column,
+       (select count(*) from public.agent_trajectories p
+         where p.continued is distinct from exists (select 1 from public.agent_trajectories c where c.tenant_id = p.tenant_id and c.previous_trajectory_id = p.id)) as continued_wrong,
+       (select count(*) from public.json_bound_missing()) as missing,
+       (select count(*) from public.trajectory_steps_missing()) as steps_missing,
+       (select count(*) from public.json_bound_selftest() where tbl = 'public.agent_trajectory_steps' and outcome like 'refused%') as steps_refused,
+       has_table_privilege('app_tenant', 'public.agent_trajectory_steps', 'INSERT') as app_inserts,
+       has_table_privilege('app_tenant', 'public.agent_trajectory_steps', 'DELETE') as app_deletes,
+       coalesce(to_regrole('service_role') is not null and has_table_privilege('service_role', 'public.agent_trajectory_steps', 'SELECT'), false) as service_reads;
+```
+
+**Step 3 — push at once** (both repositories), then: `gh run list -R Datankare/platform-foundation -L 1`
+and `gh run list -R Datankare/playform -L 1` show CI green; the deploy smoke for the pushed commit
+`completed success` (`json-bound` healthy now also reads 076's readiness).
+
+**Step 4 — if step 3 cannot happen within the hour** (CI red, the push delayed): roll 076 back —
+`pbcopy < supabase/optional/076_rollback.sql`, paste, `DO`. The steps go back into
+`agent_trajectories.steps` in their order (a value that was not an array comes back as a
+one-element array), 052's chain guard returns, and only the purges whose last attempt failed after
+076 was recorded are made due again with that attempt uncounted. Check (one row): `table_gone t |
+recorded_076 0 | old_column 1 | missing 0 | deferred_since_76 0` — or the number of purges that
+failed for another reason in the two hours before 076 (each keeps its attempt;
+`select user_id, purge_attempts, last_purge_error from public.user_deletions where purge_retry_at is not null;`
+shows them). Pasted twice the rollback changes nothing; fix, and start again at step 0.
+
+```sql
+select to_regclass('public.agent_trajectory_steps') is null as table_gone,
+       (select count(*) from public.applied_migrations where filename = '076_trajectory_steps_as_rows.sql') as recorded_076,
+       (select count(*) from pg_attribute where attrelid = 'public.agent_trajectories'::regclass and attname = 'steps' and not attisdropped) as old_column,
+       (select count(*) from public.json_bound_missing()) as missing,
+       (select count(*) from public.user_deletions d
+         where d.purged_at is null and d.purge_retry_at is not null and d.purge_attempts > 0
+           and d.purge_retry_at - least(interval '7 days', interval '1 hour' * power(2, least(d.purge_attempts - 1, 8))) > now() - interval '2 hours') as deferred_since_76;
+```
+
+**The new build on a database without 076** refuses every erasure up front (no attempt counted)
+and readiness `json-bound` says `076_trajectory_steps_as_rows.sql: not applied`: paste 076.
+
+**Space.** The dropped column's data stays in `agent_trajectories` until its rows are rewritten;
+`VACUUM FULL public.agent_trajectories;` returns it (seconds on hundreds of MB; it locks the table
+while it runs). Nothing here is live, so the procedure does nothing about it; an adopter with data
+may run that one statement in a quiet minute. Steps as rows take 1.5–4× the space of the document
+they came from (each row compressed alone; ADR-059 §3).
+
+##### A step rewrite found its trajectory busy
+
+`55P03 … is held by another transaction; a step is rewritten only with its trajectory locked first`:
+a statement rewrote steps without first locking their trajectories (every platform statement that
+rewrites steps does: ADR-059 D5). Nothing was changed; run it again, or write it in that form
+(`docs/runbooks/approvals-and-agents.md`).
 
 Every one is idempotent: one already applied (046 on a database on v5.1.x) changes nothing when
 run again. An app's own migrations go in between, by name (`052a_<app>_…` after 052 — §1b).
@@ -1353,6 +1453,7 @@ TENANCY_OPERATIONS §6.6 for each address — `email_verified` is `true` for bot
 | `UserDataTable.columns` is a promise the coverage test proves: every uuid, string, string-array, json and jsonb column of your tables is claimed by your deletion module's tables or declared (review 8 M3)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Erase every claimed column's mentions of the user in every row, not only the user's own rows                                                                                                                                                                                                                                                                                                                                                             | Rename one outside that range |
 | **TASK-211 (N-118).** `useRealtimeStream()` takes no options: it sends the signed-in user's token itself (`apiFetch`, renewed once on a 401) — `getAccessToken` is gone. It adds `refusal` (by its kind, `platform/errors/refusal.ts`), `refusedAt` (`"request"` or `"stream"`) and `stopped`; `consumeStreamEvents`'s `onError` also gets the coded end (`{ message, code, params }`). `hooks/useRealtimeChannel.ts` is removed (it never subscribed to a provider). Test-only code moved under `__tests__/helpers/`: `createMockHealthProbe` (`mock-health-probe`), `CORE_DEPENDENCY_COVERAGE` (`dependency-coverage`) and the status-lifecycle register (`status-lifecycle`). `__tests__/reachable-modules.test.ts` fails a module under `app/`, `components/`, `hooks/`, `lib/`, `platform/` or `modules/` that no entry point reaches: wire your own or remove it; its lists are keyed by package name |
 | **TASK-211 (N-119).** `checkSafety` (and `classifyContent`) carry `decision` (`block` \| `escalate` \| `unjudged`) when not safe. Answer refused input with `screeningRefusal(safety)` (`@/lib/screening-refusal`): only a block is `content.rejected`; a hold is `content.held_for_review` (new, refusal kind `held`, no appeal); an unjudged screening is `service.unavailable` (`moderation`). Withheld model output is `content.withheld` (new). `__tests__/screening-refusal.test.ts` refuses a source that names `content.rejected` itself or calls `checkSafety` without the mapping. `ProfileScreeningResult` has `decisions`; `profileRefusal` answers a refused profile update                                                                                                                                                                                                                    |
+| **TASK-230 (ADR-059).** `TrajectoryStore.addStep` returns `AppendedStep` (`{ trajectoryId, segment, stepIndex, version }`), not the record — read the segment with `getById`; `query()` returns every record with `steps: []` and `trajectory.stepCount` (`TrajectoryQuery.withoutSteps` is gone); `deleteFinishedBefore(cutoff, limit, maxSteps?)` returns `{ deleted, more }`; the action pipeline's result names the step as `appended` (was `trajectory`); a store of your own implements the same (the conformance kit `__tests__/contract/trajectory-store-contract.ts` holds it). SQL of your own that read or wrote `agent_trajectories.steps` reads `agent_trajectory_steps` rows (`order by seq`), and a statement that rewrites steps locks their trajectories first, in key order (`stepUpdateLockingTrajectories`, `@/platform/auth/user-data`)                                                |
 
 ## 3. Behaviour changes
 

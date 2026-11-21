@@ -130,7 +130,7 @@ describe("each write boundary refuses before storing anything", () => {
     expect(fakeData().statements).toEqual([]);
   });
 
-  it("agent_trajectories.steps", async () => {
+  it("agent_trajectory_steps.step (a step is a row since TASK-230)", async () => {
     await expect(
       new PostgresTrajectoryStore().addStep("00000000-0000-4000-8000-000000000001", {
         stepIndex: 0,

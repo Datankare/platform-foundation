@@ -291,12 +291,12 @@ export async function recoverStaleRuns(
                   select c.id from agent_trajectories c join chain on c.previous_trajectory_id = chain.id
                    where c.tenant_id = p.tenant_id
                 )
+                -- The chain's steps are rows (TASK-230, ADR-059): one with the run's operation.
                 select 1
-                  from agent_trajectories t join chain on t.id = chain.id,
-                       jsonb_array_elements(t.steps) s
-                 where t.tenant_id = p.tenant_id
-                   and s->>'operationId' = p.operation_id
-                   and s->>'boundary' = 'commitment'
+                  from agent_trajectory_steps s join chain on s.trajectory_id = chain.id
+                 where s.tenant_id = p.tenant_id
+                   and s.step->>'operationId' = p.operation_id
+                   and s.step->>'boundary' = 'commitment'
               ) as recorded
          from proposals p
         where p.status = 'executing'

@@ -21,6 +21,7 @@
 
 import { getConfigNumber } from "@/platform/auth/platform-config";
 import { withTenantTx } from "@/platform/data";
+import { TRAJECTORY_RETENTION_STEPS } from "@/platform/errors/json-limits";
 
 /** One table's retention: a rule, or why its rows are kept. */
 export type RetentionEntry =
@@ -46,6 +47,11 @@ export const RETENTION_REGISTER: Readonly<Record<string, RetentionEntry>> = {
   agent_trajectories: {
     kind: "rule",
     rule: "finished trajectories deleted after agent.trajectory.retention_days; abandoned open ones ended first; an app session's runs are deleted with their session (app_sessions' delete trigger, migration 073), and one left by a race with that delete by data.retention an hour on (deleteOrphanedSessionRuns)",
+    by: "agents.trajectory-retention",
+  },
+  agent_trajectory_steps: {
+    kind: "rule",
+    rule: "a trajectory's steps (migration 076, TASK-230) are deleted with their trajectory, by the foreign key's cascade — every delete of agent_trajectories bounded by the steps it takes with it (TRAJECTORY_RETENTION_STEPS)",
     by: "agents.trajectory-retention",
   },
   jobs: {
@@ -105,7 +111,7 @@ export const RETENTION_REGISTER: Readonly<Record<string, RetentionEntry>> = {
   },
   app_sessions: {
     kind: "rule",
-    rule: "deleted retention.app_sessions_days after the session was last updated — its agent runs (agent_trajectories, subject_kind 'session') with it, by the table's delete trigger (migration 073)",
+    rule: "deleted retention.app_sessions_days after the session was last updated — its agent runs (agent_trajectories, subject_kind 'session') with it, by the table's delete trigger (migration 073), each batch bounded by the runs' steps too (TASK-230)",
     by: "data.retention",
   },
   agent_budgets: {
@@ -291,9 +297,17 @@ export interface RetentionRule {
   readonly maxDays: number;
   /**
    * The statement, over at most $2 rows older than the cutoff $1 (bound, never built from values);
-   * row-level security keeps it to the job's tenant. Its row count is what it changed.
+   * row-level security keeps it to the job's tenant. Its row count is what it changed — or, for a
+   * rule `stepBounded`, the one row it returns.
    */
   readonly sql: string;
+  /**
+   * The rule's delete takes agent runs with it (their steps by cascade, TASK-230): its statement
+   * also takes $3, the most steps it may delete (TRAJECTORY_RETENTION_STEPS; its first row always
+   * goes), and returns one row — `changed`, and `more` when a due row was left by either bound
+   * (confirmation CB3-4).
+   */
+  readonly stepBounded?: true;
 }
 
 /** The rules no other duty applies (RETENTION_REGISTER `by: "data.retention"`). */
@@ -392,9 +406,27 @@ export const RETENTION_RULES: readonly RetentionRule[] = [
     defaultDays: 180,
     minDays: 1,
     maxDays: 3650,
-    sql: `delete from app_sessions
-           where ctid in (select ctid from app_sessions
-                           where coalesce(updated_at, created_at) < $1 limit $2)`,
+    // A session's runs go with it (073's delete trigger) and their steps with them: bounded by
+    // the steps too (TASK-230) — the sessions oldest first while their runs' steps add up to $3.
+    stepBounded: true,
+    sql: `with cand as (
+            select s.ctid as k, s.id, coalesce(s.updated_at, s.created_at) as at,
+                   (select coalesce(sum(t.step_count), 0) from agent_trajectories t
+                     where t.tenant_id = s.tenant_id and t.subject_kind = 'session' and t.subject_id = s.id) as n
+              from app_sessions s
+             where coalesce(s.updated_at, s.created_at) < $1
+             order by at, id
+             limit $2::int + 1
+          ),
+          ranked as (
+            select k, row_number() over w as rn, sum(n) over w as run
+              from cand
+            window w as (order by at, id rows between unbounded preceding and current row)
+          ),
+          pick as (select k from ranked where rn <= $2::int and (rn = 1 or run <= $3::bigint)),
+          gone as (delete from app_sessions where ctid in (select k from pick) returning 1)
+          select (select count(*) from gone)::int as changed,
+                 (select count(*) from cand) > (select count(*) from pick) as more`,
   },
   {
     // TASK-215: a bucket's old events were deleted only when that bucket was counted again (and by
@@ -450,27 +482,40 @@ export const ORPHAN_SESSION_RUN_MINUTES = 60;
  * run opened by a request that still held a session while another deleted it commits after the
  * trigger ran, and nothing else ends a session's run (the trajectory reaper leaves them to the
  * session). A run is opened after its session is stored, so one an hour old with no session is such
- * an orphan. At most `batch` rows; `more` when a full batch went.
+ * an orphan. At most `batch` runs, oldest first, and while their steps (deleted with them by
+ * cascade) add up to at most `maxSteps` (the first always: TASK-230); `more` when an orphan was
+ * left by either bound (confirmation CB3-4).
  *
  * @scheduled data.retention
  */
 export async function deleteOrphanedSessionRuns(
-  batch = RETENTION_BATCH
+  batch = RETENTION_BATCH,
+  maxSteps = TRAJECTORY_RETENTION_STEPS
 ): Promise<{ readonly deleted: number; readonly more: boolean }> {
-  const { rowCount } = await withTenantTx((tx) =>
-    tx.query(
-      `delete from agent_trajectories
-        where ctid in (select t.ctid from agent_trajectories t
-                        where t.subject_kind = 'session'
-                          and t.created_at < now() - make_interval(mins => $2::int)
-                          and not exists (select 1 from app_sessions s
-                                           where s.id = t.subject_id and s.tenant_id = t.tenant_id)
-                        limit $1)`,
-      [batch, ORPHAN_SESSION_RUN_MINUTES]
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{ deleted: number; more: boolean }>(
+      `with cand as (
+         select t.id, t.created_at, t.step_count from agent_trajectories t
+          where t.subject_kind = 'session'
+            and t.created_at < now() - make_interval(mins => $2::int)
+            and not exists (select 1 from app_sessions s
+                             where s.id = t.subject_id and s.tenant_id = t.tenant_id)
+          order by t.created_at, t.id
+          limit $1::int + 1
+       ),
+       ranked as (
+         select id, row_number() over w as rn, sum(step_count) over w as run
+           from cand
+         window w as (order by created_at, id rows between unbounded preceding and current row)
+       ),
+       pick as (select id from ranked where rn <= $1::int and (rn = 1 or run <= $3::bigint)),
+       gone as (delete from agent_trajectories where id in (select id from pick) returning 1)
+       select (select count(*) from gone)::int as deleted,
+              (select count(*) from cand) > (select count(*) from pick) as more`,
+      [batch, ORPHAN_SESSION_RUN_MINUTES, maxSteps]
     )
   );
-  const deleted = rowCount ?? 0;
-  return { deleted, more: deleted >= batch };
+  return { deleted: Number(rows[0]?.deleted ?? 0), more: rows[0]?.more === true };
 }
 
 /**
@@ -491,6 +536,18 @@ export async function applyRetention(
     if (signal?.aborted) return { changed, more: true };
     const days = await retentionDays(rule);
     const cutoff = new Date(now() - days * 24 * 60 * 60_000);
+    if (rule.stepBounded) {
+      const { rows } = await withTenantTx((tx) =>
+        tx.query<{ changed: number; more: boolean }>(rule.sql, [
+          cutoff.toISOString(),
+          batch,
+          TRAJECTORY_RETENTION_STEPS,
+        ])
+      );
+      changed[rule.table] = (changed[rule.table] ?? 0) + Number(rows[0]?.changed ?? 0);
+      if (rows[0]?.more === true) more = true;
+      continue;
+    }
     const { rowCount } = await withTenantTx((tx) =>
       tx.query(rule.sql, [cutoff.toISOString(), batch])
     );

@@ -118,11 +118,12 @@ describe("R12-2 (M1) every append goes to the chain's tail", () => {
       await store.addStep(id, step(i, 1_040_000), { rollover: true });
     // The 17th large step does not fit: segment 2.
     const big = await store.addStep(id, step(16, 1_040_000), { rollover: true });
-    expect(big!.trajectory.segment).toBe(2);
-    expect(big!.trajectory.stepOffset).toBe(16);
+    expect(big!.segment).toBe(2);
+    // Its place in the run is the steps before it: segment 2's stepOffset (TASK-230).
+    expect(big!.stepIndex).toBe(16);
     // A later small step, appended through the id the caller holds: the tail, never segment 1.
     const small = await store.addStep(id, step(17, 10), { rollover: true });
-    expect(small!.trajectory.trajectoryId).toBe(big!.trajectory.trajectoryId);
+    expect(small!.trajectoryId).toBe(big!.trajectoryId);
     const chain = await readTrajectoryChain(store, id);
     const order = chainSteps(chain).map((s) => s.action);
     expect(order).toEqual(Array.from({ length: 18 }, (_, i) => `s${i}`));
@@ -131,7 +132,7 @@ describe("R12-2 (M1) every append goes to the chain's tail", () => {
     expect(chain[1].trajectory.stepOffset).toBe(16);
     // Without rollover too: through the first segment's id, the tail.
     const plain = await store.addStep(id, step(18, 10));
-    expect(plain!.trajectory.segment).toBe(2);
+    expect(plain!.segment).toBe(2);
   });
 
   it("concurrent appends through every segment's id keep one order and true offsets", async () => {
@@ -144,8 +145,7 @@ describe("R12-2 (M1) every append goes to the chain's tail", () => {
         const r = await store.addStep(ids[i % ids.length], step(i, 1), {
           rollover: true,
         });
-        if (!ids.includes(r!.trajectory.trajectoryId))
-          ids.push(r!.trajectory.trajectoryId);
+        if (!ids.includes(r!.trajectoryId)) ids.push(r!.trajectoryId);
       })
     );
     const chain = await readTrajectoryChain(store, ids[0]);

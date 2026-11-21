@@ -372,3 +372,37 @@ select tenant_id, id, label, payload->>'key' as key, decision_note, updated_at
   step-cap or budget pause, or after an approved step — so it is ended only past
   `agent.workflow.abandon_after_days` (30) without activity; an executed held step does not
   complete it either. Its holds end as any hold does.
+
+## 7. A run's steps as rows (TASK-230, ADR-059)
+
+Since migration 076 an agent run's steps are rows of `agent_trajectory_steps`; the database keeps
+their rules for every writer.
+
+- **A segment is full** (`23514`, constraint `trajectory_full`, or `request.trajectory_full` from the
+  store): it holds 1 000 steps, or its steps print 16 MiB of text. The store refuses the action
+  before it runs, or — where the caller opted in — continues the run in a new segment. A run that
+  the reaper ends while full is ended without its `trajectory-abandoned` step, as before. Check:
+  `select step_count, steps_bytes from agent_trajectories where id = '<id>';`.
+- **A step refused** (`23514`): `trajectory_step_order` — a step written somewhere other than the
+  segment's next place; `trajectory_continued` — a step written to a segment that already has a
+  continuation (it goes to the chain's last segment); `trajectory_step_fixed` — a step's tenant,
+  run or place changed; `trajectory_step_kept` — a step deleted while its run stands (a step goes
+  with its run; a deleted tenant's purge is the one exception); `json_bound` — the step itself is
+  over the JSON bound. Nothing was written; the store never writes these, so a refusal names a
+  writer of its own (a script, a hand-made statement) to correct.
+- **A step rewrite found its trajectory busy** (`55P03 lock_not_available`, "a step is rewritten
+  only with its trajectory locked first"): a statement rewrote steps without first locking their
+  trajectories, while another transaction held one. Nothing was changed. Run it again, or write it
+  in the one form every platform statement uses — lock the trajectories first, in key order:
+  `with hit as materialized (select s.tenant_id, s.trajectory_id, s.seq from agent_trajectory_steps s where <condition>), locked as materialized (select 1 from agent_trajectories a where (a.tenant_id, a.id) in (select h.tenant_id, h.trajectory_id from hit h) order by a.tenant_id, a.id for update) update agent_trajectory_steps s set step = <new value> from hit h where (select count(*) from locked) >= 0 and s.tenant_id = h.tenant_id and s.trajectory_id = h.trajectory_id and s.seq = h.seq and <condition>;`
+  (`stepUpdateLockingTrajectories` in `platform/auth/user-data.ts` writes it).
+- **Between 076 and the push** the build before it cannot create, read or append to a run: its
+  agent features answer errors and its erasure is deferred. Push the release; if it cannot be
+  pushed within the hour, roll 076 back (`docs/MIGRATION_v5_to_v6.md`, 076, step 4).
+- **Readiness `json-bound` names a 076 line** (`public.trajectory_steps_missing()`): a function or
+  trigger of 076 changed, a trigger placed after the steps' guard, or a right beyond 076's (for
+  example `public.agent_trajectory_steps: app_tenant may DELETE`). Put it back as 076 makes it
+  (`revoke delete on public.agent_trajectory_steps from app_tenant;` for that one) — or paste 076
+  again (while it is the newest migration), which remakes its functions, triggers and rights; a
+  trigger of someone else's placed after the guard is dropped by hand. Check: `select count(*) from public.trajectory_steps_missing();`
+  answers `0`.

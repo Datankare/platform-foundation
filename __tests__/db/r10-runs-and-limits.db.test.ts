@@ -116,10 +116,11 @@ dbDescribe("r10 L10: one trajectory row is bounded", () => {
     );
     const id = traj.trajectory.trajectoryId;
     await sql(
-      `update agent_trajectories
-          set steps = (select jsonb_agg(jsonb_build_object('stepIndex', i, 'action', 'a'))
-                         from generate_series(1, $2::int) i)
-        where id = $1::uuid`,
+      // The steps as rows (migration 076, TASK-230), in order.
+      `insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+       select t.tenant_id, t.id, i - 1, jsonb_build_object('stepIndex', i, 'action', 'a')
+         from agent_trajectories t, generate_series(1, $2::int) i
+        where t.id = $1::uuid order by i`,
       [id, TRAJECTORY_MAX_STEPS]
     );
     let ran = false;
@@ -144,7 +145,7 @@ dbDescribe("r10 L10: one trajectory row is bounded", () => {
     expect(err).toMatchObject({ code: "request.trajectory_full" });
     expect(ran).toBe(false);
     const [row] = await sql(
-      "select jsonb_array_length(steps) as n from agent_trajectories where id = $1::uuid",
+      "select step_count as n from agent_trajectories where id = $1::uuid",
       [id]
     );
     expect(row.n).toBe(TRAJECTORY_MAX_STEPS);
@@ -157,10 +158,10 @@ dbDescribe("r10 L10: one trajectory row is bounded", () => {
     );
     const id = traj.trajectory.trajectoryId;
     await sql(
-      `update agent_trajectories
-          set steps = (select jsonb_agg(jsonb_build_object('stepIndex', i, 'blob', repeat('b', 1000000)))
-                         from generate_series(1, 16) i)
-        where id = $1::uuid`,
+      `insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+       select t.tenant_id, t.id, i - 1, jsonb_build_object('stepIndex', i, 'blob', repeat('b', 1000000))
+         from agent_trajectories t, generate_series(1, 16) i
+        where t.id = $1::uuid order by i`,
       [id]
     );
     await expect(t.run(() => store.assertRoomForStep(id))).rejects.toMatchObject({

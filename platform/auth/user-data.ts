@@ -87,6 +87,45 @@ const NOTE_ERASED_SQL = `jsonb_build_object('key', '${NOTE_ERASED.key}')`;
 const LIKE_ID = `'%' || replace(replace(replace($1::text, '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%'`;
 
 /**
+ * A statement that rewrites trajectory steps — rows of agent_trajectory_steps since migration 076
+ * (TASK-230, ADR-059) — in the one form every such statement takes: the trajectories holding a step
+ * to rewrite are found once (`hit`, `where` over the step row `s`, one row per trajectory), then
+ * locked, in key order (`locked`, run before any row is updated: the update's one-time condition
+ * reads it), then the steps are rewritten to `set` — the update reads `where` itself, with the same
+ * snapshot as `hit`, so it rewrites exactly the steps `hit` found, each checked again on the current
+ * row. 076's step trigger never waits for a trajectory on a rewrite — it refuses (55P03) one
+ * another transaction holds — so two such statements on one trajectory serialise at the trajectory
+ * and never deadlock (review TA-b-3); 076's statement trigger then moves each trajectory's
+ * steps_bytes and version once for the whole statement, not once per step. No step is joined to
+ * another row set (56e-3b R2): without statistics the planner may run a join as a nested loop, and
+ * rejoining `hit` to the steps compared every hit step with every other (a full segment's erasure:
+ * 1 000 x 1 000 rows, 2.5 s); the work is the steps `where` reads, in any plan. Batch 3c's sweep
+ * keeps this order (ADR-059).
+ */
+export function stepUpdateLockingTrajectories(where: string, set: string): string {
+  return `with hit as materialized (select distinct s.tenant_id, s.trajectory_id from agent_trajectory_steps s where ${where}), locked as materialized (select 1 from agent_trajectories a where (a.tenant_id, a.id) in (select h.tenant_id, h.trajectory_id from hit h) order by a.tenant_id, a.id for update) update agent_trajectory_steps s set step = ${set} where (select count(*) from locked) >= 0 and ${where}`;
+}
+
+/** How many step rows `where` (over the step row `s`) finds: a step entry's count. */
+const countSteps = (where: string): string =>
+  `select count(*)::int as n from agent_trajectory_steps s where ${where}`;
+
+/** The free-text keys a step's input loses (an erasure's listed reason kept). */
+const STEP_TEXT_KEYS = `(case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end)`;
+
+/** A session that was the user's alone (its run goes with it: sessionTrajectories). */
+const SOLE_SESSION = `select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1`;
+
+/** The step `s` is of a run that stands for others: not the user's own run, nor their sole session's. */
+const STEP_OF_SHARED_RUN = `exists (select 1 from agent_trajectories t where t.tenant_id = s.tenant_id and t.id = s.trajectory_id and not coalesce(t.scope_type = 'user' and t.scope_id = $1, false) and not (t.subject_kind = 'session' and t.subject_id in (${SOLE_SESSION})))`;
+
+/** A step of a decided hold about the account (its run's, in its tenant), holding a note. */
+const HELD_NOTE_WHERE = `s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.tenant_id = s.tenant_id and p.trajectory_id = s.trajectory_id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)))`;
+const FREE_TEXT_WHERE = `s.step::text ilike ${LIKE_ID} and jsonb_typeof(s.step->'input') = 'object' and jsonb_path_exists(s.step->'input', '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and (s.step->'input') ?| ${STEP_TEXT_KEYS}`;
+const MOVE_TEXT_WHERE = `s.step->'actor'->>'actorId' = $1::text and (coalesce(s.step->'input', '{}'::jsonb) <> '{}'::jsonb or coalesce(s.step->'output', '{}'::jsonb) <> '{}'::jsonb) and exists (select 1 from agent_trajectories t where t.tenant_id = s.tenant_id and t.id = s.trajectory_id and t.subject_kind = 'session')`;
+const ID_IN_STEP_WHERE = `s.step::text ilike ${LIKE_ID} and s.step::text ~* $1::text and ${STEP_OF_SHARED_RUN}`;
+
+/**
  * One table's part of a user's data. Every statement is fixed SQL with the user id as `$1` (and,
  * on export, the page size as `$2` and the last row's key — its ctid, a text tid — as `$3`),
  * never text built from input; the id is checked to be a UUID before any of them runs. Being
@@ -314,14 +353,16 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
   // by.
   {
     name: "heldAboutStepNotes",
-    table: "agent_trajectories",
+    table: "agent_trajectory_steps",
     action: "anonymise",
     reason:
       "the run of a decided hold about the account stands; the note written about the account in its steps is erased",
     columns: [],
-    count:
-      "select count(*)::int as n from agent_trajectories a where jsonb_typeof(a.steps) = 'array' and exists (select 1 from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))) and exists (select 1 from jsonb_array_elements(a.steps) s(step) where s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))))",
-    erase: `update agent_trajectories a set steps = (select coalesce(jsonb_agg(case when s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))) then jsonb_set(s.step, '{output,note}', ${NOTE_ERASED_SQL}) else s.step end order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n)) where jsonb_typeof(a.steps) = 'array' and exists (select 1 from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))) and exists (select 1 from jsonb_array_elements(a.steps) s(step) where s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))))`,
+    count: countSteps(HELD_NOTE_WHERE),
+    erase: stepUpdateLockingTrajectories(
+      HELD_NOTE_WHERE,
+      `jsonb_set(s.step, '{output,note}', ${NOTE_ERASED_SQL})`
+    ),
     exportReason: "another account's held action about the user (proposalsAbout)",
   },
   {
@@ -357,7 +398,7 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
       "select count(*)::int as n from agent_trajectories where scope_type = 'user' and scope_id = $1",
     erase: "delete from agent_trajectories where scope_type = 'user' and scope_id = $1",
     exportSql:
-      "select to_jsonb(t) - '_k' as r, t._k::text as k from (select id, segment, previous_trajectory_id, trigger, status, steps, started_at, completed_at, ctid as _k from agent_trajectories where (scope_type = 'user' and scope_id = $1) and ctid > $3::tid order by ctid limit $2::int) t",
+      "select to_jsonb(t) - '_k' as r, t._k::text as k from (select a.id, a.segment, a.previous_trajectory_id, a.trigger, a.status, (select coalesce(json_agg(s.step order by s.seq), '[]'::json) from agent_trajectory_steps s where s.tenant_id = a.tenant_id and s.trajectory_id = a.id) as steps, a.started_at, a.completed_at, a.ctid as _k from agent_trajectories a where (a.scope_type = 'user' and a.scope_id = $1) and a.ctid > $3::tid order by a.ctid limit $2::int) t",
   },
   // An app session's trajectory is opened with scope 'user' and no scope id
   // (platform/app-framework/session.ts), so it is found through its session (review 7 M4). The
@@ -373,7 +414,7 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     erase:
       "delete from agent_trajectories where subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1)",
     exportSql:
-      "select to_jsonb(t) - '_k' as r, t._k::text as k from (select id, subject_id as session_id, segment, previous_trajectory_id, trigger, status, steps, started_at, completed_at, ctid as _k from agent_trajectories where (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1)) and ctid > $3::tid order by ctid limit $2::int) t",
+      "select to_jsonb(t) - '_k' as r, t._k::text as k from (select a.id, a.subject_id as session_id, a.segment, a.previous_trajectory_id, a.trigger, a.status, (select coalesce(json_agg(s.step order by s.seq), '[]'::json) from agent_trajectory_steps s where s.tenant_id = a.tenant_id and s.trajectory_id = a.id) as steps, a.started_at, a.completed_at, a.ctid as _k from agent_trajectories a where (a.subject_kind = 'session' and a.subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1)) and a.ctid > $3::tid order by a.ctid limit $2::int) t",
   },
   // Any other run that names the user — a shared session's, an agent's run about them, any
   // scope. The run stands for the others in it; every mention of the user's id (in its steps, or
@@ -401,13 +442,16 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
   // (LIKE_ID, round 10, P-A).
   {
     name: "stepFreeText",
-    table: "agent_trajectories",
+    table: "agent_trajectory_steps",
     action: "anonymise",
     reason:
       "a run's step about the account stands; the free text written about the account in its input is erased",
     columns: [],
-    count: `select count(*)::int as n from agent_trajectories a where jsonb_typeof(a.steps) = 'array' and a.steps::text ilike ${LIKE_ID} and exists (select 1 from jsonb_array_elements(a.steps) s(step) where jsonb_typeof(s.step->'input') = 'object' and jsonb_path_exists(s.step->'input', '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and (s.step->'input') ?| (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end))`,
-    erase: `update agent_trajectories a set steps = (select coalesce(jsonb_agg(case when jsonb_typeof(s.step->'input') = 'object' and jsonb_path_exists(s.step->'input', '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and (s.step->'input') ?| (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end) then jsonb_set(s.step, '{input}', (s.step->'input') - (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end)) else s.step end order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n)) where jsonb_typeof(a.steps) = 'array' and a.steps::text ilike ${LIKE_ID} and exists (select 1 from jsonb_array_elements(a.steps) s(step) where jsonb_typeof(s.step->'input') = 'object' and jsonb_path_exists(s.step->'input', '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and (s.step->'input') ?| (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end))`,
+    count: countSteps(FREE_TEXT_WHERE),
+    erase: stepUpdateLockingTrajectories(
+      FREE_TEXT_WHERE,
+      `jsonb_set(s.step, '{input}', (s.step->'input') - ${STEP_TEXT_KEYS})`
+    ),
     exportReason: "the run's steps the user took are exported as trajectorySteps",
   },
   // TASK-215 (audit A-5: what an erased account wrote, wherever it survives). A session the user
@@ -420,28 +464,45 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
   // deletion module).
   {
     name: "sessionMoveText",
-    table: "agent_trajectories",
+    table: "agent_trajectory_steps",
     action: "anonymise",
     reason:
       "a shared session's run stands for the others in it; what the user entered in their own moves, and what those moves produced, is removed",
     columns: [],
-    count:
-      "select count(*)::int as n from agent_trajectories a where a.subject_kind = 'session' and jsonb_typeof(a.steps) = 'array' and a.steps @> jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text))) and exists (select 1 from jsonb_array_elements(a.steps) s(step) where s.step->'actor'->>'actorId' = $1::text and (coalesce(s.step->'input', '{}'::jsonb) <> '{}'::jsonb or coalesce(s.step->'output', '{}'::jsonb) <> '{}'::jsonb))",
-    erase:
-      "update agent_trajectories a set steps = (select coalesce(jsonb_agg(case when s.step->'actor'->>'actorId' = $1::text then s.step || jsonb_build_object('input', '{}'::jsonb, 'output', '{}'::jsonb) else s.step end order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n)) where a.subject_kind = 'session' and jsonb_typeof(a.steps) = 'array' and a.steps @> jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text))) and exists (select 1 from jsonb_array_elements(a.steps) s(step) where s.step->'actor'->>'actorId' = $1::text and (coalesce(s.step->'input', '{}'::jsonb) <> '{}'::jsonb or coalesce(s.step->'output', '{}'::jsonb) <> '{}'::jsonb))",
+    count: countSteps(MOVE_TEXT_WHERE),
+    erase: stepUpdateLockingTrajectories(
+      MOVE_TEXT_WHERE,
+      "s.step || jsonb_build_object('input', '{}'::jsonb, 'output', '{}'::jsonb)"
+    ),
     exportReason: "the run's steps the user took are exported as trajectorySteps",
   },
   {
     name: "trajectorySteps",
-    table: "agent_trajectories",
+    table: "agent_trajectory_steps",
     action: "anonymise",
     reason:
       "a run others took part in stands for them; the user's id in its steps is replaced",
-    columns: ["agent_trajectories.steps", "agent_trajectories.scope_id"],
-    count: `select count(*)::int as n from agent_trajectories where (steps::text ilike ${LIKE_ID} or scope_id = $1::text) and (steps::text ~* $1::text or scope_id = $1::text) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))`,
-    erase: `update agent_trajectories set steps = jsonb_erase_id_text(steps, $1::text), scope_id = case when scope_id = $1::text then 'erased' else scope_id end where (steps::text ilike ${LIKE_ID} or scope_id = $1::text) and (steps::text ~* $1::text or scope_id = $1::text) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))`,
-    exportSql:
-      "select to_jsonb(t) - '_k' as r, t._k::text as k from (select id, segment, previous_trajectory_id, trigger, started_at, (select coalesce(jsonb_agg(s.step order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n) where s.step->'actor'->>'actorId' = $1::text) as steps, a.ctid as _k from agent_trajectories a where (a.steps @> jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text))) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))) and a.ctid > $3::tid order by a.ctid limit $2::int) t",
+    columns: ["agent_trajectory_steps.step"],
+    count: countSteps(ID_IN_STEP_WHERE),
+    erase: stepUpdateLockingTrajectories(
+      ID_IN_STEP_WHERE,
+      "jsonb_erase_id_text(s.step, $1::text)"
+    ),
+    exportSql: `select to_jsonb(t) - '_k' as r, t._k::text as k from (select a.id, a.segment, a.previous_trajectory_id, a.trigger, a.started_at, (select coalesce(json_agg(s.step order by s.seq), '[]'::json) from agent_trajectory_steps s where s.tenant_id = a.tenant_id and s.trajectory_id = a.id and s.step->'actor'->>'actorId' = $1::text) as steps, a.ctid as _k from agent_trajectories a where (exists (select 1 from agent_trajectory_steps s where s.tenant_id = a.tenant_id and s.trajectory_id = a.id and s.step->'actor'->>'actorId' = $1::text) and not coalesce(a.scope_type = 'user' and a.scope_id = $1, false) and not (a.subject_kind = 'session' and a.subject_id in (${SOLE_SESSION}))) and a.ctid > $3::tid order by a.ctid limit $2::int) t`,
+  },
+  // The run's scope, where it is the user's id (a run about them that others' steps stand in):
+  // "erased". The steps' part is trajectorySteps — two statements since 076 (TASK-230): the steps
+  // are rows of another table, and their rewrite locks the run first.
+  {
+    name: "trajectoryScopes",
+    table: "agent_trajectories",
+    action: "anonymise",
+    reason:
+      "a run others took part in stands for them; the user's id as its scope is replaced",
+    columns: ["agent_trajectories.scope_id"],
+    count: `select count(*)::int as n from agent_trajectories where scope_id = $1::text and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (${SOLE_SESSION}))`,
+    erase: `update agent_trajectories set scope_id = 'erased' where scope_id = $1::text and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (${SOLE_SESSION}))`,
+    exportReason: "the run's steps the user took are exported as trajectorySteps",
   },
   {
     name: "agentBudgets",
@@ -848,6 +909,7 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
       "proposals.run_token",
       "agent_trajectories.previous_trajectory_id",
       "agent_trajectories.chain_root_id",
+      "agent_trajectory_steps.trajectory_id",
       "app_sessions.id",
       "app_sessions.produced_by",
       "document_embeddings.chunk_id",
@@ -1232,26 +1294,40 @@ export const TENANT_EXPORT_COLUMNS: Readonly<Record<string, TenantExportColumn>>
     "updated_at",
     "used_steps",
   ]),
-  ...tenantCols("agent_trajectories", true, "the tenant's agent runs and their steps", [
-    "id",
-    "trigger",
-    "scope_type",
-    "scope_id",
-    "status",
-    "steps",
-    "total_cost",
-    "started_at",
-    "completed_at",
-    "subject_kind",
-    "subject_id",
-    "version",
-    "created_at",
-    "updated_at",
-    "segment",
-    "previous_trajectory_id",
-    "step_offset",
-    "chain_root_id",
-  ]),
+  ...tenantCols(
+    "agent_trajectories",
+    true,
+    "the tenant's agent runs (their steps: agent_trajectory_steps)",
+    [
+      "id",
+      "trigger",
+      "scope_type",
+      "scope_id",
+      "status",
+      "total_cost",
+      "started_at",
+      "completed_at",
+      "subject_kind",
+      "subject_id",
+      "version",
+      "created_at",
+      "updated_at",
+      "segment",
+      "previous_trajectory_id",
+      "step_offset",
+      "chain_root_id",
+      "step_count",
+      "steps_bytes",
+      "continued",
+    ]
+  ),
+  // A run's steps as rows (migration 076, TASK-230): each step, its run and its place in it.
+  ...tenantCols(
+    "agent_trajectory_steps",
+    true,
+    "the tenant's agent runs' steps, in order",
+    ["trajectory_id", "seq", "step", "created_at"]
+  ),
   ...tenantCols("ai_metrics", true, "the tenant's AI usage", [
     "id",
     "name",

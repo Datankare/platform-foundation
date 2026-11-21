@@ -6,11 +6,21 @@
  * subject arms are the load-bearing ones: before ADR-029 D4 a session trajectory was
  * written with its sessionId in the agentId field, which type-checked and made the two
  * kinds indistinguishable. A store that cannot separate them must not register.
+ *
+ * TASK-230 (ADR-059): an append answers where the step went (AppendedStep), never the segment's
+ * steps; a list (query) reads no steps and gives their count; one segment's steps are read with
+ * getById / chainTail / chainSegment; retention is bounded by trajectories and by their steps and
+ * says `more` when either bound left one.
  */
 
 import type { Step } from "@/platform/agents/types";
 import type { TrajectoryStore } from "@/platform/agents/trajectory-store";
 import { TRAJECTORY_MAX_STEPS } from "@/platform/errors/json-limits";
+
+/** Wait until the clock has moved past `iso` (updated_at ordering between two writes). */
+async function after(iso: string): Promise<void> {
+  while (new Date().toISOString() <= iso) await new Promise((r) => setTimeout(r, 2));
+}
 
 export interface TrajectoryStoreContractFixtures {
   /** Fresh, empty store per test. */
@@ -80,11 +90,40 @@ export function runTrajectoryStoreContract(fx: TrajectoryStoreContractFixtures):
       const rec = await store.create({ kind: "agent", id: "a" }, "t", "platform");
       const id = rec.trajectory.trajectoryId;
       await store.addStep(id, makeStep(0, 0.25));
-      const after = await store.addStep(id, makeStep(1, 0.75));
-      expect(after?.trajectory.steps).toHaveLength(2);
-      expect(after?.trajectory.totalCost).toBeCloseTo(1.0, 6);
-      expect(after?.costSummary.usd).toBeCloseTo(1.0, 6);
-      expect(after?.costSummary.apiCalls).toBe(2);
+      await store.addStep(id, makeStep(1, 0.75));
+      const loaded = await store.getById(id);
+      expect(loaded?.trajectory.steps).toHaveLength(2);
+      expect(loaded?.trajectory.totalCost).toBeCloseTo(1.0, 6);
+      expect(loaded?.costSummary.usd).toBeCloseTo(1.0, 6);
+      expect(loaded?.costSummary.apiCalls).toBe(2);
+    });
+
+    it("(TASK-230) answers where the step went — segment, place in the run, a moving version — never the steps", async () => {
+      const rec = await store.create({ kind: "agent", id: "a" }, "t", "platform");
+      const id = rec.trajectory.trajectoryId;
+      const first = await store.addStep(id, makeStep(0));
+      const second = await store.addStep(id, makeStep(1));
+      expect(first).toMatchObject({ trajectoryId: id, segment: 1, stepIndex: 0 });
+      expect(second).toMatchObject({ trajectoryId: id, segment: 1, stepIndex: 1 });
+      expect(second!.version).toBeGreaterThan(first!.version);
+      expect(Object.keys(second!).sort()).toEqual([
+        "segment",
+        "stepIndex",
+        "trajectoryId",
+        "version",
+      ]);
+    });
+
+    it("(TASK-230) the step's place is the store's: a step claiming another index lands next", async () => {
+      const rec = await store.create({ kind: "agent", id: "a" }, "t", "platform");
+      const id = rec.trajectory.trajectoryId;
+      await store.addStep(id, makeStep(0));
+      const placed = await store.addStep(id, makeStep(41));
+      expect(placed?.stepIndex).toBe(1);
+      expect((await store.getById(id))?.trajectory.steps.map((s) => s.action)).toEqual([
+        "action-0",
+        "action-41",
+      ]);
     });
 
     it("returns undefined for an unknown trajectory", async () => {
@@ -199,12 +238,18 @@ export function runTrajectoryStoreContract(fx: TrajectoryStoreContractFixtures):
       ).toBeUndefined();
     });
 
-    it("a query can leave the steps out", async () => {
+    it("(TASK-230) a query reads no steps: each record with steps [] and its stepCount", async () => {
       const rec = await store.create({ kind: "session", id: "ws" }, "t", "user");
       await store.addStep(rec.trajectory.trajectoryId, makeStep(0));
-      const [found] = await store.query({ subjectId: "ws", withoutSteps: true });
+      await store.addStep(rec.trajectory.trajectoryId, makeStep(1));
+      const [found] = await store.query({ subjectId: "ws" });
       expect(found.trajectory.trajectoryId).toBe(rec.trajectory.trajectoryId);
       expect(found.trajectory.steps).toEqual([]);
+      expect(found.trajectory.stepCount).toBe(2);
+      // One segment's steps come with it, read alone.
+      expect(
+        (await store.getById(rec.trajectory.trajectoryId))?.trajectory.steps
+      ).toHaveLength(2);
     });
 
     it("every append goes to the chain's tail, through any segment's id", async () => {
@@ -221,11 +266,15 @@ export function runTrajectoryStoreContract(fx: TrajectoryStoreContractFixtures):
       const second = await store.addStep(first, makeStep(TRAJECTORY_MAX_STEPS), {
         rollover: true,
       });
-      expect(second?.trajectory.segment).toBe(2);
-      expect(second?.trajectory.stepOffset).toBe(TRAJECTORY_MAX_STEPS);
+      expect(second?.segment).toBe(2);
+      expect(second?.stepIndex).toBe(TRAJECTORY_MAX_STEPS);
+      expect((await store.getById(second!.trajectoryId))?.trajectory.stepOffset).toBe(
+        TRAJECTORY_MAX_STEPS
+      );
       // Through the first segment's id, with or without rollover: the tail.
       const third = await store.addStep(first, makeStep(TRAJECTORY_MAX_STEPS + 1));
-      expect(third?.trajectory.trajectoryId).toBe(second?.trajectory.trajectoryId);
+      expect(third?.trajectoryId).toBe(second?.trajectoryId);
+      expect(third?.stepIndex).toBe(TRAJECTORY_MAX_STEPS + 1);
       const tail = await store.chainTail(first);
       expect(tail?.trajectory.steps.map((s) => s.stepIndex)).toEqual([
         TRAJECTORY_MAX_STEPS,
@@ -236,5 +285,55 @@ export function runTrajectoryStoreContract(fx: TrajectoryStoreContractFixtures):
           .trajectoryId
       ).toBe(first);
     }, 120_000);
+  });
+
+  describe("retention (TASK-230: bounded by trajectories and by their steps; confirmation CB3-4)", () => {
+    it("deletes the due ones oldest first while their steps fit, the first always, and says more", async () => {
+      const ids: string[] = [];
+      for (const n of [3, 3, 3]) {
+        const rec = await store.create({ kind: "agent", id: "r" }, "t", "platform");
+        for (let i = 0; i < n; i++)
+          await store.addStep(rec.trajectory.trajectoryId, makeStep(i));
+        const done = await store.updateStatus(rec.trajectory.trajectoryId, "completed");
+        ids.push(rec.trajectory.trajectoryId);
+        await after(done!.trajectory.updatedAt);
+      }
+      const cutoff = new Date(Date.now() + 60_000);
+      // Steps bound 5: the first (3) always, the second would make 6 — left; more.
+      expect(await store.deleteFinishedBefore(cutoff, 10, 5)).toEqual({
+        deleted: 1,
+        more: true,
+      });
+      expect(await store.getById(ids[0])).toBeUndefined();
+      expect(await store.getById(ids[1])).toBeDefined();
+      // Steps bound 1: the first always goes, even past it.
+      expect(await store.deleteFinishedBefore(cutoff, 10, 1)).toEqual({
+        deleted: 1,
+        more: true,
+      });
+      // The trajectory bound: one; nothing due is left.
+      const more = await store.deleteFinishedBefore(cutoff, 1, 1_000);
+      expect(more).toEqual({ deleted: 1, more: false });
+      expect(await store.deleteFinishedBefore(cutoff, 10, 1_000)).toEqual({
+        deleted: 0,
+        more: false,
+      });
+    });
+
+    it("says more when the trajectory bound left a due one", async () => {
+      for (let i = 0; i < 2; i++) {
+        const rec = await store.create({ kind: "agent", id: "m" }, "t", "platform");
+        await store.updateStatus(rec.trajectory.trajectoryId, "failed");
+      }
+      const cutoff = new Date(Date.now() + 60_000);
+      expect(await store.deleteFinishedBefore(cutoff, 1)).toEqual({
+        deleted: 1,
+        more: true,
+      });
+      expect(await store.deleteFinishedBefore(cutoff, 1)).toEqual({
+        deleted: 1,
+        more: false,
+      });
+    });
   });
 }

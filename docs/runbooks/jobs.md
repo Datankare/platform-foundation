@@ -184,8 +184,9 @@ on stored JSON is not in force; its detail names each line. Read them in the SQL
   nine functions that decide a refusal or what is installed (`json_bound_refuse`, `_reason`,
   `_depth_path`, `_number_path`, `_limit`, `_term`, `_ddl`, `_tables`, `_mark`), or a grant, was
   changed: restore it (re-applying 074 is refused after 075; restore by hand to 074's text, or
-  ask before changing it). A later migration that replaces one of them on purpose (076 replaces
-  `json_bound_limit`) re-makes `json_bound_missing` with its own fingerprints.
+  ask before changing it). A later migration that replaces one of them on purpose re-makes
+  `json_bound_missing` with its own fingerprints. (076 replaces none: `json_bound_limit`'s one
+  exception names the column 076 drops, so it is left as 074 made it — ADR-059.)
 - `07x_….sql: not recorded` — apply 074 and 075 (docs/MIGRATION_v5_to_v6.md).
 
 Check: `select count(*) from public.json_bound_missing();` answers `0`.

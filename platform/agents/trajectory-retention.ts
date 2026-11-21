@@ -40,6 +40,11 @@ const MIN_DAYS = 1;
 const MAX_DAYS = 3650;
 /** Deleted per run at most; a larger backlog continues in the next part of the job. */
 export const TRAJECTORY_RETENTION_BATCH = 5000;
+/**
+ * The most steps one run's delete takes with its trajectories (TASK-230): each trajectory's steps
+ * go with it, so the batch is bounded by them too (json-limits.ts; the first always goes).
+ */
+export { TRAJECTORY_RETENTION_STEPS } from "@/platform/errors/json-limits";
 /** Ended per run at most by the reaper; a larger backlog continues in the next part. */
 export const TRAJECTORY_REAP_BATCH = 1000;
 
@@ -65,7 +70,7 @@ export interface TrajectoryRetentionResult {
   readonly abandonHours: number;
   /** The workflow bound, in days (a workflow's trajectory is reaped only past it). */
   readonly workflowAbandonDays: number;
-  /** A full batch was deleted or ended: there may be more. */
+  /** A due trajectory was left by a bound (trajectories or steps), or a full batch was ended: there may be more. */
   readonly more: boolean;
 }
 
@@ -115,13 +120,15 @@ export async function applyTrajectoryRetention(
   }
   const retentionDays = await resolveTrajectoryRetentionDays();
   const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60_000);
-  const deleted = await store.deleteFinishedBefore(cutoff, batch);
+  // Bounded by trajectories and by their steps; `more` when either bound left a due one
+  // (confirmation CB3-4: `deleted >= batch` said "done" when the steps' bound stopped the batch).
+  const r = await store.deleteFinishedBefore(cutoff, batch);
   return {
     retentionDays,
-    deleted,
+    deleted: r.deleted,
     abandoned: reaped.closed,
     abandonHours,
     workflowAbandonDays: workflowDays,
-    more: deleted >= batch || reaped.closed >= Math.min(batch, TRAJECTORY_REAP_BATCH),
+    more: r.more || reaped.closed >= Math.min(batch, TRAJECTORY_REAP_BATCH),
   };
 }

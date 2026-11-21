@@ -148,8 +148,11 @@ dbDescribe("an erased account's text is not confirmable (TASK-215, A-5, A-6)", (
     ];
     const runId = randomUUID();
     await owner(
-      `insert into agent_trajectories (id, tenant_id, trigger, subject_kind, subject_id, scope_type, steps, status)
-       values ($1::uuid, $2, 'session', 'session', $3, 'user', $4::jsonb, 'running')`,
+      `with run as (
+         insert into agent_trajectories (id, tenant_id, trigger, subject_kind, subject_id, scope_type, status)
+         values ($1::uuid, $2, 'session', 'session', $3, 'user', 'running') returning tenant_id, id)
+       insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+       select run.tenant_id, run.id, e.n - 1, e.s from run, jsonb_array_elements($4::jsonb) with ordinality e(s, n) order by e.n`,
       [runId, t.id, sessionId, JSON.stringify(steps)]
     );
 
@@ -157,7 +160,10 @@ dbDescribe("an erased account's text is not confirmable (TASK-215, A-5, A-6)", (
 
     const { rows } = await owner<{
       steps: { action: string; input: unknown; output: unknown }[];
-    }>("select steps from agent_trajectories where id = $1::uuid", [runId]);
+    }>(
+      "select (select coalesce(jsonb_agg(s.step order by s.seq), '[]'::jsonb) from agent_trajectory_steps s where s.tenant_id = a.tenant_id and s.trajectory_id = a.id) as steps from agent_trajectories a where a.id = $1::uuid",
+      [runId]
+    );
     const text = JSON.stringify(rows[0].steps);
     expect(text).not.toContain(mine);
     expect(text).not.toContain(user);

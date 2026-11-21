@@ -173,6 +173,7 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 | ADR-056 | Operations Baseline                                            |
 | ADR-057 | Server-Side Sessions — the Browser Holds No Token              |
 | ADR-058 | One Bound on Every Stored JSON Value, Enforced by the Database |
+| ADR-059 | An Agent Trajectory's Steps as Rows                            |
 | ADR-061 | Audio in the Browser — One Strictly Checked WAV                |
 
 ---

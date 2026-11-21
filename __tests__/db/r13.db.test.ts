@@ -317,11 +317,17 @@ dbDescribe("R13-M1 an approved reset is compare-and-set on what it resets TO", (
 dbDescribe(
   "R13-L3 the chain guard serialises a continuation's insert with its predecessor's update",
   () => {
+    // Since migration 076 (TASK-230) a segment's steps are rows: its first step, a row.
     const insertRoot = async () =>
       (
         await sql(
-          `insert into agent_trajectories (tenant_id, trigger, subject_kind, subject_id, steps)
-         values ($1::uuid, 't', 'agent', 'r13race', '[1]'::jsonb) returning id`,
+          `with run as (
+             insert into agent_trajectories (tenant_id, trigger, subject_kind, subject_id)
+             values ($1::uuid, 't', 'agent', 'r13race') returning tenant_id, id),
+           step as (
+             insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+             select run.tenant_id, run.id, 0, '1'::jsonb from run)
+           select id from run`,
           [t.id]
         )
       )[0].id as string;
@@ -331,8 +337,8 @@ dbDescribe(
       offset: number
     ) =>
       tx.query(
-        `insert into agent_trajectories (tenant_id, trigger, subject_kind, subject_id, steps, segment, previous_trajectory_id, step_offset)
-       values ($1::uuid, 't', 'agent', 'r13race', '[]'::jsonb, 2, $2::uuid, $3::int)`,
+        `insert into agent_trajectories (tenant_id, trigger, subject_kind, subject_id, segment, previous_trajectory_id, step_offset)
+       values ($1::uuid, 't', 'agent', 'r13race', 2, $2::uuid, $3::int)`,
         [t.id, root, offset]
       );
     const grow = (
@@ -340,7 +346,8 @@ dbDescribe(
       root: string
     ) =>
       tx.query(
-        "update agent_trajectories set steps = steps || '[2]'::jsonb where id = $1::uuid",
+        `insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+         select tenant_id, id, step_count, '2'::jsonb from agent_trajectories where id = $1::uuid`,
         [root]
       );
 
@@ -372,10 +379,11 @@ dbDescribe(
       expect(bSettled).toBe(false); // waiting on the continuation's lock
       release();
       await a;
-      expect(await b).toMatch(/keeps its step count/);
+      // The step's trigger read `continued` from the row it waited for (review TA-b-1).
+      expect(await b).toMatch(/continued segment keeps its steps/);
       expect(
         await sql(
-          "select segment, step_offset, jsonb_array_length(steps) as n from agent_trajectories where chain_root_id = $1::uuid order by segment",
+          "select segment, step_offset, step_count as n from agent_trajectories where chain_root_id = $1::uuid order by segment",
           [root]
         )
       ).toEqual([
@@ -420,18 +428,23 @@ dbDescribe(
     it("a continued segment's steps neither grow nor shrink; a same-length rewrite is allowed", async () => {
       const root = await insertRoot();
       await t.run(() => withTenantTx((tx) => continuation(tx, root, 1)));
+      // No step removed (a step is deleted only with its trajectory), none added (076).
+      // app_tenant may not delete a step at all; the owner is refused by the trigger.
       await expect(
-        sql("update agent_trajectories set steps = '[]'::jsonb where id = $1::uuid", [
-          root,
-        ])
-      ).rejects.toThrow(/keeps its step count/);
+        sql("delete from agent_trajectory_steps where trajectory_id = $1::uuid", [root])
+      ).rejects.toThrow(/permission denied/);
       await expect(
-        sql("update agent_trajectories set steps = '[1, 2]'::jsonb where id = $1::uuid", [
-          root,
-        ])
-      ).rejects.toThrow(/keeps its step count/);
+        owner("delete from agent_trajectory_steps where trajectory_id = $1::uuid", [root])
+      ).rejects.toThrow(/a step is deleted only with its trajectory/);
+      await expect(
+        sql(
+          `insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+           select tenant_id, id, step_count, '2'::jsonb from agent_trajectories where id = $1::uuid`,
+          [root]
+        )
+      ).rejects.toThrow(/continued segment keeps its steps/);
       await sql(
-        "update agent_trajectories set steps = '[\"erased\"]'::jsonb where id = $1::uuid",
+        "update agent_trajectory_steps set step = '\"erased\"'::jsonb where trajectory_id = $1::uuid",
         [root]
       );
     });

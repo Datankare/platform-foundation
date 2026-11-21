@@ -91,8 +91,11 @@ dbDescribe("review 8 H-C: an erased account's address, replaced exactly", () => 
     for (const [i, value] of NEAR_MISSES.entries()) {
       await propose(`near-${i}`, { user_identifier: value, nested: [{ who: value }] });
       await sql(
-        `insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, scope_id, steps)
-         values ('near-' || $2::text, 'agent', 'a', 'group', 'g', jsonb_build_array(jsonb_build_object('input', jsonb_build_object('email', $1::text))))`,
+        `with run as (
+           insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, scope_id)
+           values ('near-' || $2::text, 'agent', 'a', 'group', 'g') returning tenant_id, id)
+         insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+         select run.tenant_id, run.id, 0, jsonb_build_object('input', jsonb_build_object('email', $1::text)) from run`,
         [value, String(i)]
       );
     }
@@ -108,7 +111,7 @@ dbDescribe("review 8 H-C: an erased account's address, replaced exactly", () => 
       proposals.map((r) => (r.payload as { nested: { who: string }[] }).nested[0].who)
     ).toEqual(NEAR_MISSES);
     const runs = await sql(
-      "select steps->0->'input'->>'email' as email from agent_trajectories where trigger like 'near-%' order by trigger"
+      "select s.step->'input'->>'email' as email from agent_trajectories a join agent_trajectory_steps s on s.trajectory_id = a.id and s.seq = 0 where a.trigger like 'near-%' order by a.trigger"
     );
     expect(runs.map((r) => r.email)).toEqual(NEAR_MISSES);
   });
@@ -119,9 +122,13 @@ dbDescribe("review 8 H-C: an erased account's address, replaced exactly", () => 
     await propose("upper", { user_identifier: "ANN@Corp.Example" });
     await propose("deep", { targets: [{ user: { email: "Ann@corp.example" } }] });
     await propose("decided", { user_identifier: "ann@corp.example" }, "executed");
+    // A run's step, a row (migration 076, TASK-230).
     await sql(
-      `insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, scope_id, steps)
-       values ('exact', 'agent', 'a', 'group', 'g', '[{"input": {"email": "ANN@corp.example"}}]'::jsonb)`
+      `with run as (
+         insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, scope_id)
+         values ('exact', 'agent', 'a', 'group', 'g') returning tenant_id, id)
+       insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+       select run.tenant_id, run.id, 0, '{"input": {"email": "ANN@corp.example"}}'::jsonb from run`
     );
     await t.run(() => softDeleteUser(ann, ann));
     const soft = await sql(
@@ -133,7 +140,9 @@ dbDescribe("review 8 H-C: an erased account's address, replaced exactly", () => 
       { operation_id: "upper", payload: { user_identifier: ann } },
     ]);
     expect(
-      await sql("select steps from agent_trajectories where trigger = 'exact'")
+      await sql(
+        "select (select coalesce(jsonb_agg(s.step order by s.seq), '[]'::jsonb) from agent_trajectory_steps s where s.tenant_id = a.tenant_id and s.trajectory_id = a.id) as steps from agent_trajectories a where a.trigger = 'exact'"
+      )
     ).toEqual([{ steps: [{ input: { email: ann } }] }]);
 
     await t.run(() => hardPurgeUser(ann));
@@ -142,7 +151,9 @@ dbDescribe("review 8 H-C: an erased account's address, replaced exactly", () => 
       await sql("select operation_id, payload from proposals order by operation_id")
     ).toEqual([{ operation_id: "decided", payload: { user_identifier: "erased" } }]);
     expect(
-      await sql("select steps from agent_trajectories where trigger = 'exact'")
+      await sql(
+        "select (select coalesce(jsonb_agg(s.step order by s.seq), '[]'::jsonb) from agent_trajectory_steps s where s.tenant_id = a.tenant_id and s.trajectory_id = a.id) as steps from agent_trajectories a where a.trigger = 'exact'"
+      )
     ).toEqual([{ steps: [{ input: { email: "erased" } }] }]);
   });
 

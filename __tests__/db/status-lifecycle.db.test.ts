@@ -134,7 +134,8 @@ dbDescribe("the status-lifecycle register against the schema (TASK-193)", () => 
 /** Each trajectory's last step says why it ended: the catalog's key and when (TASK-208, N-110). */
 async function expectAbandonedSteps(ids: readonly string[]): Promise<void> {
   const { rows: steps } = await owner<{ step: { action: string; output: unknown } }>(
-    "select steps->-1 as step from agent_trajectories where id = any($1::uuid[])",
+    // Each run's last step (rows since migration 076, TASK-230).
+    "select distinct on (trajectory_id) step from agent_trajectory_steps where trajectory_id = any($1::uuid[]) order by trajectory_id, seq desc",
     [ids]
   );
   expect(steps).toHaveLength(ids.length);

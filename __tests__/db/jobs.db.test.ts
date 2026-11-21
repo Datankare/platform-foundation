@@ -582,12 +582,13 @@ dbDescribe("the core duties, run as jobs", () => {
       [ids.newDone]: "completed",
     });
     const [reaped] = (
-      await owner<{ steps: { action: string; output: { was: string } }[] }>(
-        "select steps from agent_trajectories where id = $1::uuid",
+      await owner<{ step: { action: string; output: { was: string } } }>(
+        // The run's last step (rows since migration 076, TASK-230).
+        "select step from agent_trajectory_steps where trajectory_id = $1::uuid order by seq desc limit 1",
         [ids.staleRunning]
       )
     ).rows;
-    expect(reaped.steps.at(-1)).toMatchObject({
+    expect(reaped.step).toMatchObject({
       action: "trajectory-abandoned",
       output: { was: "running" },
     });

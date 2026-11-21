@@ -34,7 +34,7 @@ import type {
   SessionEvent,
   Step,
   StepBoundary,
-  Trajectory,
+  AppendedStep,
   TrajectoryStore,
   VersionedState,
   ProposalRecord,
@@ -353,7 +353,12 @@ export interface PipelineSuccess<TState> {
   /** null for ephemeral actions and for actions writing no managed state. */
   readonly committed: VersionedState<TState> | null;
   readonly step: Step | null;
-  readonly trajectory: Trajectory | null;
+  /**
+   * Where the step went (TASK-230, confirmation CB3-2): the segment — after a rollover, the
+   * continuation — its place in the run and the segment's version; null when no step was
+   * recorded. Not the segment's steps (an append reads none); read them with getById.
+   */
+  readonly appended: AppendedStep | null;
 }
 
 export type PipelineOutcome<TState> = PipelineSuccess<TState> | PipelineConflict<TState>;
@@ -450,7 +455,7 @@ export async function executeActionPipeline<TState>(
       }),
       committed: null,
       step: null,
-      trajectory: null,
+      appended: null,
     };
   }
 
@@ -774,9 +779,9 @@ async function commitAndRecord<TState>(
       step = stepWith(resultNotRecorded(resultViolation, req.label, operationId));
     }
   }
-  let record: Awaited<ReturnType<TrajectoryStore["addStep"]>>;
+  let appended: AppendedStep | undefined;
   try {
-    record = await req.trajectoryStore.addStep(
+    appended = await req.trajectoryStore.addStep(
       req.trajectoryId,
       step,
       req.rolloverTrajectory ? { rollover: true } : undefined
@@ -800,7 +805,7 @@ async function commitAndRecord<TState>(
     type: "state-change",
     sessionId: req.sessionId,
     operationId: context.operationId,
-    trajectoryId: record?.trajectory.trajectoryId ?? req.trajectoryId,
+    trajectoryId: appended?.trajectoryId ?? req.trajectoryId,
     stepIndex: step.stepIndex,
     proposalId: context.proposalId,
     actor: context.actor,
@@ -816,7 +821,7 @@ async function commitAndRecord<TState>(
     context,
     committed,
     step,
-    trajectory: record?.trajectory ?? null,
+    appended: appended ?? null,
   };
 }
 

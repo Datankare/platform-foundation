@@ -36,6 +36,7 @@ import {
   CROSS_TENANT_ERASURE,
   CROSS_TENANT_ERASURE_PAGES,
   eraseUserData,
+  stepUpdateLockingTrajectories,
   type ErasureStep,
 } from "@/platform/auth/user-data";
 import { raiseAlert } from "@/platform/observability/alert";
@@ -85,7 +86,13 @@ const registeredModules: DeletionModule[] = [];
  */
 export const ADDRESS_REPLACEMENTS: readonly string[] = [
   "update proposals set payload = jsonb_erase_address_text(payload, $1::text, $2::text), effects = jsonb_erase_address_text(effects, $1::text, $2::text) where jsonb_may_mention_text(payload, $1::text) or jsonb_may_mention_text(effects, $1::text)",
-  "update agent_trajectories set steps = jsonb_erase_address_text(steps, $1::text, $2::text) where jsonb_may_mention_text(steps, $1::text)",
+  // A trajectory's steps are rows (TASK-230, ADR-059): rewritten each as a value, their
+  // trajectories locked first, in key order (stepUpdateLockingTrajectories). A key numbered for a
+  // collision is numbered within its step now, not within the whole run.
+  stepUpdateLockingTrajectories(
+    "jsonb_may_mention_text(s.step, $1::text)",
+    "jsonb_erase_address_text(s.step, $1::text, $2::text)"
+  ),
   "update audit_log set details = jsonb_erase_address_text(details, $1::text, $2::text) where jsonb_may_mention_text(details, $1::text)",
   "update review_queue set moderation_result = jsonb_erase_address_text(moderation_result, $1::text, $2::text), explanation_chain = jsonb_erase_address_text(explanation_chain, $1::text, $2::text) where jsonb_may_mention_text(moderation_result, $1::text) or jsonb_may_mention_text(explanation_chain, $1::text)",
   "update app_sessions set state = jsonb_erase_address_text(state, $1::text, $2::text) where jsonb_may_mention_text(state, $1::text)",

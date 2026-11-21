@@ -120,27 +120,31 @@ const OWN_FIELDS =
 /** The config validator: 64 KiB of JSON and storedJsonViolation (nesting and the number range). */
 const CONFIG_VALUE = "64 KiB (MAX_CONFIG_VALUE_BYTES)";
 
-/** Every jsonb column of the platform's schema (PF: 21 tables, 42 columns), by table and column. */
+/** Every jsonb column of the platform's schema (PF: 22 tables, 42 columns), by table and column. */
 export const PLATFORM_JSON_COLUMNS: readonly JsonColumn[] = [
   checked("agent_approval_policy.rules", "small (validated approval rules)", [
     "platform/agents/postgres-approval-policy-store.ts",
     "assertWithinDatabaseBound",
   ]),
-  also(
-    checked(
-      "agent_trajectories.steps",
-      "16 MiB compact per run (1 000 steps of at most 1 MiB); bounded in depth only by the database until migration 076",
-      [TRAJECTORIES, "assertStorableJson"],
-      ["platform/agents/runtime.ts", "storedJsonViolation"]
-    ),
-    [USER_DATA, ERASURE],
-    [GDPR, ERASURE]
-  ),
   built(
     "agent_trajectories.total_cost",
     "a cost object (< 1 KB)",
     "the costs the trajectory store adds up from its steps (numbers it computes)",
     TRAJECTORIES
+  ),
+  // A trajectory's steps are rows since migration 076 (TASK-230, ADR-059): each step one value,
+  // bounded by the database like every other (8 MiB of text, numbers, 128 levels); the segment's
+  // sum by 076's step trigger (16 MiB by appends, 128 MiB after rewrites). The reaper's closing
+  // step is built in SQL in the same store file, within the segment's room.
+  also(
+    checked(
+      "agent_trajectory_steps.step",
+      "1 MiB compact per step (a segment: 1 000 steps, 16 MiB of text as printed, kept by the database)",
+      [TRAJECTORIES, "assertStorableJson"],
+      ["platform/agents/runtime.ts", "storedJsonViolation"]
+    ),
+    [USER_DATA, ERASURE],
+    [GDPR, ERASURE]
   ),
   checked("ai_metrics.tags", "small (a metric's tags)", [
     "platform/observability/metrics-sink.ts",

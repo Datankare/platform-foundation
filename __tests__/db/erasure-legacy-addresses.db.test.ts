@@ -91,9 +91,13 @@ dbDescribe("review 8 L1: addresses of accounts erased before v6.0.0", () => {
          values ($1, 's', 't', 'change_user_role', 'command-bar', 'agent', 'restricted', jsonb_build_object('user_identifier', $2::text), 'executed')`,
         [op, who]
       );
+    // A run's step (rows since migration 076, TASK-230).
     await sql(
-      `insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, scope_id, steps)
-       values ('r', 'agent', 'a', 'group', 'g', '[{"input": {"email": "gone@corp.example"}}]'::jsonb)`
+      `with run as (
+         insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, scope_id)
+         values ('r', 'agent', 'a', 'group', 'g') returning tenant_id, id)
+       insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+       select run.tenant_id, run.id, 0, '{"input": {"email": "gone@corp.example"}}'::jsonb from run`
     );
 
     expect(await listed()).toEqual(["gone@corp.example"]);
@@ -109,8 +113,8 @@ dbDescribe("review 8 L1: addresses of accounts erased before v6.0.0", () => {
         payload: { user_identifier: "write to gone@corp.example" },
       },
     ]);
-    expect(await sql("select steps from agent_trajectories")).toEqual([
-      { steps: [{ input: { email: "erased" } }] },
+    expect(await sql("select step from agent_trajectory_steps")).toEqual([
+      { step: { input: { email: "erased" } } },
     ]);
     expect(await listed()).toEqual([]);
     await withOwnerTx("tenant-lifecycle", (tx) => tx.query(redactIn(t.id)));

@@ -100,8 +100,8 @@ export interface InvokeToolArgs<TState = unknown> {
   readonly trajectoryStore?: TrajectoryStore;
   /**
    * A long-running agent's opt-in (review 11 H-2): a full trajectory is continued in a linked new
-   * one — the result's `outcome.trajectory` is then the continuation, and the caller goes on
-   * there — instead of refusing the call (request.trajectory_full, the default).
+   * one — the result's `outcome.appended` then names the continuation (its trajectoryId), and the
+   * caller goes on there — instead of refusing the call (request.trajectory_full, the default).
    */
   readonly rolloverTrajectory?: boolean;
   /** Required only for a tool that writes managed state. */

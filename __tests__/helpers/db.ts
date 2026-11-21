@@ -13,7 +13,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 import { closeDataPools, setDataPoolFactory, withOwnerTx } from "@/platform/data";
 import { poolConfig } from "@/platform/data/pool";
 import { runWithTenant, type TenantContext } from "@/platform/tenancy/context";
@@ -42,6 +42,47 @@ if (process.env.REQUIRE_DB_TESTS === "1" && !DB_ENABLED) {
 export const DB_TEST_TIMEOUT_MS = 30_000;
 jest.setTimeout(DB_TEST_TIMEOUT_MS);
 
+/**
+ * The bound on getting a connection from the test pool — a checkout queued behind a full pool, or
+ * a new connection's connect (56e-3b R2, hang report §1.5): clearly under the test's own bound, so a
+ * stuck connect fails as itself, named, and never as a test that "exceeded timeout of 30000 ms".
+ * It still covers TASK-204's bursts (N-3: 40 transactions of 0.6 s on 4 connections, the last
+ * waiting about 5.4 s), twice the deployment's 5 s.
+ */
+export const DB_TEST_CONNECT_TIMEOUT_MS = 10_000;
+
+/** What a test pool's connect that timed out says: the bound by name, then the driver's words. */
+export function connectTimeoutMessage(ms: number, cause: string): string {
+  return `test database: no connection within ${ms} ms (DB_TEST_CONNECT_TIMEOUT_MS, __tests__/helpers/db.ts; the test's own bound is DB_TEST_TIMEOUT_MS, ${DB_TEST_TIMEOUT_MS} ms) — a checkout queued behind a full pool, or a connect the server did not answer: ${cause}`;
+}
+
+/** pg's two words for a connect that ran out of time (pg-pool's queue, and a new client's connect). */
+const CONNECT_TIMED_OUT =
+  /timeout exceeded when trying to connect|Connection terminated due to connection timeout/;
+
+/**
+ * A pool for the tests: `config`, with every checkout bounded by `connectMs` and a timed-out one
+ * failing with connectTimeoutMessage (both of pg's call forms: promise and callback).
+ */
+export function testPool(
+  config: PoolConfig,
+  connectMs: number = DB_TEST_CONNECT_TIMEOUT_MS
+): Pool {
+  const pool = new Pool({ ...config, connectionTimeoutMillis: connectMs });
+  const named = (e: unknown): unknown =>
+    e instanceof Error && CONNECT_TIMED_OUT.test(e.message)
+      ? new Error(connectTimeoutMessage(connectMs, e.message), { cause: e })
+      : e;
+  const connect = pool.connect.bind(pool) as (...a: unknown[]) => unknown;
+  pool.connect = ((cb?: (err: unknown, ...rest: unknown[]) => void) =>
+    cb
+      ? connect((err: unknown, ...rest: unknown[]) => cb(err ? named(err) : err, ...rest))
+      : (connect() as Promise<unknown>).catch((e: unknown) => {
+          throw named(e);
+        })) as typeof pool.connect;
+  return pool;
+}
+
 /** describe() when a database is available, describe.skip() otherwise. */
 export const dbDescribe: jest.Describe = DB_ENABLED ? describe : describe.skip;
 
@@ -55,12 +96,10 @@ export async function connectTestDatabase(): Promise<void> {
   process.env.DATABASE_POOL_MAX = "4";
   process.env.DATABASE_STATEMENT_TIMEOUT_MS = "10000";
   // TASK-204 (N-3): the budget suites put 20-24 transactions at once on these 4 connections. A
-  // queued checkout waits up to the test's own bound (DB_TEST_TIMEOUT_MS), not the deployment's
-  // 5 s connect timeout, so a burst under CI load waits its turn instead of failing.
-  await setDataPoolFactory(
-    (role) =>
-      new Pool({ ...poolConfig(role), connectionTimeoutMillis: DB_TEST_TIMEOUT_MS })
-  );
+  // queued checkout waits up to DB_TEST_CONNECT_TIMEOUT_MS (10 s), not the deployment's 5 s
+  // connect timeout, so a burst under CI load waits its turn instead of failing; and a connect
+  // that hangs fails at 10 s, named, inside the test's 30 s (56e-3b R2).
+  await setDataPoolFactory((role) => testPool(poolConfig(role)));
 }
 
 export async function disconnectTestDatabase(): Promise<void> {

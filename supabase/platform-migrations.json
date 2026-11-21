@@ -76,6 +76,7 @@
     "072_record_text_and_hashes.sql",
     "073_retention_lifecycles.sql",
     "074_json_bound.sql",
-    "075_json_bound_existing_rows.sql"
+    "075_json_bound_existing_rows.sql",
+    "076_trajectory_steps_as_rows.sql"
   ]
 }

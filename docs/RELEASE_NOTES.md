@@ -28,6 +28,19 @@ Editor ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2 lists each wit
 `REFRESH_COOKIE_KEY` for 30 days more), then the code. Consumer steps: §1b, the twelve "Release
 candidate" rows.
 
+- **An agent run's steps are rows (TASK-230, ADR-059; migration 076).** Each step of a
+  trajectory is a row of `agent_trajectory_steps`; an append inserts one row and reads no other
+  step, a reader reads one segment in one statement, and the database keeps every rule for every
+  writer — the next place only, 1 000 steps and 16 MiB of text per segment by appends (128 MiB
+  after rewrites), never into a segment that has a continuation, a step never moved, deleted only
+  with its run. A statement's appends or rewrites of steps update each run once (statement
+  triggers), not once per step. 076 converts the stored steps (nothing cleared) and is safe pasted twice;
+  `supabase/optional/076_rollback.sql` undoes it exactly. Consumer changes:
+  `TrajectoryStore.addStep` returns `AppendedStep`, `query()` returns no steps (`stepCount`
+  instead), `deleteFinishedBefore` returns `{ deleted, more }` and is bounded by the steps it
+  deletes, the action pipeline's result names the step as `appended`; SQL of your own that read
+  `agent_trajectories.steps` reads the rows, and a rewrite of steps locks their runs first
+  ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md), 076; §2).
 - **Audio in the browser, part 1: the modules, the strict check and the cross-browser gate
   (TASK-234, ADR-061).** `platform/voice/canonical-wav.ts` is the one place a WAV header is read
   or written: `checkCanonicalWav` accepts exactly the canonical 16 kHz mono 16-bit WAV and

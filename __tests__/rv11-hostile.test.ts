@@ -350,9 +350,9 @@ describe("rv11 H-2: a session outgrows one trajectory", () => {
     expect(work).toBe(0);
     const out = await call(true);
     expect(work).toBe(1);
-    const next = (
-      out.outcome as { trajectory: { trajectoryId: string; segment?: number } }
-    ).trajectory;
+    // Where the step went (TASK-230, confirmation CB3-2): the pipeline's `appended`.
+    const next = (out.outcome as { appended: { trajectoryId: string; segment: number } })
+      .appended;
     expect(next.segment).toBe(2);
     expect(next.trajectoryId).not.toBe(created.trajectory.trajectoryId);
     // Through the first segment's id, an append goes to the chain's tail (review 12 M1): after
@@ -361,8 +361,11 @@ describe("rv11 H-2: a session outgrows one trajectory", () => {
       created.trajectory.trajectoryId,
       step(TRAJECTORY_MAX_STEPS + 1)
     );
-    expect(tailAppend!.trajectory.trajectoryId).toBe(next.trajectoryId);
-    expect(tailAppend!.trajectory.stepOffset).toBe(TRAJECTORY_MAX_STEPS);
+    expect(tailAppend!.trajectoryId).toBe(next.trajectoryId);
+    expect(tailAppend!.stepIndex).toBe(TRAJECTORY_MAX_STEPS + 1);
+    expect((await trajectories.getById(next.trajectoryId))?.trajectory.stepOffset).toBe(
+      TRAJECTORY_MAX_STEPS
+    );
     // The append path itself refuses a full tail without the opt-in.
     const full = await trajectories.create({ kind: "agent", id: "a2" }, "t", "platform");
     for (let i = 0; i < TRAJECTORY_MAX_STEPS; i++) {

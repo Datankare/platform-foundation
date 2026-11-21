@@ -17,6 +17,8 @@ import type { Trajectory, TrajectoryStatus, Step } from "./types";
 // singleton stay here; this re-export keeps every existing importer working.
 export type {
   AddStepOptions,
+  AppendedStep,
+  RetentionBatch,
   TrajectorySubjectKind,
   TrajectorySubject,
   TrajectoryQuery,
@@ -29,6 +31,8 @@ import type {
   AbandonedTrajectories,
   WorkflowAbandonment,
   AddStepOptions,
+  AppendedStep,
+  RetentionBatch,
   TrajectorySubject,
   TrajectoryQuery,
   TrajectoryCost,
@@ -47,6 +51,7 @@ import {
   jsonBytes,
   TRAJECTORY_MAX_BYTES,
   TRAJECTORY_MAX_STEPS,
+  TRAJECTORY_RETENTION_STEPS,
   trajectoryChainFull,
   trajectoryFull,
   trajectoryHasRoom,
@@ -111,7 +116,28 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
       costSummary: { tokens: 0, apiCalls: 0, usd: 0 },
     };
     this.parts.current().set(trajectory.trajectoryId, record);
+    this.versions.current().set(trajectory.trajectoryId, 1);
     return record;
+  }
+
+  /** Each trajectory's version, by id, per tenant: 1 at creation, moved by every write (as the table's). */
+  private readonly versions = new TenantPartitionedMap<string, number>();
+
+  private bump(trajectoryId: string): number {
+    const v = (this.versions.current().get(trajectoryId) ?? 1) + 1;
+    this.versions.current().set(trajectoryId, v);
+    return v;
+  }
+
+  /** Where `record`'s last step went (AppendedStep, TASK-230). */
+  private appended(record: TrajectoryRecord): AppendedStep {
+    const t = record.trajectory;
+    return {
+      trajectoryId: t.trajectoryId,
+      segment: t.segment ?? 1,
+      stepIndex: (t.stepOffset ?? 0) + t.steps.length - 1,
+      version: this.versions.current().get(t.trajectoryId) ?? 1,
+    };
   }
 
   /**
@@ -194,7 +220,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     const tail = this.tailOf(current);
     const id = tail.trajectory.trajectoryId;
     if (trajectoryHasRoom(tail.trajectory.steps.length, this.bytesOf(id))) return;
-    if (!options.rollover) throw trajectoryFull("agent_trajectories.steps");
+    if (!options.rollover) throw trajectoryFull("agent_trajectory_steps");
     const max = await resolveTrajectoryMaxSegments();
     if ((tail.trajectory.segment ?? 1) >= max) {
       throw trajectoryChainFull("agent_trajectories", max);
@@ -205,11 +231,11 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     trajectoryId: string,
     step: Step,
     options: AddStepOptions = {}
-  ): Promise<TrajectoryRecord | undefined> {
+  ): Promise<AppendedStep | undefined> {
     // As PostgresTrajectoryStore.addStep: a step over the stored-JSON limits is refused, coded
     // (code review B-26: the stand-in stored what the real store refuses, so no test without a
     // database could show a step refused after its work).
-    assertStorableJson(step, "agent_trajectories.steps[]");
+    assertStorableJson(step, "agent_trajectory_steps.step");
     const current = this.parts.current().get(trajectoryId);
     if (!current) return undefined;
     const size = stepBytes(step);
@@ -222,11 +248,11 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
       tail.trajectory.steps.length + 1 <= TRAJECTORY_MAX_STEPS &&
       bytes <= TRAJECTORY_MAX_BYTES
     ) {
-      return this.append(tail, step, bytes);
+      return this.appended(this.append(tail, step, bytes));
     }
     // The same cap as the durable store. With rollover, a full tail is continued in a linked
     // new one (review 11 H-2), up to the chain's segment cap (review 12 M2).
-    if (!options.rollover) throw trajectoryFull("agent_trajectories.steps");
+    if (!options.rollover) throw trajectoryFull("agent_trajectory_steps");
     const max = await resolveTrajectoryMaxSegments();
     // Read again after the await: another append may have continued the chain meanwhile.
     const latest = this.tailOf(tail);
@@ -235,7 +261,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     if ((tail.trajectory.segment ?? 1) >= max) {
       throw trajectoryChainFull("agent_trajectories", max);
     }
-    return this.append(this.startContinuation(tail), step, size);
+    return this.appended(this.append(this.startContinuation(tail), step, size));
   }
 
   /** A new trajectory continuing `previous`: the same subject, trigger and scope (review 11 H-2). */
@@ -260,6 +286,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
       costSummary: { tokens: 0, apiCalls: 0, usd: 0 },
     };
     this.parts.current().set(record.trajectory.trajectoryId, record);
+    this.versions.current().set(record.trajectory.trajectoryId, 1);
     this.next.current().set(p.trajectoryId, record.trajectory.trajectoryId);
     return record;
   }
@@ -286,6 +313,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     };
     this.parts.current().set(trajectoryId, updated);
     this.sizes.current().set(trajectoryId, bytes);
+    this.bump(trajectoryId);
     return updated;
   }
 
@@ -310,6 +338,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
       },
     };
     records.set(trajectoryId, updated);
+    this.bump(trajectoryId);
     return updated;
   }
 
@@ -335,6 +364,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
       },
     };
     records.set(trajectoryId, updated);
+    this.bump(trajectoryId);
     return updated;
   }
 
@@ -405,27 +435,48 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
       filtered = filtered.slice(0, options.limit);
     }
 
-    return options.withoutSteps
-      ? filtered.map((r) => ({ ...r, trajectory: { ...r.trajectory, steps: [] } }))
-      : filtered;
+    // A list reads no steps (TASK-230): each record without them, with their count.
+    return filtered.map((r) => ({
+      ...r,
+      trajectory: { ...r.trajectory, steps: [], stepCount: r.trajectory.steps.length },
+    }));
   }
 
-  async deleteFinishedBefore(cutoff: Date, limit: number): Promise<number> {
+  async deleteFinishedBefore(
+    cutoff: Date,
+    limit: number,
+    maxSteps: number = TRAJECTORY_RETENTION_STEPS
+  ): Promise<RetentionBatch> {
     const records = this.parts.current();
     const at = cutoff.getTime();
+    // As the durable store (TASK-230, confirmation CB3-4): the due trajectories oldest first, as
+    // many as both bounds allow — `limit` of them, their steps adding up to `maxSteps` (the first
+    // always) — and `more` when a due one was left.
+    const due = [...records.values()]
+      .filter(
+        (r) =>
+          (r.trajectory.status === "completed" || r.trajectory.status === "failed") &&
+          new Date(r.trajectory.updatedAt).getTime() < at
+      )
+      .sort(
+        (a, b) =>
+          a.trajectory.updatedAt.localeCompare(b.trajectory.updatedAt) ||
+          a.trajectory.trajectoryId.localeCompare(b.trajectory.trajectoryId)
+      );
     let deleted = 0;
-    for (const [id, r] of records) {
-      if (deleted >= limit) break;
-      const finished =
-        r.trajectory.status === "completed" || r.trajectory.status === "failed";
-      if (finished && new Date(r.trajectory.updatedAt).getTime() < at) {
-        records.delete(id);
-        this.sizes.current().delete(id);
-        this.next.current().delete(id);
-        deleted++;
-      }
+    let steps = 0;
+    for (const r of due) {
+      const n = r.trajectory.steps.length;
+      if (deleted >= limit || (deleted > 0 && steps + n > maxSteps)) break;
+      const id = r.trajectory.trajectoryId;
+      records.delete(id);
+      this.sizes.current().delete(id);
+      this.next.current().delete(id);
+      this.versions.current().delete(id);
+      steps += n;
+      deleted++;
     }
-    return deleted;
+    return { deleted, more: deleted < due.length };
   }
 
   /**
@@ -500,6 +551,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
         },
       });
       if (room) this.sizes.current().set(id, this.bytesOf(id) + stepBytes(step));
+      this.bump(id);
       closed++;
       if (t.status === "indeterminate") indeterminate++;
     }
@@ -509,6 +561,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
       const tail = this.tailOf(r).trajectory;
       if (tail.status !== "completed" && tail.status !== "failed") continue;
       records.set(id, { ...r, trajectory: { ...r.trajectory, status: tail.status } });
+      this.bump(id);
       segments++;
     }
     return { closed, indeterminate, segments };
@@ -524,6 +577,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     this.parts.clearAll();
     this.sizes.clearAll();
     this.next.clearAll();
+    this.versions.clearAll();
   }
 }
 

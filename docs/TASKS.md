@@ -7,6 +7,104 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-230 — An agent trajectory's steps are rows; the stored steps converted, never cleared; every rule of them kept by the database
+
+| Field        | Detail                                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-230                                                                                                      |
+| **Type**     | Data model (migration 076, optional rollback), the trajectory store, the erasure's step statements, retention |
+| **Severity** | High (a run's steps were one document: every append rewrote it all, every limit was the application's)        |
+| **Phase**    | Phase 5                                                                                                       |
+| **Target**   | v6.0.0 (RC)                                                                                                   |
+| **Status**   | Built (batch 56e-3b); 076 to be applied on the owner's dev/staging project with the release                   |
+| **Logged**   | 2026-11-17 (design 56e-3b approved by the owner 21:14 ET; built 2026-11-20, ADR-059)                          |
+
+Batch 56e-3b, in both repositories (Playform: its TASK-5032). An agent run (a trajectory segment)
+kept its steps as one JSON document, `agent_trajectories.steps`: every append read and rewrote
+it, every reader loaded it whole, every erasure rewrote it whole, and the limits (1 000 steps,
+16 MiB) were the store's to keep — a direct writer could append past them, out of order, or into a
+segment that already had a continuation. Now each step is a row of `agent_trajectory_steps`, and
+the database keeps every rule (ADR-059). Nothing a person sees changes: no route, screen, message
+or setting; an account's export keeps its `steps` key.
+
+| Finding (review)                   | Before                                                                                                                                                                                                                                   | After                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| B-8, RB2-4, S6 (append cost)       | One step appended = the whole document read and written (31 ms at 1 000 steps, 333 ms at 16 MB)                                                                                                                                          | One row inserted; it reads no other step (`__tests__/db/trajectory-store.db.test.ts`: 0 toast blocks, counted in the test's own transaction)                                                                                                                                                                                              |
+| SA-8 (limits and chain)            | The store's rules only                                                                                                                                                                                                                   | 076's step trigger: next place only, ≤ 1 000 steps and 16 MiB by appends, never into a continued segment, ≤ 128 MiB after rewrites, a step never moves, deleted only with its run; counters kept by the trigger; tenant-scoped key; forced RLS (`trajectory-steps.db.test.ts`)                                                            |
+| TA-b-1 (High, design)              | An append that waited for a continuation appended to the continued segment (chain misnumbered)                                                                                                                                           | The continuation marks its predecessor `continued` in its own statement; the append reads it from the row it locked: refused, or a serialization failure (`trajectory-steps-concurrency.db.test.ts`, six variants)                                                                                                                        |
+| TA-b-3, TB-b-1 (deadlocks)         | Two erasures of one run could deadlock; a re-paste of 076 could deadlock with an append                                                                                                                                                  | Every step rewrite locks its runs first, in key order, and the trigger never waits (55P03 at once); 076 pasted again returns before any lock (`migration-076.db.test.ts`)                                                                                                                                                                 |
+| Hang report §2 (round 2)           | Round 1's step trigger updated the run once per appended or rewritten step: a full segment's rewrite wrote 1 000 versions of one row, a shared session's erasure about 5× its old cost, past the 10 s statement timeout under 12 workers | Two statement triggers with transition tables count a statement's rows: one update per run per statement; neither they nor the erasure's step statement join anything, so no plan does steps × steps (`trajectory-steps-counted-once.db.test.ts`: row versions counted, 1 not 1 000; every join forced to a nested loop, every plan read) |
+| Hang report §1.5 (round 2)         | The DB tests' pool waited for a connection as long as the test itself (30 s): a hung connect read as "Exceeded timeout of 30000 ms"                                                                                                      | The test pool's checkout is bounded at 10 s (`DB_TEST_CONNECT_TIMEOUT_MS`) and a timed-out one fails naming it (`test-pool-connect-timeout.test.ts`)                                                                                                                                                                                      |
+| SA-7, SB-2 (no clearing)           | —                                                                                                                                                                                                                                        | 076 converts every stored step (text exact), only while the old column exists; `supabase/optional/076_rollback.sql` restores it exactly and resets only the purges its window failed (TA-b-6)                                                                                                                                             |
+| CB3-1 (High, confirmation)         | 049's `tenant_purge` deletes steps before runs: refused for every tenant that ran an agent                                                                                                                                               | The step trigger allows a deleted tenant's steps to be deleted; `tenant-lifecycle.db.test.ts` purges a tenant that ran an agent                                                                                                                                                                                                           |
+| CB3-2, CB3-3, CB3-4 (confirmation) | —                                                                                                                                                                                                                                        | `addStep` returns `AppendedStep` (the pipeline's `appended`); the reaper's closing step only where it fits; every delete taking runs bounded by their steps and saying `more` when a due row is left (`trajectory-retention-bound.db.test.ts`)                                                                                            |
+
+**Design check**
+
+- **Reach:** migration 076 (a table, three columns of `agent_trajectories`, the steps' row and
+  statement triggers,
+  the chain guard replaced, the platform's deletion-manifest row, a readiness function), the
+  optional rollback, the trajectory store and its in-memory twin, the kernel's store contract
+  (`AppendedStep`, `RetentionBatch`, `query()` without steps), the action pipeline's result,
+  session dispatch, the reaper, retention's three deletes, hold expiry's recovery, the erasure's
+  five step statements (locking form), the exports and the tenant export, the erasure gate and the
+  readiness probe, the replay script, the JSON-column and retention registers, the optional
+  address script.
+- **Races:** an append and a continuation lock the same segment row; the continuation marks it
+  `continued` in its own statement and the append reads that from the row it locked; two appends
+  serialise on the lock; two step rewrites of one run serialise at the run, which each locks first
+  in key order, and the trigger never waits for a run — so no pair of them deadlocks. A rewrite's
+  counting runs at the end of its statement, on runs the statement already holds.
+- **Dependencies down:** without 076 the new build refuses every erasure up front (no attempt
+  counted) and readiness says so; without the new build after 076 the old build's step access fails
+  loudly until the push, or the rollback.
+- **Erasure leftovers:** none — the same five statements on rows erase what the document form
+  erased, step for step (`erasure-steps.db.test.ts` compares them with 56e-3a's statements on the
+  same fixtures, its escape cases included); a run's steps go with it by the cascade.
+- **Screens × responses:** none change: no route, screen or message; an export keeps `steps`.
+- **Journeys touched:** every agent run (append, read), the account deletion (soft delete and
+  purge on steps), retention and the reaper, the operator's tenant purge.
+- **Weakens a tenant's protection?** No: the key carries the tenant, RLS is forced, `app_tenant`
+  has no DELETE on steps and `service_role` nothing.
+- _Credits._ PostgreSQL 17 documentation (The PostgreSQL Global Development Group): "CREATE
+  TRIGGER", "Foreign Keys", "Row Security Policies", `json_agg`, "The Locking Clause" (`FOR
+UPDATE`, `SKIP LOCKED`), "Transaction Isolation". The design reviewers' and the confirmation
+  reviewer's reproductions are tests here (ADR-059 §4).
+
+**Threat model**
+
+- **Boundary:** what may be written into a run's steps, and by whom; a reader's view of a run.
+- **Actors that exist today:** the platform's agent runtime and admin code as `app_tenant`; jobs
+  on the owner connection; the operator with `postgres`; scripts with `service_role`. No end user
+  writes SQL.
+- **Bypasses:** a direct insert at any place, past a limit, into a continued segment (also one
+  continued while the insert waited) or for another tenant's run is refused for every role; a
+  direct delete or move is refused; the counters and `continued` cannot be set by hand;
+  `service_role` has no right; the triggers are `ENABLE ALWAYS`; a trigger placed after the guard,
+  a changed function or an extra right is named by readiness.
+- **Forgeries:** a step's own `stepIndex` is the writer's claim, never trusted — its place is
+  `seq`; a reader cannot see a header and steps from different moments (one statement).
+- **Legitimate flows:** appends within the limits, rollover when full, the reaper's closing step,
+  the erasure's rewrites (within 128 MiB per segment), retention and cascade deletes, a deleted
+  tenant's purge, the rollback.
+- **Agreed before code:** the owner's brief for 56e-3b (2026-11-17: convert, clear nothing;
+  limits in the database) and the design he approved (21:14 ET).
+
+**Self-review**
+
+- **Consumers checked:** every reader and writer of steps (`grep` of `agent_trajectories` and
+  `.steps` in platform, app, lib, scripts and tests); round 2: every statement that updates
+  `agent_trajectory_steps` (the five erasure statements and the tests' direct updates) for what
+  it expects of `version` and `steps_bytes` after a multi-row rewrite; `addStep`'s callers and the pipeline
+  result's (`session.ts` dispatch, `tool-invoker.ts`, `runtime.ts`, `gating.ts`); `query()`'s
+  callers; `tenant_purge` and `tenant_tables()` (the steps table is a leaf deleted first); the
+  replay script's per-migration checks (076 applied after them); the erasure register's coverage
+  test and the deletion manifest.
+- **Hostile re-read:** the bypass clients (blind inserts at guessed places beside rolling-over
+  appenders) and every interleaving of T2 run on the final tree; the conversion and the rollback run
+  on a seeded copy of the old format (805 runs, 51 290 steps, specials and non-arrays): text-exact,
+  pasted twice, rolled back exactly, 076 again.
+
 ### TASK-234 — Audio in the browser: the strict canonical-WAV check, the browser converter and recorder, deterministic test audio, and the cross-browser gate (observed in Chromium, Firefox, WebKit and real Safari; two runs on the owner's Mac, corrected from each)
 
 | Field        | Detail                                                                                                                      |
@@ -24,7 +122,7 @@ route, screen, message or setting. The ADR numbers on the next line are held for
 batches 56e-3a, 56e-3b and 56e-3c (IDS.md); each is removed from it when its ADR lands
 (`__tests__/docs-integrity.test.ts` fails on a stale one).
 
-Reserved ADR numbers (batches not yet landed): ADR-059, ADR-060.
+Reserved ADR numbers (batches not yet landed): ADR-060.
 
 | Finding (review)                   | Before                                                                                                                                                                                                                                                                 | After                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

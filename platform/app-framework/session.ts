@@ -321,9 +321,15 @@ export async function dispatch<TState, TAction, TConfig>(
   }
 
   const committed = outcome.committed as VersionedState<TState>;
+  // The segment the move went to (a continuation, after a rollover), read as loadSession reads it:
+  // one segment, one statement (TASK-230, confirmation CB3-2 — the append returns no steps).
+  const trajectory = outcome.appended
+    ? ((await getTrajectoryStore().getById(outcome.appended.trajectoryId))?.trajectory ??
+      session.trajectory)
+    : session.trajectory;
   return {
     result: committed,
-    trajectory: outcome.trajectory ?? session.trajectory,
+    trajectory,
     nextActions: enumerateNextActions(definition, committed.state, args.options),
     cost,
   };
@@ -396,14 +402,14 @@ export async function loadSession<TState, TAction, TConfig>(
     throw new SessionAccessDeniedError(args.sessionId, args.actor.actorId);
   }
 
-  // The session's trajectory, found without reading its steps (review 12 M2), then the TAIL of
+  // The session's trajectory, found without reading its steps (a list reads none: review 12 M2,
+  // TASK-230), then the TAIL of
   // its chain read alone (review 11 H-2: its moves continue there) — never a predecessor's steps.
   // A session's history is read by paging its segments (trajectoryChainPages).
   const trajectories = await getTrajectoryStore().query({
     subjectKind: "session",
     subjectId: args.sessionId,
     limit: 1,
-    withoutSteps: true,
   });
   const newest = trajectories[0];
   const record = newest

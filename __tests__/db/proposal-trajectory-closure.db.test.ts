@@ -121,7 +121,7 @@ async function seed(
       ? `insert into agent_trajectories (tenant_id, trigger, status, subject_kind, subject_id, updated_at,
                                          previous_trajectory_id, segment, step_offset)
          select $1, $4, $2::trajectory_status, 'agent', 'dbtest-agent', now() - $3::interval,
-                p.id, p.segment + 1, p.step_offset + jsonb_array_length(p.steps)
+                p.id, p.segment + 1, p.step_offset + p.step_count
            from agent_trajectories p where p.id = $5::uuid
          returning id`
       : `insert into agent_trajectories (tenant_id, trigger, status, subject_kind, subject_id, updated_at)
@@ -372,11 +372,13 @@ dbDescribe("no hold ends with its trajectory left open (TASK-193, B-2)", () => {
         "select operation_id from proposals where id = $1::uuid",
         [s.proposalId]
       );
+      // The run's step, a row (migration 076, TASK-230).
       await owner(
-        `update agent_trajectories
-            set steps = jsonb_build_array(jsonb_build_object('stepIndex', 0, 'action', 'dbtest',
-                          'boundary', 'commitment', 'operationId', $2::text))
-          where id = $1::uuid`,
+        `insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+         select t.tenant_id, t.id, t.step_count,
+                jsonb_build_object('stepIndex', 0, 'action', 'dbtest',
+                  'boundary', 'commitment', 'operationId', $2::text)
+           from agent_trajectories t where t.id = $1::uuid`,
         [s.trajectoryId, rows[0].operation_id]
       );
     };

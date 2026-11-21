@@ -13,6 +13,8 @@
  */
 
 let gateRows: string[] = [];
+/** 076's readiness lines (TASK-230): null = the function is missing (076 not applied). */
+let stepRows: string[] | null = [];
 const sent: string[] = [];
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
@@ -28,6 +30,16 @@ const stand = {
   query: async (text: string) => {
     if (text.includes("erasure_functions_missing") || text.includes("json_bound_missing"))
       return { rows: [{ missing: gateRows }], rowCount: 1 };
+    // 076's part (TASK-230): its function present or not, then its lines.
+    if (text.includes("to_regprocedure('public.trajectory_steps_missing()')"))
+      return {
+        rows: [
+          { missing: stepRows === null ? [`${STEPS_MIGRATION}: not applied`] : null },
+        ],
+        rowCount: 1,
+      };
+    if (text.includes("trajectory_steps_missing"))
+      return { rows: [{ missing: stepRows ?? [] }], rowCount: 1 };
     sent.push(text.replace(/\s+/g, " ").trim().slice(0, 60));
     if (/^\s*select user_id from user_deletions/i.test(text))
       return { rows: [{ user_id: "11111111-1111-4111-8111-111111111111" }], rowCount: 1 };
@@ -49,6 +61,9 @@ import {
   ErasureSchemaMissing,
   requireErasureFunctions,
   resetErasureSchemaAlert,
+  STEPS_MIGRATION,
+  TRAJECTORY_STEPS_GATE_LINES_SQL,
+  TRAJECTORY_STEPS_GATE_SQL,
 } from "@/platform/auth/erasure-schema";
 import { eraseUserData } from "@/platform/auth/user-data";
 import {
@@ -65,6 +80,7 @@ const NOT_074 = [
 
 beforeEach(() => {
   gateRows = [];
+  stepRows = [];
   sent.length = 0;
   resetErasureSchemaAlert();
   (raiseAlert as jest.Mock).mockClear();
@@ -96,6 +112,31 @@ describe("T8: the gate (requireErasureFunctions)", () => {
     await expect(requireErasureFunctions(stand as never)).rejects.toThrow();
     await expect(requireErasureFunctions(stand as never)).rejects.toThrow();
     expect(raiseAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("(TASK-230) without 076 the erasure is refused too: its readiness function named missing", async () => {
+    stepRows = null;
+    const err = (await requireErasureFunctions(stand as never).catch(
+      (e: unknown) => e
+    )) as ErasureSchemaMissing;
+    expect(err).toBeInstanceOf(ErasureSchemaMissing);
+    expect(err.missing).toEqual([`${STEPS_MIGRATION}: not applied`]);
+    expect(TRAJECTORY_STEPS_GATE_SQL).toContain(
+      "to_regprocedure('public.trajectory_steps_missing()') is null"
+    );
+  });
+
+  it("(TASK-230) 076's lines 1–3 refuse the erasure; its other lines are readiness's only", async () => {
+    stepRows = ["076_trajectory_steps_as_rows.sql: not recorded"];
+    await expect(requireErasureFunctions(stand as never)).rejects.toBeInstanceOf(
+      ErasureSchemaMissing
+    );
+    // The gate asks only for lines 1–3: 076 not recorded, a table or counter missing, the old column.
+    expect(TRAJECTORY_STEPS_GATE_LINES_SQL).toContain(`m like '${STEPS_MIGRATION}: %'`);
+    expect(TRAJECTORY_STEPS_GATE_LINES_SQL).toContain("m like '%: missing'");
+    expect(TRAJECTORY_STEPS_GATE_LINES_SQL).toContain(
+      "m like 'agent_trajectories.steps: %'"
+    );
   });
 
   it("without 074 the question still has an answer: the function itself is named missing", () => {

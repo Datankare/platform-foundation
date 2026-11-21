@@ -144,6 +144,11 @@ export interface Trajectory {
   readonly previousTrajectoryId?: string;
   /** Steps held by the earlier segments of its chain (absent means 0): a step's index in the whole run is stepOffset + its position here. */
   readonly stepOffset?: number;
+  /**
+   * How many steps this segment holds, where `steps` is not read: TrajectoryStore.query() returns
+   * every record with `steps: []` and this count (TASK-230, ADR-059 — a list never reads steps).
+   */
+  readonly stepCount?: number;
 }
 
 // ── Step (P18) ────────────────────────────────────────────────────────
@@ -903,11 +908,6 @@ export interface TrajectoryQuery {
   readonly scopeId?: string;
   readonly status?: TrajectoryStatus;
   readonly limit?: number;
-  /**
-   * Return each record without its steps (`steps: []`; review 12 M2): for finding a trajectory —
-   * a session's newest segment — without reading every step it holds.
-   */
-  readonly withoutSteps?: boolean;
 }
 
 /** Cost summary stored alongside trajectory */
@@ -926,6 +926,22 @@ export interface TrajectoryRecord {
   readonly scopeType: "group" | "user" | "platform";
   readonly scopeId: string | null;
   readonly costSummary: TrajectoryCost;
+}
+
+/**
+ * Where TrajectoryStore.addStep put a step (TASK-230, ADR-059): the segment it went to — the
+ * chain's tail, or a continuation started for it — the step's place in the whole run, and that
+ * segment's version after the append. Not the segment's steps: an append reads none of them; a
+ * caller that needs the segment reads it (getById(trajectoryId), one statement).
+ */
+export interface AppendedStep {
+  readonly trajectoryId: string;
+  /** The segment's number in its chain (1 for the first). */
+  readonly segment: number;
+  /** The step's index in the whole run: the segment's stepOffset + its place in the segment. */
+  readonly stepIndex: number;
+  /** The segment's version after the append (it moves with every step). */
+  readonly version: number;
 }
 
 /** How a step is appended (review 11 H-2). */
@@ -971,7 +987,8 @@ export interface TrajectoryStore {
   ): Promise<TrajectoryRecord>;
 
   /**
-   * Add a step to a trajectory. Returns the updated record.
+   * Add a step to a trajectory. Returns where it went (AppendedStep), never the segment's steps:
+   * an append is one row (TASK-230, ADR-059) and reads no other step.
    *
    * The step goes to the TAIL of the chain `trajectoryId` belongs to (review 12 M1): whichever
    * segment's id is given, it is appended after every step already recorded, so the chain's steps
@@ -981,7 +998,7 @@ export interface TrajectoryStore {
    * With `rollover` (review 11 H-2), a tail without room for the step is continued: in the same
    * transaction as the append, a new trajectory is started for the same subject, trigger and
    * scope, linked to it (previousTrajectoryId, segment + 1, stepOffset), and the step is appended
-   * there. The record returned is then the continuation's. At most
+   * there. The AppendedStep returned then names the continuation. At most
    * agents.trajectory_max_segments segments (review 12 M2): past that the step is refused
    * (request.trajectory_chain_full). Without it, a full tail is refused
    * (request.trajectory_full) — the default for every untrusted growth path.
@@ -990,7 +1007,7 @@ export interface TrajectoryStore {
     trajectoryId: string,
     step: Step,
     options?: AddStepOptions
-  ): Promise<TrajectoryRecord | undefined>;
+  ): Promise<AppendedStep | undefined>;
 
   /**
    * Update trajectory status. With `from` (TASK-175), a compare-and-set: only while the status is
@@ -1021,7 +1038,11 @@ export interface TrajectoryStore {
     segment: number
   ): Promise<TrajectoryRecord | undefined>;
 
-  /** Query trajectories with filters. */
+  /**
+   * Query trajectories with filters. Every record comes back without its steps (`steps: []`) and
+   * with `trajectory.stepCount` (TASK-230: a list reads no steps — review 12 M2's opt-in made the
+   * rule); a reader of one segment's steps uses getById, chainTail or chainSegment.
+   */
   query(options: TrajectoryQuery): Promise<readonly TrajectoryRecord[]>;
 
   /**
@@ -1036,13 +1057,20 @@ export interface TrajectoryStore {
   assertRoomForStep?(trajectoryId: string, options?: AddStepOptions): Promise<void>;
 
   /**
-   * Retention: delete up to `limit` of the current tenant's completed and failed trajectories
-   * last updated before `cutoff`. Running, paused, awaiting_retry and indeterminate ones are kept — a held
-   * action may still resume them. Returns the count deleted; throws when it could not run.
+   * Retention: delete the current tenant's completed and failed trajectories last updated before
+   * `cutoff`, oldest first — at most `limit` of them, and while their steps (deleted with them)
+   * add up to at most `maxSteps` (TRAJECTORY_RETENTION_STEPS by default; the first always goes).
+   * Running, paused, awaiting_retry and indeterminate ones are kept — a held action may still
+   * resume them. Returns the count deleted and `more`: a due trajectory was left for the next
+   * batch (by either bound — TASK-230, confirmation CB3-4). Throws when it could not run.
    *
    * @scheduled agents.trajectory-retention
    */
-  deleteFinishedBefore(cutoff: Date, limit: number): Promise<number>;
+  deleteFinishedBefore(
+    cutoff: Date,
+    limit: number,
+    maxSteps?: number
+  ): Promise<RetentionBatch>;
 
   /**
    * The reaper (TASK-193): end `failed`, with a step saying so, up to `limit` of the current
@@ -1074,6 +1102,13 @@ export interface TrajectoryStore {
 export interface WorkflowAbandonment {
   readonly triggers: readonly string[];
   readonly cutoff: Date;
+}
+
+/** What one bounded retention delete did (TrajectoryStore.deleteFinishedBefore). */
+export interface RetentionBatch {
+  readonly deleted: number;
+  /** A due row was left out by a bound: run again. */
+  readonly more: boolean;
 }
 
 /** What one run of the trajectory reaper ended (TrajectoryStore.closeAbandoned). */

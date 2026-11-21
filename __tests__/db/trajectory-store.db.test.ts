@@ -56,7 +56,8 @@ dbDescribe("PostgresTrajectoryStore", () => {
       expect(new Date(rec.trajectory.createdAt).toISOString()).toBe(
         rec.trajectory.createdAt
       );
-      const after = await store.addStep(rec.trajectory.trajectoryId, step(0, 0));
+      await store.addStep(rec.trajectory.trajectoryId, step(0, 0));
+      const after = await store.getById(rec.trajectory.trajectoryId);
       expect(after?.costSummary.apiCalls).toBe(0); // a free step is not an API call
       expect(after!.trajectory.updatedAt >= rec.trajectory.updatedAt).toBe(true);
       const status = await store.updateStatus(
@@ -91,18 +92,18 @@ dbDescribe("PostgresTrajectoryStore", () => {
       expect(await store.query({ limit: 0 })).toHaveLength(3); // no positive limit: all
     });
 
-    it("reads a malformed steps or total_cost as empty", async () => {
+    it("reads a malformed total_cost as empty; a run without steps reads []", async () => {
       const rec = await store.create({ kind: "agent", id: "z" }, "t", "platform");
       await tenant.run(() =>
         withTenantTx((tx) =>
           tx.query(
-            `update agent_trajectories set steps = '{"not": "a list"}'::jsonb,
-                total_cost = '"nonsense"'::jsonb where id = $1::uuid`,
+            `update agent_trajectories set total_cost = '"nonsense"'::jsonb where id = $1::uuid`,
             [rec.trajectory.trajectoryId]
           )
         )
       );
       const loaded = await store.getById(rec.trajectory.trajectoryId);
+      // No step rows (TASK-230): the segment's steps are an empty list, never null.
       expect(loaded?.trajectory.steps).toEqual([]);
       expect(loaded?.costSummary).toEqual({ tokens: 0, apiCalls: 0, usd: 0 });
       const partial = await tenant.run(() =>
@@ -115,6 +116,88 @@ dbDescribe("PostgresTrajectoryStore", () => {
       );
       expect(partial.rowCount).toBe(1);
       expect((await store.getById(rec.trajectory.trajectoryId))?.costSummary.usd).toBe(0);
+    });
+
+    // TASK-230 (ADR-059; reviews B-8, RB2-4, S6, SB-10 (4), TB-x-4): work counted, never timed —
+    // in the test's own transaction, which the store's statements join.
+    describe("(TASK-230) an append is one row; a read is one statement", () => {
+      /** Run `fn` in one tenant transaction, counting the statements sent on it. */
+      const counted = <T>(fn: () => Promise<T>) =>
+        tenant.run(() =>
+          withTenantTx(async (tx) => {
+            let n = 0;
+            const send = tx.query.bind(tx);
+            (tx as { query: typeof tx.query }).query = ((
+              ...a: Parameters<typeof send>
+            ) => {
+              n += 1;
+              return send(...a);
+            }) as typeof tx.query;
+            try {
+              return { value: await fn(), statements: n };
+            } finally {
+              (tx as { query: typeof tx.query }).query = send;
+            }
+          })
+        );
+
+      it("getById, chainTail, chainSegment and query read in one statement each; query reads no step", async () => {
+        const rec = await store.create({ kind: "agent", id: "c" }, "t", "platform");
+        const id = rec.trajectory.trajectoryId;
+        await store.addStep(id, step(0));
+        await store.addStep(id, step(1));
+        for (const read of [
+          () => store.getById(id),
+          () => store.chainTail(id),
+          () => store.chainSegment(id, 1),
+        ]) {
+          const r = await counted(read);
+          expect(r.statements).toBe(1);
+          expect(r.value?.trajectory.steps).toHaveLength(2);
+        }
+        const q = await counted(() => store.query({ agentId: "c" }));
+        expect(q.statements).toBe(1);
+        expect(q.value[0].trajectory.steps).toEqual([]);
+        expect(q.value[0].trajectory.stepCount).toBe(2);
+      });
+
+      it("(B-8, TB-x-4) an append to a 999-step run reads no toast block of the steps; a read of the run does", async () => {
+        const rec = await store.create({ kind: "agent", id: "toast" }, "t", "platform");
+        const id = rec.trajectory.trajectoryId;
+        // 999 steps of ~3 KB that do not compress (md5 chained): stored out of line.
+        await tenant.run(() =>
+          withTenantTx((tx) =>
+            tx.query(
+              `insert into agent_trajectory_steps (trajectory_id, seq, step)
+               select $1::uuid, i, jsonb_build_object('stepIndex', i, 'text',
+                        (select string_agg(md5(i::text || ':' || j::text), '') from generate_series(1, 96) j))
+                 from generate_series(0, 998) i order by i`,
+              [id]
+            )
+          )
+        );
+        const toastRead = (fn: () => Promise<unknown>) =>
+          tenant.run(() =>
+            withTenantTx(async (tx) => {
+              const blocks = async () =>
+                Number(
+                  (
+                    await tx.query<{ n: string }>(
+                      `select pg_stat_get_xact_blocks_fetched(c.reltoastrelid)::text as n
+                         from pg_class c where c.oid = 'public.agent_trajectory_steps'::regclass`
+                    )
+                  ).rows[0].n
+                );
+              const before = await blocks();
+              await fn();
+              return (await blocks()) - before;
+            })
+          );
+        expect(await toastRead(() => store.addStep(id, step(999)))).toBe(0);
+        // The counter does count: reading the segment reads its steps' toast.
+        expect(await toastRead(() => store.getById(id))).toBeGreaterThan(0);
+        expect((await store.getById(id))?.trajectory.steps).toHaveLength(1000);
+      });
     });
 
     it("propagates a database refusal (a check constraint) as a thrown error", async () => {

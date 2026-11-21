@@ -226,12 +226,13 @@ async function fullTrajectory(
 ): Promise<string> {
   const traj = await t.run(() => store.create(subject, "test", "user"));
   const id = traj.trajectory.trajectoryId;
+  // The steps as rows (migration 076, TASK-230), in order.
   await sql(
-    `update agent_trajectories
-        set steps = (select jsonb_agg(jsonb_build_object('stepIndex', i - 1, 'action', 'move',
-                                                         'actor', jsonb_build_object('actorId', $3::text)))
-                       from generate_series(1, $2::int) i)
-      where id = $1::uuid`,
+    `insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+     select t.tenant_id, t.id, i - 1, jsonb_build_object('stepIndex', i - 1, 'action', 'move',
+                                                     'actor', jsonb_build_object('actorId', $3::text))
+       from agent_trajectories t, generate_series(1, $2::int) i
+      where t.id = $1::uuid order by i`,
     [id, TRAJECTORY_MAX_STEPS, actorId]
   );
   return id;
@@ -244,7 +245,10 @@ dbDescribe("rv11 H-2 on Postgres: a full trajectory is continued, linked", () =>
     await expect(t.run(() => store.addStep(first, step(1000)))).rejects.toMatchObject({
       code: "request.trajectory_full",
     });
-    const next = await t.run(() => store.addStep(first, step(1000), { rollover: true }));
+    const appended = await t.run(() =>
+      store.addStep(first, step(1000), { rollover: true })
+    );
+    const next = await t.run(() => store.getById(appended!.trajectoryId));
     expect(next!.trajectory).toMatchObject({
       segment: 2,
       previousTrajectoryId: first,
@@ -277,10 +281,10 @@ dbDescribe("rv11 H-2 on Postgres: a full trajectory is continued, linked", () =>
         t.run(() => store.addStep(first, step(1000 + i), { rollover: true }))
       )
     );
-    const ids = new Set(results.map((r) => r!.trajectory.trajectoryId));
+    const ids = new Set(results.map((r) => r!.trajectoryId));
     expect(ids.size).toBe(1);
     const rows = await sql(
-      "select id, jsonb_array_length(steps) as n from agent_trajectories where previous_trajectory_id = $1::uuid",
+      "select id, step_count as n from agent_trajectories where previous_trajectory_id = $1::uuid",
       [first]
     );
     expect(rows).toEqual([{ id: [...ids][0], n: 5 }]);
@@ -328,8 +332,8 @@ dbDescribe("rv11 H-2 on Postgres: a full trajectory is continued, linked", () =>
     );
     await t.run(() => withTenantTx((tx) => eraseUserData(tx, user)));
     const left = await sql(
-      "select count(*)::int as n from agent_trajectories where id = any($1::uuid[]) and steps::text like '%' || $2 || '%'",
-      [[first, second!.trajectory.trajectoryId], user]
+      "select count(*)::int as n from agent_trajectory_steps where trajectory_id = any($1::uuid[]) and step::text like '%' || $2 || '%'",
+      [[first, second!.trajectoryId], user]
     );
     expect(left).toEqual([{ n: 0 }]);
   });

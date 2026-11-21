@@ -58,8 +58,8 @@ dbDescribe("an app session's runs end with it (TASK-215, B-5)", () => {
   ): Promise<string> => {
     const id = randomUUID();
     await owner(
-      `insert into agent_trajectories (id, tenant_id, trigger, subject_kind, subject_id, scope_type, steps, status, created_at, updated_at)
-       values ($1::uuid, $2, 'session', 'session', $3, 'user', '[]'::jsonb, 'running', ${age}, ${age})`,
+      `insert into agent_trajectories (id, tenant_id, trigger, subject_kind, subject_id, scope_type, status, created_at, updated_at)
+       values ($1::uuid, $2, 'session', 'session', $3, 'user', 'running', ${age}, ${age})`,
       [id, tenant.id, sessionId]
     );
     return id;

@@ -84,9 +84,10 @@ describe("InMemoryTrajectoryStore", () => {
         "trigger",
         "platform"
       );
-      const updated = await store.addStep(record.trajectory.trajectoryId, makeStep());
-
-      expect(updated).toBeDefined();
+      const appended = await store.addStep(record.trajectory.trajectoryId, makeStep());
+      expect(appended).toBeDefined();
+      // Where the step went (TASK-230); the segment is read with getById.
+      const updated = await store.getById(appended!.trajectoryId);
       expect(updated!.trajectory.steps).toHaveLength(1);
       expect(updated!.trajectory.steps[0].action).toBe("test-action");
     });
@@ -100,7 +101,8 @@ describe("InMemoryTrajectoryStore", () => {
       const tid = record.trajectory.trajectoryId;
 
       await store.addStep(tid, makeStep({ cost: 0.01 }));
-      const updated = await store.addStep(tid, makeStep({ stepIndex: 1, cost: 0.02 }));
+      await store.addStep(tid, makeStep({ stepIndex: 1, cost: 0.02 }));
+      const updated = await store.getById(tid);
 
       expect(updated!.trajectory.totalCost).toBeCloseTo(0.03, 4);
       expect(updated!.costSummary.usd).toBeCloseTo(0.03, 4);

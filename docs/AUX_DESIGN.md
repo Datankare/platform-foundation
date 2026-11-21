@@ -69,7 +69,7 @@ This is the load-bearing decision. The platform supports two ways to run a workf
 Three invariants make this a single design rather than two:
 
 1. **One workflow definition, two entry points.** The step sequence lives in one place (PF-B). `full-pipeline` calls the loop; the stepwise goals expose its checkpoints. A capability added to the loop appears in both automatically — no drift.
-2. **The trajectory is identical either way.** Whether the agent made four calls or one, `agent_trajectories` shows the same steps. Auditability does not depend on which door the agent used.
+2. **The trajectory is identical either way.** Whether the agent made four calls or one, the run (`agent_trajectories`, its steps rows of `agent_trajectory_steps` since TASK-230, ADR-059) shows the same steps. Auditability does not depend on which door the agent used.
 3. **`nextActions` is always present**, including on the orchestrated return. A completed `full-pipeline` still hands back affordances (`translate-more`, `respond`, `done`); it never dead-ends. That is the difference between an agent API and an RPC.
 
 **The rule that keeps it honest:** the orchestrated path must not skip the gates. Same risk floor per step, same budget check per step, same content-safety screening on the new input surface (Standing Rule 11), same trajectory append per step. A `full-pipeline` that bypassed any gate "for speed" would create two safety regimes, and the fast one would be the unsafe one — the shape of the swallowed-throw defect (ADR-032). The response-conformance kit enforces this: both entry points must emit `result + trajectory + nextActions + cost`, and the trajectory must show every gated step, or CI fails.

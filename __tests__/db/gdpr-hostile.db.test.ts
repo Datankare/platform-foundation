@@ -222,10 +222,16 @@ dbDescribe("review 7 M3: a shared session's export is the user's part only", () 
       [user, other]
     );
     await sql(
-      `insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, steps)
-       values ('session-created', 'session', 's1', 'user',
-               jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text), 'move', 'mine'),
-                                 jsonb_build_object('actor', jsonb_build_object('actorId', $2::text), 'move', 'theirs')))`,
+      `with run as (
+         insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type)
+         values ('session-created', 'session', 's1', 'user') returning tenant_id, id)
+       insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+       select run.tenant_id, run.id, e.n - 1, e.s
+         from run, jsonb_array_elements(
+                jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text), 'move', 'mine'),
+                                  jsonb_build_object('actor', jsonb_build_object('actorId', $2::text), 'move', 'theirs')))
+                with ordinality e(s, n)
+        order by e.n`,
       [user, other]
     );
     const { data, errors } = await t.run(() => exportUserData(user));
@@ -271,11 +277,18 @@ dbDescribe("review 7 M4: erasure leaves no row naming the user", () => {
       [user, other]
     );
     await sql(
-      `insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, steps)
-       values ('session-created', 'session', 's1', 'user', jsonb_build_array(jsonb_build_object('actorId', $1::text))),
-              ('session-created', 'session', 'shared', 'user',
-                 jsonb_build_array(jsonb_build_object('actorId', $1::text), jsonb_build_object('actorId', $2::text))),
-              ('session-created', 'session', 'own', 'user', jsonb_build_array(jsonb_build_object('actorId', $1::text)))`,
+      `with src(subject_id, steps) as (
+         values ('s1', jsonb_build_array(jsonb_build_object('actorId', $1::text))),
+                ('shared', jsonb_build_array(jsonb_build_object('actorId', $1::text), jsonb_build_object('actorId', $2::text))),
+                ('own', jsonb_build_array(jsonb_build_object('actorId', $1::text)))),
+       run as (
+         insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type)
+         select 'session-created', 'session', subject_id, 'user' from src
+         returning tenant_id, id, subject_id)
+       insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+       select run.tenant_id, run.id, e.n - 1, e.s
+         from run join src using (subject_id), jsonb_array_elements(src.steps) with ordinality e(s, n)
+        order by run.id, e.n`,
       [user, other]
     );
     // Held role changes another admin made about the user — by id, and by address — and one
@@ -301,7 +314,7 @@ dbDescribe("review 7 M4: erasure leaves no row naming the user", () => {
 
     const left = await sql(
       `select (select count(*) from users where status_changed_by = $1)::int as status_by,
-              (select count(*) from agent_trajectories where steps::text like '%' || $1 || '%')::int as traj,
+              (select count(*) from agent_trajectory_steps where step::text like '%' || $1 || '%')::int as traj,
               (select count(*) from proposals where payload::text like '%' || $1 || '%')::int as props`,
       [user]
     );
@@ -335,7 +348,7 @@ dbDescribe("review 7 M4: erasure leaves no row naming the user", () => {
       meta: { participants: [{ actorId: other }] },
     });
     const runs = await sql(
-      `select subject_id, steps from agent_trajectories order by subject_id`
+      `select a.subject_id, (select coalesce(jsonb_agg(s.step order by s.seq), '[]'::jsonb) from agent_trajectory_steps s where s.tenant_id = a.tenant_id and s.trajectory_id = a.id) as steps from agent_trajectories a order by a.subject_id`
     );
     expect(runs).toEqual([
       { subject_id: "s1", steps: [{ actorId: "erased" }] },

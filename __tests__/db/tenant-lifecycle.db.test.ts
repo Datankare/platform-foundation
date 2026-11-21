@@ -616,3 +616,51 @@ dbDescribe("tenant lifecycle: one account, one outcome (ADR-053 D7)", () => {
     expect(rows[0]).toEqual({ request: "pending", tenant: "active" });
   });
 });
+
+dbDescribe("tenant lifecycle: the purge of a tenant that ran an agent (TASK-230)", () => {
+  lifecycleHooks();
+
+  // TASK-230 (confirmation CB3-1): a tenant that ever ran an agent holds trajectory steps, rows of
+  // a leaf table that tenant_purge deletes before the trajectories — the purge must complete.
+  it("purges a deleted tenant that ran an agent: its steps, then its runs, nothing left", async () => {
+    const t = await provision();
+    await withOwnerTx("tenant-lifecycle", async (tx) => {
+      const { rows } = await tx.query<{ id: string }>(
+        `insert into agent_trajectories (tenant_id, trigger, subject_kind, subject_id, scope_type, status)
+         values ($1::uuid, 'lc', 'agent', 'lc-agent', 'platform', 'completed') returning id`,
+        [t.id]
+      );
+      await tx.query(
+        `insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+         select $1::uuid, $2::uuid, i, jsonb_build_object('i', i) from generate_series(0, 2) i order by i`,
+        [t.id, rows[0].id]
+      );
+    });
+    const req = await asOp(() => requestTenantDeletion(op1, t.id, "closing account"));
+    await asOp(() =>
+      decideTenantDeletion(op2, (req as { value: { id: string } }).value.id, true, "ok")
+    );
+    await withOwnerTx("tenant-lifecycle", (tx) =>
+      tx.query(
+        "update tenants set purge_after = now() - interval '1 minute' where id = $1",
+        [t.id]
+      )
+    );
+    const purged = await asOp(() => purgeDueTenants(op1));
+    expect(purged).toMatchObject({ ok: true });
+    expect(
+      (purged as unknown as { value: { tenantId: string }[] }).value.map(
+        (p) => p.tenantId
+      )
+    ).toContain(t.id);
+    const left = await withOwnerTx("tenant-lifecycle", (tx) =>
+      tx.query<{ steps: number; runs: number; purged: boolean }>(
+        `select (select count(*) from agent_trajectory_steps where tenant_id = $1::uuid)::int as steps,
+                (select count(*) from agent_trajectories where tenant_id = $1::uuid)::int as runs,
+                (select purged_at is not null from tenants where id = $1::uuid) as purged`,
+        [t.id]
+      )
+    );
+    expect(left.rows[0]).toEqual({ steps: 0, runs: 0, purged: true });
+  });
+});

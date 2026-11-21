@@ -1,6 +1,7 @@
 /**
  * platform/auth/erasure-schema.ts — the erasure runs only with the rewrite functions migration 074
- * made, and readiness says whenever the JSON bound is not in force (platform TASK-229, ADR-058)
+ * made and the step rows migration 076 made, and readiness says whenever the JSON bound or 076's
+ * objects are not in force (platform TASK-229, ADR-058; TASK-230, ADR-059)
  *
  * Two questions, kept apart (design 56e-3a §2.3, review SB-13):
  *
@@ -38,8 +39,17 @@ export const JSON_BOUND_MIGRATIONS = [
   "075_json_bound_existing_rows.sql",
 ] as const;
 
+/**
+ * The migration that makes a trajectory's steps rows (TASK-230, ADR-059): the erasure's statements
+ * on steps rewrite agent_trajectory_steps, so the gate refuses without it — its readiness
+ * (public.trajectory_steps_missing()) lines 1–3: 076 not recorded, the table or a counter missing,
+ * the old column still there. Its other lines (a function or trigger changed, a trigger after the
+ * guard, a right beyond 076's) are readiness's only.
+ */
+export const STEPS_MIGRATION = "076_trajectory_steps_as_rows.sql";
+
 /** What a refused erasure says (this module's words; never a store's text). */
-export const ERASURE_SCHEMA_MISSING = `the erasure's functions are not as migration ${JSON_BOUND_MIGRATIONS[0]} makes them (missing, or another definition, owner or grants): erasure is refused until they are (docs/MIGRATION_v5_to_v6.md; docs/runbooks/jobs.md, "Erasure refused: functions missing")`;
+export const ERASURE_SCHEMA_MISSING = `the erasure's functions are not as migration ${JSON_BOUND_MIGRATIONS[0]} makes them (missing, or another definition, owner or grants), or a trajectory's steps are not rows as ${STEPS_MIGRATION} makes them: erasure is refused until they are (docs/MIGRATION_v5_to_v6.md; docs/runbooks/jobs.md, "Erasure refused: functions missing")`;
 
 /** The erasure was asked of a database whose rewrite functions are not 074's. */
 export class ErasureSchemaMissing extends Error {
@@ -60,21 +70,56 @@ export const ERASURE_FUNCTIONS_MISSING_SQL = `select case when to_regprocedure('
               then array['${JSON_BOUND_MIGRATIONS[0]}: not applied (public.erasure_functions_missing() is missing)']
               else (select coalesce(array_agg(m order by m), '{}') from public.erasure_functions_missing() m) end as missing`;
 
+/**
+ * 076's part of the gate (TASK-230), in one statement any role may send: without 076 its readiness
+ * function is missing (the one row naming it); with it, its lines 1–3 — 076 not recorded, the
+ * steps' table or a counter missing, the old column still there.
+ */
+export const TRAJECTORY_STEPS_GATE_SQL = `select case when to_regprocedure('public.trajectory_steps_missing()') is null
+              then array['${STEPS_MIGRATION}: not applied (public.trajectory_steps_missing() is missing)']
+              else null end as missing`;
+/** 076's lines the gate refuses on (1–3), once its readiness function exists. */
+export const TRAJECTORY_STEPS_GATE_LINES_SQL = `select coalesce(array_agg(m order by m), '{}') as missing from public.trajectory_steps_missing() m
+            where m like '${STEPS_MIGRATION}: %' or m like '%: missing' or m like 'agent_trajectories.steps: %'`;
+/** 076's readiness, every line (the probe's). */
+export const TRAJECTORY_STEPS_MISSING_SQL = `select coalesce(array_agg(m order by m), '{}') as missing from public.trajectory_steps_missing() m`;
+
 /** Readiness's question, in one statement (without 074: the one row naming it). */
 export const JSON_BOUND_MISSING_SQL = `select case when to_regprocedure('public.json_bound_missing()') is null
               then array['${JSON_BOUND_MIGRATIONS[0]}: not applied (public.json_bound_missing() is missing)']
               else (select coalesce(array_agg(m order by m), '{}') from public.json_bound_missing() m) end as missing`;
 
-/** What the erasure's functions lack on `tx`'s database, by name; empty when nothing. */
-export async function missingErasureFunctions(tx: Tx): Promise<string[]> {
-  const { rows } = await tx.query<{ missing: string[] }>(ERASURE_FUNCTIONS_MISSING_SQL);
-  return rows[0]?.missing ?? [];
+/**
+ * 076's readiness lines on `tx`'s database (`gateOnly`: lines 1–3), by name; without 076, the one
+ * line naming it.
+ */
+async function missingTrajectorySteps(tx: Tx, gateOnly: boolean): Promise<string[]> {
+  const { rows } = await tx.query<{ missing: string[] | null }>(
+    TRAJECTORY_STEPS_GATE_SQL
+  );
+  if (rows[0]?.missing) return rows[0].missing;
+  const { rows: lines } = await tx.query<{ missing: string[] }>(
+    gateOnly ? TRAJECTORY_STEPS_GATE_LINES_SQL : TRAJECTORY_STEPS_MISSING_SQL
+  );
+  return lines[0]?.missing ?? [];
 }
 
-/** Every way the JSON bound is not in force on `tx`'s database, by name; empty when in force. */
+/**
+ * What the erasure's functions and step rows lack on `tx`'s database, by name; empty when
+ * nothing: 074's gate, then 076's lines 1–3 (TASK-230).
+ */
+export async function missingErasureFunctions(tx: Tx): Promise<string[]> {
+  const { rows } = await tx.query<{ missing: string[] }>(ERASURE_FUNCTIONS_MISSING_SQL);
+  return [...(rows[0]?.missing ?? []), ...(await missingTrajectorySteps(tx, true))];
+}
+
+/**
+ * Every way the JSON bound, or 076's step rows, are not in force on `tx`'s database, by name;
+ * empty when in force.
+ */
 export async function missingJsonBound(tx: Tx): Promise<string[]> {
   const { rows } = await tx.query<{ missing: string[] }>(JSON_BOUND_MISSING_SQL);
-  return rows[0]?.missing ?? [];
+  return [...(rows[0]?.missing ?? []), ...(await missingTrajectorySteps(tx, false))];
 }
 
 /** At most one alert per this many ms per process for refused erasures. */
@@ -143,7 +188,7 @@ export function createJsonBoundProbe(): HealthProbe {
         return missing.length === 0
           ? result(
               "healthy",
-              `${JSON_BOUND_MIGRATIONS.join(" and ")} in force: every stored JSON value bounded (128 levels, numbers 0 or 1e-18 <= |n| < 1e21, 8388608 bytes as text); the erasure's functions as 074 makes them`
+              `${JSON_BOUND_MIGRATIONS.join(" and ")} in force: every stored JSON value bounded (128 levels, numbers 0 or 1e-18 <= |n| < 1e21, 8388608 bytes as text); the erasure's functions as 074 makes them; a trajectory's steps rows as ${STEPS_MIGRATION} makes them`
             )
           : result(
               "degraded",

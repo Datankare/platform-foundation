@@ -207,8 +207,8 @@ dbDescribe("retention: the data.retention job keeps to the rules (N-25)", () => 
       // TASK-215 (audit B-5): a session's run goes with its session (migration 073's trigger).
       await add(
         `sessionrun_${age}`,
-        `insert into agent_trajectories (id, tenant_id, trigger, subject_kind, subject_id, scope_type, steps, status, updated_at)
-         values ($1, $2, 'session', 'session', $3, 'user', '[]'::jsonb, 'running', ${at})`,
+        `insert into agent_trajectories (id, tenant_id, trigger, subject_kind, subject_id, scope_type, status, updated_at)
+         values ($1, $2, 'session', 'session', $3, 'user', 'running', ${at})`,
         [ids[`session_${age}`]]
       );
       // TASK-215 (S4): a rate-limit event goes on a schedule, whether or not its bucket is counted.

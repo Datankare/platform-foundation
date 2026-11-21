@@ -116,6 +116,29 @@ UNION ALL SELECT 'config|' || md5(coalesce(string_agg(to_jsonb(c)::text, '' ORDE
 ORDER BY 1
 SQL
 }
+# TASK-230 (ADR-059): migrations from 076 on are applied after the per-migration checks below,
+# which write and read agent_trajectories.steps — the column 076 converts into rows and drops (and
+# 052's re-application below restores 052's chain guard, which 076 replaces). Every check runs right
+# after the migration it checks, as an instance applies them.
+LATE_FROM="076"
+late=$(echo "$order" | while read -r f; do [ -n "$f" ] && ! [ "${f:0:3}" \< "$LATE_FROM" ] && echo "$f"; done || true)
+order=$(echo "$order" | while read -r f; do [ -n "$f" ] && [ "${f:0:3}" \< "$LATE_FROM" ] && echo "$f"; done || true)
+apply_twice() {
+  local f=$1
+  step "migration $f (applied twice)"
+  "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null
+  applied=$((applied + 1))
+  local before after
+  before=$(schema_snapshot)
+  "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null 2>&1 \
+    || { echo "✗ $f failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null; exit 1; }
+  after=$(schema_snapshot)
+  if [ "$before" != "$after" ]; then
+    echo "✗ applying $f a second time changed the database:"
+    diff <(echo "$before") <(echo "$after") || true
+    exit 1
+  fi
+}
 applied=0
 for f in $order; do
   if ! grep -qF "('$f', 'verified'" "$BASELINE"; then
@@ -2420,6 +2443,44 @@ SQL
 # the JSON bound is in force on every jsonb column and the erasure's functions are 074's. The floor
 # for every later migration: one that adds a jsonb column or table without calling
 # public.json_bound_install() and public.json_bound_check(<table>) fails here.
+# The migrations from 076 on (above: why after the checks). 076 converts what the steps column holds:
+# a two-segment chain with an address, a key and a number that prints longer than it is stored
+# (1e-18: 5 characters written, 20 printed — inside the bound's number range), written first, must
+# come back as rows — same steps, same order, same text — with the counters, the first segment
+# marked continued and the column gone; applied a second time, nothing changes; 076's readiness empty.
+if [ -n "$late" ]; then
+  "${PSQL[@]}" >/dev/null <<'SQL'
+INSERT INTO public.tenants (id, slug, name) VALUES ('00000000-0000-4000-8000-000000000076', 'replay-076', 'Replay 076') ON CONFLICT DO NOTHING;
+INSERT INTO public.agent_trajectories (id, tenant_id, trigger, subject_kind, subject_id, steps) VALUES
+  ('00000000-0000-4000-8000-000000000761', '00000000-0000-4000-8000-000000000076', 'replay-076', 'agent', 'replay-076',
+   '[{"stepIndex": 0, "to": "ann@x.test"}, {"stepIndex": 1, "ann@x.test": 1e-18}]');
+INSERT INTO public.agent_trajectories (id, tenant_id, trigger, subject_kind, subject_id, steps, segment, previous_trajectory_id, step_offset) VALUES
+  ('00000000-0000-4000-8000-000000000762', '00000000-0000-4000-8000-000000000076', 'replay-076', 'agent', 'replay-076',
+   '[{"stepIndex": 2}]', 2, '00000000-0000-4000-8000-000000000761', 2);
+CREATE SCHEMA IF NOT EXISTS replay_076;
+CREATE TABLE replay_076.before AS
+  SELECT id, n - 1 AS seq, s AS step FROM public.agent_trajectories, jsonb_array_elements(steps) WITH ORDINALITY e(s, n)
+   WHERE tenant_id = '00000000-0000-4000-8000-000000000076';
+SQL
+  for f in $late; do apply_twice "$f"; done
+  step "076: the steps written before it are rows — same steps, order and text; counters; column gone"
+  [ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM replay_076.before b FULL JOIN public.agent_trajectory_steps s ON s.trajectory_id = b.id AND s.seq = b.seq WHERE s.step::text IS DISTINCT FROM b.step::text")" = "0" ] \
+    || { echo "✗ 076 did not convert the steps exactly"; exit 1; }
+  [ "$("${PSQL[@]}" -At -c "SELECT string_agg(step_count || ':' || (steps_bytes = (SELECT coalesce(sum(octet_length(s.step::text)), 0) FROM public.agent_trajectory_steps s WHERE s.tenant_id = t.tenant_id AND s.trajectory_id = t.id))::text, ',' ORDER BY segment) FROM public.agent_trajectories t WHERE tenant_id = '00000000-0000-4000-8000-000000000076'")" = "2:true,1:true" ] \
+    || { echo "✗ 076's counters are not the rows'"; exit 1; }
+  [ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM pg_attribute WHERE attrelid = 'public.agent_trajectories'::regclass AND attname = 'steps' AND NOT attisdropped")" = "0" ] \
+    || { echo "✗ 076 left agent_trajectories.steps"; exit 1; }
+  [ "$("${PSQL[@]}" -At -c "SELECT string_agg(continued::text, ',' ORDER BY segment) FROM public.agent_trajectories WHERE tenant_id = '00000000-0000-4000-8000-000000000076'")" = "true,false" ] \
+    || { echo "✗ 076 did not mark the continued segment"; exit 1; }
+  missing076=$("${PSQL[@]}" -At -c "SELECT string_agg(m, '; ' ORDER BY m) FROM public.trajectory_steps_missing() m")
+  [ -z "$missing076" ] || { echo "✗ 076's readiness is not empty: $missing076"; exit 1; }
+  "${PSQL[@]}" >/dev/null <<'SQL'
+DROP SCHEMA replay_076 CASCADE;
+DELETE FROM public.agent_trajectories WHERE tenant_id = '00000000-0000-4000-8000-000000000076';
+DELETE FROM public.tenants WHERE id = '00000000-0000-4000-8000-000000000076';
+SQL
+fi
+
 step "074/075: the JSON bound in force and the erasure's functions as 074 makes them"
 missing=$("${PSQL[@]}" -At -c "SELECT string_agg(m, '; ' ORDER BY m) FROM public.json_bound_missing() m")
 [ -z "$missing" ] || { echo "✗ the JSON bound is not in force after the replay: $missing"; exit 1; }

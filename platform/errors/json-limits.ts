@@ -2,7 +2,7 @@
  * platform/errors/json-limits.ts — How deep and how large stored caller JSON may be (review 9 H2)
  *
  * Caller-shaped JSON is stored in four places an erasure later rewrites: app_sessions.state,
- * trajectory steps (agent_trajectories.steps), proposal payloads and audit details. A document
+ * trajectory steps (agent_trajectory_steps.step, TASK-230), proposal payloads and audit details. A document
  * nested hundreds deep made the (then recursive) erasure function exceed the stack; one far larger
  * than any real record made it slow. The erasure function no longer recurses and cannot fail on
  * any document (migration 052), and these limits keep what is stored to what a real record needs:
@@ -39,17 +39,34 @@ export const STORED_JSON_MAX_DEPTH = 64;
 export const STORED_JSON_MAX_BYTES = 1_048_576;
 
 /**
- * The most steps one trajectory (agent_trajectories row) may record (review 10 L10: only each
- * step was bounded, so a run's steps grew without limit — and so did the document an erasure
- * rewrites).
+ * The most steps one trajectory (agent_trajectories row, a segment) may record (review 10 L10:
+ * only each step was bounded, so a run's steps grew without limit). Since migration 076 (TASK-230,
+ * ADR-059) the steps are rows of agent_trajectory_steps and the database enforces this: its step
+ * trigger refuses the 1 001st (trajectory_full).
  */
 export const TRAJECTORY_MAX_STEPS = 1_000;
 
 /**
- * The most one trajectory's steps may hold, as UTF-8 JSON text (16 MiB). With every step at most
- * STORED_JSON_MAX_BYTES, an erasure rewrites at most this much per trajectory row.
+ * The most one trajectory's steps may hold by appends: the sum of each step's text as PostgreSQL
+ * prints it (16 MiB) — the one size measure (docs/JSON_BOUND.md §1), kept by the database in
+ * agent_trajectories.steps_bytes and enforced by the step trigger (migration 076). The in-memory
+ * store measures compact JSON instead; the two differ only near this edge.
  */
 export const TRAJECTORY_MAX_BYTES = 16 * 1_048_576;
+
+/**
+ * The most a segment's steps may print after rewrites (an erasure grows a step: 128 MiB = 8 x
+ * TRAJECTORY_MAX_BYTES, above the most an erasure grows a full segment, 5.71x measured). The
+ * database refuses an UPDATE of a step past it (trajectory_full, migration 076).
+ */
+export const TRAJECTORY_REWRITE_MAX_BYTES = 8 * TRAJECTORY_MAX_BYTES;
+
+/**
+ * The most steps one retention statement deletes with the trajectories it deletes (TASK-230): a
+ * trajectory's steps go with it by the foreign key's cascade, so a batch is bounded by its steps
+ * (the sum of step_count), not only by its trajectories — always at least one trajectory.
+ */
+export const TRAJECTORY_RETENTION_STEPS = 50_000;
 
 /**
  * The database's bound on every stored JSON value (migration 074, ADR-058, docs/JSON_BOUND.md) —
@@ -549,8 +566,10 @@ export function jsonBytes(value: unknown): number {
 }
 
 /**
- * Whether a trajectory holding `steps` steps in `bytes` bytes has room for one more step of the
- * largest storable size (a step and its envelope: STORED_JSON_MAX_BYTES and a comma).
+ * Whether a trajectory holding `steps` steps in `bytes` bytes (agent_trajectories.step_count and
+ * steps_bytes, the database's counters) has room for one more step of the largest storable size
+ * (STORED_JSON_MAX_BYTES, and a byte). A step that prints longer than it is sent (numbers near the
+ * range's edge) can still be refused at the append — rolled over, or request.trajectory_full.
  */
 export function trajectoryHasRoom(steps: number, bytes: number): boolean {
   return (

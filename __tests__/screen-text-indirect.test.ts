@@ -1106,7 +1106,7 @@ export const STORED_CODE_FIELDS = new Set([
   "lastPurgeError",
 ]);
 
-/** A run step's output fields (agent_trajectories.steps: exported, rendered): a note; a reason. */
+/** A run step's output fields (agent_trajectory_steps.step, TASK-230: exported, rendered): a note; a reason. */
 const STEP_NOTE_FIELDS = new Set(["note"]);
 const STEP_CODE_FIELDS = new Set(["reason", "error"]);
 

@@ -8,7 +8,7 @@
  *       step never lands in an earlier segment; step_offset is every step before; concurrent
  *       appends across a rollover lose and misplace nothing.
  *   M2  a chain is capped (agent.trajectory_max_segments, coded); the tail is read alone, and a
- *       query can leave the steps out.
+ *       query reads no steps (TASK-230).
  *   L1  audited() inside a transaction that rolls back after a successful act: "rolled_back" is
  *       written after the rollback, sharing the attempt's id and naming the run it belongs to.
  *   L5  a tenant's compare-and-set against the platform default it inherits is serialised with a
@@ -85,10 +85,10 @@ const step = (i: number, size: number): Step => ({
 /** Fill trajectory `id` with `n` small steps in one statement (as rv11's fullTrajectory). */
 async function fill(id: string, n: number): Promise<void> {
   await sql(
-    `update agent_trajectories
-        set steps = (select jsonb_agg(jsonb_build_object('stepIndex', i - 1, 'action', 's' || (i - 1)))
-                       from generate_series(1, $2::int) i)
-      where id = $1::uuid`,
+    `insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+     select t.tenant_id, t.id, i - 1, jsonb_build_object('stepIndex', i - 1, 'action', 's' || (i - 1))
+       from agent_trajectories t, generate_series(1, $2::int) i
+      where t.id = $1::uuid order by i`,
     [id, n]
   );
 }
@@ -103,10 +103,10 @@ dbDescribe("R12-2 (M1) on Postgres: every append goes to the chain's tail", () =
     const big = await t.run(() =>
       store.addStep(id, step(16, 1_040_000), { rollover: true })
     );
-    expect(big!.trajectory.segment).toBe(2);
-    expect(big!.trajectory.stepOffset).toBe(16);
+    expect(big!.segment).toBe(2);
+    expect(big!.stepIndex).toBe(16);
     const small = await t.run(() => store.addStep(id, step(17, 10), { rollover: true }));
-    expect(small!.trajectory.trajectoryId).toBe(big!.trajectory.trajectoryId);
+    expect(small!.trajectoryId).toBe(big!.trajectoryId);
     const chain = await t.run(() => readTrajectoryChain(store, id));
     expect(chainSteps(chain).map((s) => s.action)).toEqual(
       Array.from({ length: 18 }, (_, i) => `s${i}`)
@@ -131,8 +131,7 @@ dbDescribe("R12-2 (M1) on Postgres: every append goes to the chain's tail", () =
             })
           )
           .then((r) => {
-            if (!seen.includes(r!.trajectory.trajectoryId))
-              seen.push(r!.trajectory.trajectoryId);
+            if (!seen.includes(r!.trajectoryId)) seen.push(r!.trajectoryId);
             return r;
           })
       )
@@ -151,7 +150,7 @@ dbDescribe("R12-2 (M1) on Postgres: every append goes to the chain's tail", () =
 });
 
 dbDescribe("R12-M2 on Postgres: a bounded chain, read a segment at a time", () => {
-  it("the tail is read alone; a query can leave the steps out", async () => {
+  it("the tail is read alone; a query reads no steps (TASK-230)", async () => {
     const store = new PostgresTrajectoryStore();
     const tr = await t.run(() =>
       store.create({ kind: "session", id: `s_${t.id}` }, "t", "user")
@@ -162,18 +161,19 @@ dbDescribe("R12-M2 on Postgres: a bounded chain, read a segment at a time", () =
       store.addStep(first, step(9999, 5), { rollover: true })
     );
     const read: TrajectoryRecord | undefined = await t.run(() => store.chainTail(first));
-    expect(read!.trajectory.trajectoryId).toBe(tail!.trajectory.trajectoryId);
+    expect(read!.trajectory.trajectoryId).toBe(tail!.trajectoryId);
     expect(read!.trajectory.steps).toHaveLength(1);
     expect(
-      (await t.run(() => store.chainSegment(tail!.trajectory.trajectoryId, 1)))!
-        .trajectory.trajectoryId
+      (await t.run(() => store.chainSegment(tail!.trajectoryId, 1)))!.trajectory
+        .trajectoryId
     ).toBe(first);
     expect(await t.run(() => store.chainSegment(first, 3))).toBeUndefined();
     const found = await t.run(() =>
-      store.query({ subjectKind: "session", subjectId: `s_${t.id}`, withoutSteps: true })
+      store.query({ subjectKind: "session", subjectId: `s_${t.id}` })
     );
     expect(found.map((r) => r.trajectory.segment ?? 1)).toEqual([2, 1]);
     expect(found.every((r) => r.trajectory.steps.length === 0)).toBe(true);
+    expect(found.map((r) => r.trajectory.stepCount)).toEqual([1, TRAJECTORY_MAX_STEPS]);
   });
 
   it("past agent.trajectory_max_segments the step is refused, coded, nothing written", async () => {
@@ -371,8 +371,8 @@ dbDescribe(
     const insert = (values: unknown[]) =>
       sql(
         `insert into agent_trajectories
-         (id, subject_kind, subject_id, trigger, scope_type, status, steps, total_cost, version, segment, previous_trajectory_id, step_offset)
-       values (gen_random_uuid(), 'agent', 'h', 't', 'platform', 'running', '[]', '{}', 1, $1::int, $2::uuid, $3::int)`,
+         (id, subject_kind, subject_id, trigger, scope_type, status, total_cost, version, segment, previous_trajectory_id, step_offset)
+       values (gen_random_uuid(), 'agent', 'h', 't', 'platform', 'running', '{}', 1, $1::int, $2::uuid, $3::int)`,
         values
       );
 
@@ -396,10 +396,13 @@ dbDescribe(
           "update agent_trajectories set previous_trajectory_id = null, segment = 1 where segment = 2"
         )
       ).rejects.toThrow(/never changes/);
+      // A continued segment takes no step (076's step trigger: rows since TASK-230).
       await expect(
-        sql("update agent_trajectories set steps = '[1]'::jsonb where id = $1::uuid", [
-          root,
-        ])
+        sql(
+          `insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+           select tenant_id, id, step_count, '1'::jsonb from agent_trajectories where id = $1::uuid`,
+          [root]
+        )
       ).rejects.toThrow(/last segment/);
     });
 
@@ -411,9 +414,9 @@ dbDescribe(
         await tx.query("set local session_replication_role = replica");
         await tx.query(
           `insert into agent_trajectories
-           (id, tenant_id, subject_kind, subject_id, trigger, scope_type, status, steps, total_cost, version, segment, previous_trajectory_id, step_offset, chain_root_id)
-         values ($1::uuid, $3::uuid, 'agent', 'cyc', 't', 'platform', 'running', '[]', '{}', 1, 2, $2::uuid, 0, $1::uuid),
-                ($2::uuid, $3::uuid, 'agent', 'cyc', 't', 'platform', 'running', '[]', '{}', 1, 3, $1::uuid, 0, $1::uuid)`,
+           (id, tenant_id, subject_kind, subject_id, trigger, scope_type, status, total_cost, version, segment, previous_trajectory_id, step_offset, chain_root_id)
+         values ($1::uuid, $3::uuid, 'agent', 'cyc', 't', 'platform', 'running', '{}', 1, 2, $2::uuid, 0, $1::uuid),
+                ($2::uuid, $3::uuid, 'agent', 'cyc', 't', 'platform', 'running', '{}', 1, 3, $1::uuid, 0, $1::uuid)`,
           [a, b, t.id]
         );
         await tx.query(

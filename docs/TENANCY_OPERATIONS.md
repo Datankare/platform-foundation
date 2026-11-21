@@ -302,16 +302,17 @@ An operator holds `platform_operate` (granted to `super_admin`). In the admin co
 
 Rules the platform enforces:
 
-| Action                        | Rule                                                                                                                      |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Every operator action         | Recorded in the audit log first; no record, no change                                                                     |
-| Suspend / delete              | Never the tenant the operator is acting from                                                                              |
-| Delete                        | Requested by one operator, approved by another within 7 days; the tenant is refused at once; data is purged 30 days later |
-| Restore                       | Only before the purge; the tenant comes back suspended                                                                    |
-| Attest an external erasure    | Only a step the system could not verify; asked by one operator, approved by another within 7 days; a fixed reason         |
-| Export                        | Every row the tenant owns, newline-delimited JSON, from one consistent snapshot, headed by the tenant and its addresses   |
-| A suspension or deletion      | Takes effect on the acting instance at once and on every other within 30 seconds (directory cache)                        |
-| Adding or removing an address | Answers on the acting instance at once and on every other within 30 seconds (address snapshot)                            |
+| Action                        | Rule                                                                                                                                                                                                                                      |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Every operator action         | Recorded in the audit log first; no record, no change                                                                                                                                                                                     |
+| Suspend / delete              | Never the tenant the operator is acting from                                                                                                                                                                                              |
+| Delete                        | Requested by one operator, approved by another within 7 days; the tenant is refused at once; data is purged 30 days later                                                                                                                 |
+| Purge                         | Every table the tenant owns, leaves of the foreign keys first — an agent run's steps (`agent_trajectory_steps`, migration 076) before the runs: a deleted tenant's steps may be deleted on their own (TASK-230), an active tenant's never |
+| Restore                       | Only before the purge; the tenant comes back suspended                                                                                                                                                                                    |
+| Attest an external erasure    | Only a step the system could not verify; asked by one operator, approved by another within 7 days; a fixed reason                                                                                                                         |
+| Export                        | Every row the tenant owns, newline-delimited JSON, from one consistent snapshot, headed by the tenant and its addresses                                                                                                                   |
+| A suspension or deletion      | Takes effect on the acting instance at once and on every other within 30 seconds (directory cache)                                                                                                                                        |
+| Adding or removing an address | Answers on the acting instance at once and on every other within 30 seconds (address snapshot)                                                                                                                                            |
 
 ### Closing an erasure the system cannot verify (TASK-193)
 

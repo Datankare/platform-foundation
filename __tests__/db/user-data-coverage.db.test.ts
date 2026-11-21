@@ -226,13 +226,21 @@ async function seed(t: TestTenant, user: string, other: string): Promise<void> {
     // shared one's, naming the user in a step — a move of the user's, with what they entered
     // (sessionMoveText, TASK-215).
     [
-      `insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, steps)
-       values ('session-created', 'session', 's-own-' || $1::text, 'user',
-               jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text)))),
-              ('session-created', 'session', 's-shared-' || $1::text, 'user',
-               jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text),
-                                                    'input', jsonb_build_object('text', 'a move')),
-                                 jsonb_build_object('actor', jsonb_build_object('actorId', $2::text))))`,
+      `with src(subject_id, steps) as (
+         values ('s-own-' || $1::text,
+                 jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text)))),
+                ('s-shared-' || $1::text,
+                 jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text),
+                                                      'input', jsonb_build_object('text', 'a move')),
+                                   jsonb_build_object('actor', jsonb_build_object('actorId', $2::text))))),
+       run as (
+         insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type)
+         select 'session-created', 'session', subject_id, 'user' from src
+         returning tenant_id, id, subject_id)
+       insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+       select run.tenant_id, run.id, e.n - 1, e.s
+         from run join src using (subject_id), jsonb_array_elements(src.steps) with ordinality e(s, n)
+        order by run.id, e.n`,
       [user, other],
     ],
     // Review 8 M3: another account's records that mention the user — a case, a remembered
@@ -295,17 +303,22 @@ async function seed(t: TestTenant, user: string, other: string): Promise<void> {
     [
       `with ids as (select gen_random_uuid() as hold_id),
        run as (
-         insert into agent_trajectories (trigger, status, subject_kind, subject_id, scope_type, steps)
-         select 'command-bar', 'failed', 'agent', 'command-bar', 'platform',
-                jsonb_build_array(
+         insert into agent_trajectories (trigger, status, subject_kind, subject_id, scope_type)
+         values ('command-bar', 'failed', 'agent', 'command-bar', 'platform')
+         returning tenant_id, id
+       ),
+       steps as (
+         insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+         select run.tenant_id, run.id, e.n - 1, e.s
+           from ids, run, jsonb_array_elements(jsonb_build_array(
                   jsonb_build_object('proposalId', ids.hold_id::text, 'action', 'block_user_feature',
                     'input', jsonb_build_object('user_id', $1::text,
                                                 'reason', 'her step reason, round 9'),
                     'output', jsonb_build_object('status', 'proposed')),
                   jsonb_build_object('proposalId', ids.hold_id::text,
-                    'output', jsonb_build_object('status', 'rejected', 'note', 'she wrote from home')))
-           from ids
-         returning id
+                    'output', jsonb_build_object('status', 'rejected', 'note', 'she wrote from home'))))
+                with ordinality e(s, n)
+          order by e.n
        )
        insert into proposals (id, operation_id, session_id, trajectory_id, label, actor_id,
                               actor_role, effective_risk, payload, status, decision_note)
@@ -316,18 +329,30 @@ async function seed(t: TestTenant, user: string, other: string): Promise<void> {
          from ids, run`,
       [user],
     ],
+    // TASK-230 (trajectoryScopes): a run whose scope is the user's id, others' steps in it.
+    [
+      `insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, scope_id)
+       values ('about-user', 'agent', 'helper', 'group', $1::text)`,
+      [user],
+    ],
     // Round 10, N-B and N-C: a run's steps — one about someone else keeps its free text; one
     // erasure step about the user keeps its listed reason.
     [
-      `insert into agent_trajectories (trigger, status, subject_kind, subject_id, scope_type, steps)
-       values ('command-bar', 'completed', 'agent', 'command-bar', 'platform',
-               jsonb_build_array(
+      `with run as (
+         insert into agent_trajectories (trigger, status, subject_kind, subject_id, scope_type)
+         values ('command-bar', 'completed', 'agent', 'command-bar', 'platform')
+         returning tenant_id, id)
+       insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+       select run.tenant_id, run.id, e.n - 1, e.s
+         from run, jsonb_array_elements(jsonb_build_array(
                  jsonb_build_object('action', 'block_user_feature',
                    'input', jsonb_build_object('user_id', $2::text,
                                                'reason', 'about someone else, round 10')),
                  jsonb_build_object('action', 'purge_user_data',
                    'input', jsonb_build_object('userId', $1::text, 'reason', 'account-deletion',
-                                               'operationId', 'op-round10-purge'))))`,
+                                               'operationId', 'op-round10-purge'))))
+               with ordinality e(s, n)
+        order by e.n`,
       [user, other],
     ],
     // Round 9, I-3: decided erasures about the user — one with a listed reason (kept), one with
@@ -727,7 +752,8 @@ dbDescribe(`${SUITE} hostile scan`, () => {
     ]);
     const address = String(email);
     const columns = ADDRESS_REPLACEMENTS.flatMap((text) => {
-      const table = /^update (\w+) set/.exec(text)![1];
+      // A plain update, or the steps' locking form (TASK-230: `with … update <table> s set …`).
+      const table = /\bupdate (\w+)(?: \w+)? set/.exec(text)![1];
       return [...text.matchAll(/(\w+) = jsonb_erase_address_text\(/g)].map(
         (m) => `${table}.${m[1]}`
       );
@@ -794,7 +820,7 @@ dbDescribe(`${SUITE} erasure`, () => {
     ]) {
       const [left] = await sql(
         t,
-        `select (select count(*) from agent_trajectories where steps::text like '%' || $1 || '%')::int
+        `select (select count(*) from agent_trajectory_steps where step::text like '%' || $1 || '%')::int
                 + (select count(*) from proposals where to_jsonb(proposals)::text like '%' || $1 || '%')::int as n`,
         [needle]
       );
@@ -804,9 +830,8 @@ dbDescribe(`${SUITE} erasure`, () => {
     // in the run's step and on the hold, whose own note is gone.
     const [held] = await sql(
       t,
-      `select (select s.step->'output'->'note' from agent_trajectories a,
-                      jsonb_array_elements(a.steps) s(step)
-                where a.id::text = p.trajectory_id and s.step->'output' ? 'note') as step_note,
+      `select (select s.step->'output'->'note' from agent_trajectory_steps s
+                where s.trajectory_id::text = p.trajectory_id and s.step->'output' ? 'note') as step_note,
               p.decision_note, p.decision_shown
          from proposals p where p.operation_id = 'op6'`,
       []
@@ -829,12 +854,12 @@ dbDescribe(`${SUITE} erasure`, () => {
     // step keeps its listed reason.
     const [kept] = await sql(
       t,
-      `select (select count(*) from agent_trajectories
-                where steps::text like '%about someone else, round 10%')::int as other,
-              (select count(*) from agent_trajectories
-                where steps @> jsonb_build_array(jsonb_build_object('input',
+      `select (select count(*) from agent_trajectory_steps
+                where step::text like '%about someone else, round 10%')::int as other,
+              (select count(*) from agent_trajectory_steps
+                where step @> jsonb_build_object('input',
                   jsonb_build_object('operationId', 'op-round10-purge',
-                                     'reason', 'account-deletion'))))::int as listed`,
+                                     'reason', 'account-deletion')))::int as listed`,
       []
     );
     expect(kept).toEqual({ other: 1, listed: 1 });
@@ -989,9 +1014,13 @@ dbDescribe(`${SUITE} export`, () => {
     for (let i = 0; i < 40; i++)
       await sql(
         t,
-        `insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, scope_id, steps)
-         values ('x', 'agent', 'attacker', 'group', 'g', jsonb_build_array(
-           jsonb_build_object('actor', jsonb_build_object('actorId', $2::text), 'input', jsonb_build_object('about', $1::text))))`,
+        `with run as (
+           insert into agent_trajectories (trigger, subject_kind, subject_id, scope_type, scope_id)
+           values ('x', 'agent', 'attacker', 'group', 'g') returning tenant_id, id)
+         insert into agent_trajectory_steps (tenant_id, trajectory_id, seq, step)
+         select run.tenant_id, run.id, 0,
+                jsonb_build_object('actor', jsonb_build_object('actorId', $2::text), 'input', jsonb_build_object('about', $1::text))
+           from run`,
         [user, other]
       );
     const data = await t.run(() =>

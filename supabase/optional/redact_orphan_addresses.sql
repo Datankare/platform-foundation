@@ -2,7 +2,8 @@
 -- ============================================================================
 -- This file is DELIBERATELY OUTSIDE supabase/migrations/ and is NOT applied by the migration
 -- sequence. Run it once, by hand, as the database owner, after 052 is applied
--- (docs/MIGRATION_v5_to_v6.md, "Accounts erased before v6.0.0").
+-- (docs/MIGRATION_v5_to_v6.md, "Accounts erased before v6.0.0"). Since migration 076 (TASK-230)
+-- it reads and rewrites a trajectory's steps as rows of agent_trajectory_steps: run it after 076.
 --
 -- WHY
 --   Since v6.0.0 the soft delete replaces an account's address with its id wherever a held
@@ -31,7 +32,7 @@
 with docs as (
   select tenant_id, payload as doc from public.proposals
   union all select tenant_id, effects from public.proposals
-  union all select tenant_id, steps from public.agent_trajectories
+  union all select tenant_id, step from public.agent_trajectory_steps
   union all select tenant_id, details from public.audit_log
   union all select tenant_id, moderation_result from public.review_queue
   union all select tenant_id, explanation_chain from public.review_queue where explanation_chain is not null
@@ -75,7 +76,7 @@ begin
     with docs as (
       select tenant_id, payload as doc from public.proposals
       union all select tenant_id, effects from public.proposals
-      union all select tenant_id, steps from public.agent_trajectories
+      union all select tenant_id, step from public.agent_trajectory_steps
       union all select tenant_id, details from public.audit_log
       union all select tenant_id, moderation_result from public.review_queue
       union all select tenant_id, explanation_chain from public.review_queue where explanation_chain is not null
@@ -112,9 +113,21 @@ begin
      where tenant_id = r.tenant_id
        and (public.jsonb_may_mention_text(payload, r.address)
             or public.jsonb_may_mention_text(effects, r.address));
-    update public.agent_trajectories
-       set steps = public.jsonb_erase_address_text(steps, r.address, 'erased')
-     where tenant_id = r.tenant_id and public.jsonb_may_mention_text(steps, r.address);
+    -- A trajectory's steps are rows (migration 076, TASK-230): their trajectories locked first, in
+    -- key order — 076's step trigger refuses a rewrite whose trajectory another transaction holds.
+    with hit as materialized (
+      select s.tenant_id, s.trajectory_id, s.seq from public.agent_trajectory_steps s
+       where s.tenant_id = r.tenant_id and public.jsonb_may_mention_text(s.step, r.address)),
+    locked as materialized (
+      select 1 from public.agent_trajectories a
+       where (a.tenant_id, a.id) in (select h.tenant_id, h.trajectory_id from hit h)
+       order by a.tenant_id, a.id for update)
+    update public.agent_trajectory_steps s
+       set step = public.jsonb_erase_address_text(s.step, r.address, 'erased')
+      from hit h
+     where (select count(*) from locked) >= 0
+       and s.tenant_id = h.tenant_id and s.trajectory_id = h.trajectory_id and s.seq = h.seq
+       and public.jsonb_may_mention_text(s.step, r.address);
     update public.audit_log
        set details = public.jsonb_erase_address_text(details, r.address, 'erased')
      where tenant_id = r.tenant_id and public.jsonb_may_mention_text(details, r.address);
